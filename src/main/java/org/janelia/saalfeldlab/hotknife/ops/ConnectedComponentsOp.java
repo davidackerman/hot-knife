@@ -30,7 +30,6 @@
 
 package org.janelia.saalfeldlab.hotknife.ops;
 
-import java.util.Arrays;
 import java.util.function.Consumer;
 
 import net.imglib2.Cursor;
@@ -41,56 +40,92 @@ import net.imglib2.converter.Converters;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.LongArray;
-import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.numeric.NumericType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedLongType;
-import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.Views;
 
 /**
- * ContactSites
+ * Connected Components Op
  *
- * class to calculate contact sites between two predicted organelles from COSEM data, using a distance threshold:
- *      if a voxel is within the distance threshold of both organelles, it is considered a contact site
+ * Implement connected components for lazy process operation
  * @author David Ackerman
  */
 public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & NativeType<T>> implements Consumer<RandomAccessibleInterval<T>> {
 
-	// class attributes: the two source organelle images and a distance cutoff, provided as input 
+	// class attributes: source organelle information and source dimensions
 	final private RandomAccessible<? extends T> source;
+	final private long [] sourceDimensions;
 	
-	public ConnectedComponentsOp(final RandomAccessible<T> source ) {
-		// constructor that takes in distance cutoff
+	public ConnectedComponentsOp(final RandomAccessible<T> source, long [] sourceDimensions ) {
+		// constructor that takes in source and source dimensions
 		this.source = source;
+		this.sourceDimensions = sourceDimensions;
 	}
 
 	@Override
 	public void accept(final RandomAccessibleInterval<T> output) {
-		// performs the actual calculation of whether a voxel is a contact site, with the result being stored in output
-		long [] min_pos = {0,0,0};
-		long [] dimensions = {0,0,0};
-		output.min(min_pos);
-		output.dimensions(dimensions);
-		final RandomAccessibleInterval<? extends T>  sourceInterval = Views.offsetInterval(source,  min_pos, dimensions);
-		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval, (a, b) -> b.set(a.getRealDouble() >127), new BoolType());
-		final ArrayImg<UnsignedLongType, LongArray> components = ArrayImgs.unsignedLongs(Intervals.dimensionsAsLongArray(thresholded));
+		// performs the actual connected component analysis
 		
+		// Get offset interval for passing to connectedComponents
+		long [] minimumPosition = {0,0,0};
+		long [] outputDimensions = {0,0,0};
+		output.min(minimumPosition);
+		output.dimensions(outputDimensions);
+		final RandomAccessibleInterval<? extends T>  sourceInterval = Views.offsetInterval(source,  minimumPosition, outputDimensions);
+		
+		// threshold sourceInterval using cutoff of 127
+		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval, (a, b) -> b.set(a.getRealDouble() >127), new BoolType());
+		
+		// run connected component analysis, storing results in components
+		final ArrayImg<UnsignedLongType, LongArray> components = ArrayImgs.unsignedLongs(Intervals.dimensionsAsLongArray(thresholded));
 		ConnectedComponentAnalysis.connectedComponents(thresholded, components);
 	
-		final Cursor<T> o = Views.flatIterable(output).cursor();
+		// cursors over output and components
+		Cursor<T> o = Views.flatIterable(output).cursor();
 		final Cursor<UnsignedLongType> c = Views.flatIterable(components).cursor();
-
+		
+		
+		// assign values from components to output and create array for relabeling connected components based on the first voxel in the connected component
+		
+		long totalNumberOfVoxelsInSource = (sourceDimensions[0]*sourceDimensions[1]*sourceDimensions[2]);
+		double labelBasedOnMaxVoxelIndex[] = new double[(int) (outputDimensions[0]*outputDimensions[1]*outputDimensions[2])]; 
+		
 		while (o.hasNext()) {
 			final T tO = o.next();
 			final UnsignedLongType tC = c.next();
 			if(tC.getRealDouble()>0) {
-				tO.setReal(tC.getRealDouble()+min_pos[0]);
+				tO.setReal(tC.getRealDouble());
+
+				// if connected component exists, assign its value to output and update its new label based on first voxel
+				int [] currentVoxelPosition = {o.getIntPosition(0), o.getIntPosition(1), o.getIntPosition(2)};
+				double currentVoxelIndex = (double) (sourceDimensions[0]*sourceDimensions[1]*currentVoxelPosition[2]+//Z position
+									sourceDimensions[0]*currentVoxelPosition[1]+
+									currentVoxelPosition[0]);
+				
+				int defaultLabel = tC.getInteger();
+				if(currentVoxelIndex>labelBasedOnMaxVoxelIndex[defaultLabel]) {
+					labelBasedOnMaxVoxelIndex[defaultLabel] = currentVoxelIndex;
+				}
+				
 			}
 		}
+		
+		// update output labels based on max voxel labels
+		o = Views.flatIterable(output).cursor();
+		while (o.hasNext()) {
+			final T tO = o.next();
+			if (tO.getRealDouble()!=0) {
+				double newLabel = labelBasedOnMaxVoxelIndex[(int) tO.getRealDouble()] * 65535.0/totalNumberOfVoxelsInSource;
+				tO.setReal(newLabel);
+			}
+			
+		}
+
 	}
+	
 	
 }

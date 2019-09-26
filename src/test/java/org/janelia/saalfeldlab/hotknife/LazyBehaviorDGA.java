@@ -16,14 +16,11 @@ import bdv.util.BdvFunctions;
 import bdv.util.BdvOptions;
 import bdv.util.BdvStackSource;
 import bdv.util.volatiles.VolatileViews;
-import ij.IJ;
 import ij.ImageJ;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.Volatile;
-import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.basictypeaccess.AccessFlags;
-import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.DoubleType;
@@ -88,7 +85,7 @@ public class LazyBehaviorDGA {
 							VolatileViews.wrapAsVolatile(currentImg),
 							"",
 							options);
-			stackSource.setDisplayRange(90, 255);
+			stackSource.setDisplayRange(128, 128);
 			if (imgCount == 1) {
 				stackSource.setColor(new ARGBType( ARGBType.rgba(255,0,0,0)));
 			}
@@ -102,9 +99,10 @@ public class LazyBehaviorDGA {
 			imgCount++;
 		}
 		
-		// calculate contact sites using ContactSites op
-		// here just doing it for one pair of organelles, but could loop over many
-		final ArrayList<RandomAccessibleInterval<DoubleType>> contactSites = new ArrayList<>();
+		final ArrayList<RandomAccessibleInterval<DoubleType>> analysisResults = new ArrayList<>();
+		// calculate contact sites using ContactSites op and connected components using ConnectedComponentsOp
+		
+		// contact sites: here just doing it for one pair of organelles, but could loop over many
 		for(int i=0; i<=0; i++) {
 			final ContactSites<DoubleType> contactSitesOp = new ContactSites<>(source.get(1), source.get(2), 10);
 			final RandomAccessibleInterval<DoubleType> currentContactSites = Lazy.process(
@@ -113,29 +111,40 @@ public class LazyBehaviorDGA {
 					new DoubleType(),
 					AccessFlags.setOf(AccessFlags.VOLATILE),
 					contactSitesOp);
-			contactSites.add(currentContactSites);
+			analysisResults.add(currentContactSites);
 		}
 		
-		final ConnectedComponentsOp<DoubleType> connectedComponentsOp = new ConnectedComponentsOp<>(source.get(1));
+		// connected components: here just doing it for one organelle
+		long [] sourceDimensions = {0,0,0};
+		img.get(1).dimensions(sourceDimensions);
+		final ConnectedComponentsOp<DoubleType> connectedComponentsOp = new ConnectedComponentsOp<>(source.get(1), sourceDimensions );
 		final RandomAccessibleInterval<DoubleType> connectedComponents = Lazy.process(
 				img.get(0),
 				blockSize,
 				new DoubleType(),
 				AccessFlags.setOf(AccessFlags.VOLATILE),
 				connectedComponentsOp);
-		contactSites.add(connectedComponents);
+		analysisResults.add(connectedComponents);
 		
-		// show contact sites in blue channel
-		for (final RandomAccessibleInterval<DoubleType> currentContactSites : contactSites) {
+		// show contact sites in blue channel, and connected components in yellow
+		imgCount=0;
+		for (final RandomAccessibleInterval<DoubleType> currentAnalysisResults : analysisResults) {
 			final BdvStackSource<Volatile<DoubleType>> stackSource =
 					BdvFunctions.show(
-							VolatileViews.wrapAsVolatile(currentContactSites),
+							VolatileViews.wrapAsVolatile(currentAnalysisResults),
 							"",
 							options
 							);
-			stackSource.setDisplayRange(0, 255);
-			stackSource.setColor(new ARGBType( ARGBType.rgba(0,0,255,0)));
+			if (imgCount==0) {
+				stackSource.setDisplayRange(0, 255);
+				stackSource.setColor(new ARGBType( ARGBType.rgba(0,0,255,0)));
+			}
+			else {
+				stackSource.setDisplayRange(0, 65535);
+				stackSource.setColor(new ARGBType( ARGBType.rgba(255,255,0,0)));
+			}
 			options = options.addTo(stackSource);
+			imgCount++;
 		}
 
 
