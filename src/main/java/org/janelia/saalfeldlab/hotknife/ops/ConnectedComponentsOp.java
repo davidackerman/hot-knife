@@ -45,6 +45,7 @@ import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.numeric.NumericType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedLongType;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.Views;
 
@@ -59,11 +60,12 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 	// class attributes: source organelle information and source dimensions
 	final private RandomAccessible<? extends T> source;
 	final private long [] sourceDimensions;
-	
-	public ConnectedComponentsOp(final RandomAccessible<T> source, long [] sourceDimensions ) {
+	final boolean isDisplayed;
+	public ConnectedComponentsOp(final RandomAccessible<T> source, long [] sourceDimensions, boolean isDisplayed) {
 		// constructor that takes in source and source dimensions
 		this.source = source;
 		this.sourceDimensions = sourceDimensions;
+		this.isDisplayed = isDisplayed;
 	}
 
 	@Override
@@ -77,6 +79,10 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		output.dimensions(outputDimensions);
 		final RandomAccessibleInterval<? extends T>  sourceInterval = Views.offsetInterval(source,  minimumPosition, outputDimensions);
 		
+		computeConnectedComponents(sourceInterval, output, outputDimensions);
+	}
+	
+	public void computeConnectedComponents(RandomAccessibleInterval<? extends T>  sourceInterval, RandomAccessibleInterval<T>  output, long [] outputDimensions) {
 		// threshold sourceInterval using cutoff of 127
 		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval, (a, b) -> b.set(a.getRealDouble() >127), new BoolType());
 		
@@ -92,7 +98,7 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		// assign values from components to output and create array for relabeling connected components based on the first voxel in the connected component
 		
 		long totalNumberOfVoxelsInSource = (sourceDimensions[0]*sourceDimensions[1]*sourceDimensions[2]);
-		double labelBasedOnMaxVoxelIndex[] = new double[(int) (outputDimensions[0]*outputDimensions[1]*outputDimensions[2])]; 
+		double labelBasedOnMaxVoxelIndexInComponent[] = new double[(int) (outputDimensions[0]*outputDimensions[1]*outputDimensions[2])]; 
 		
 		while (o.hasNext()) {
 			final T tO = o.next();
@@ -107,8 +113,8 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 									currentVoxelPosition[0]);
 				
 				int defaultLabel = tC.getInteger();
-				if(currentVoxelIndex>labelBasedOnMaxVoxelIndex[defaultLabel]) {
-					labelBasedOnMaxVoxelIndex[defaultLabel] = currentVoxelIndex;
+				if(currentVoxelIndex>labelBasedOnMaxVoxelIndexInComponent[defaultLabel]) {
+					labelBasedOnMaxVoxelIndexInComponent[defaultLabel] = currentVoxelIndex;
 				}
 				
 			}
@@ -119,13 +125,15 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		while (o.hasNext()) {
 			final T tO = o.next();
 			if (tO.getRealDouble()!=0) {
-				double newLabel = labelBasedOnMaxVoxelIndex[(int) tO.getRealDouble()] * 65535.0/totalNumberOfVoxelsInSource;
+				double newLabel = 0;
+				newLabel = labelBasedOnMaxVoxelIndexInComponent[(int) tO.getRealDouble()];
+				if (isDisplayed) {//scale to fit in range
+					newLabel *= 65535.0/totalNumberOfVoxelsInSource;
+				}
 				tO.setReal(newLabel);
 			}
 			
 		}
-
 	}
-	
 	
 }

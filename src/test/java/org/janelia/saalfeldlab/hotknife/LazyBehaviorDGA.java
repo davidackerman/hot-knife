@@ -117,7 +117,7 @@ public class LazyBehaviorDGA {
 		// connected components: here just doing it for one organelle
 		long [] sourceDimensions = {0,0,0};
 		img.get(1).dimensions(sourceDimensions);
-		final ConnectedComponentsOp<DoubleType> connectedComponentsOp = new ConnectedComponentsOp<>(source.get(1), sourceDimensions );
+		final ConnectedComponentsOp<DoubleType> connectedComponentsOp = new ConnectedComponentsOp<>(source.get(1), sourceDimensions, true );
 		final RandomAccessibleInterval<DoubleType> connectedComponents = Lazy.process(
 				img.get(0),
 				blockSize,
