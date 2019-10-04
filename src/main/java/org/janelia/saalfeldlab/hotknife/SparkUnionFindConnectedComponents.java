@@ -18,6 +18,10 @@ package org.janelia.saalfeldlab.hotknife;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.spark.SparkConf;
@@ -35,11 +39,14 @@ import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
+import net.imglib2.Cursor;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.integer.UnsignedLongType;
+import net.imglib2.view.ExtendedRandomAccessibleInterval;
+import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 
 /**
@@ -47,12 +54,12 @@ import net.imglib2.view.Views;
  *
  * @author Stephan Saalfeld &lt;saalfelds@janelia.hhmi.org&gt;
  */
-public class SparkConnectedComponents {
+public class SparkUnionFindConnectedComponents {
 
 	final static public String ownerFormat = "%s/owner/%s";
 	final static public String stackListFormat = ownerFormat + "/stacks";
 	final static public String stackFormat = ownerFormat + "/project/%s/stack/%s";
-	final static public String stackBoundsFormat = stackFormat  + "/bounds";
+	final static public String stackBoundsFormat = stackFormat + "/bounds";
 	final static public String boundingBoxFormat = stackFormat + "/z/%d/box/%d,%d,%d,%d,%f";
 	final static public String renderParametersFormat = boundingBoxFormat + "/render-parameters";
 
@@ -77,7 +84,8 @@ public class SparkConnectedComponents {
 			try {
 				parser.parseArgument(args);
 
-				if (outputN5Path == null) outputN5Path = inputN5Path;
+				if (outputN5Path == null)
+					outputN5Path = inputN5Path;
 
 				parsedSuccessfully = true;
 			} catch (final CmdLineException e) {
@@ -85,7 +93,6 @@ public class SparkConnectedComponents {
 				parser.printUsage(System.err);
 			}
 		}
-
 
 		public String getInputN5Path() {
 			return inputN5Path;
@@ -103,7 +110,6 @@ public class SparkConnectedComponents {
 			return outputDatasetName;
 		}
 	}
-
 
 	/**
 	 * Copy an existing N5 dataset into another with a different blockSize.
@@ -133,7 +139,6 @@ public class SparkConnectedComponents {
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputDatasetName);
 		final int n = attributes.getNumDimensions();
 		final int[] blockSize = attributes.getBlockSize();
-		final long[] blockSizeL = new long[] {blockSize[0], blockSize[1], blockSize[2]};
 		final long[] outputDimensions = attributes.getDimensions();
 		n5Writer.createGroup(outputDatasetName);
 			n5Writer.createDataset(
@@ -148,27 +153,105 @@ public class SparkConnectedComponents {
 						Grid.create(
 								outputDimensions,
 								blockSize));
-
-		rdd.foreach(
+		
+		JavaRDD<Map<Long,Long>> javaRDDmaps=
+		rdd.map(
 				gridBlock -> {
 					final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-					final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
 					final RandomAccessibleInterval<UnsignedLongType> source = N5Utils.open(n5ReaderLocal, inputDatasetName);
-					
 					long [] sourceDimensions = {0,0,0};
 					source.dimensions(sourceDimensions);
-					final RandomAccessibleInterval<UnsignedLongType> sourceInterval = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
-					final ConnectedComponentsOp<UnsignedLongType> connectedComponentsOp = new ConnectedComponentsOp<>(sourceInterval, sourceDimensions, false);
-					//ArrayImg<DoubleType, ?> temp = new ArrayImgFactory<DoubleType>(source.randomAccess().get()).create(blockSize);
-					long [] currentDimensions = {0,0,0};
-					sourceInterval.dimensions(currentDimensions);
-					final Img< UnsignedLongType> output = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType())
-				            .create( currentDimensions);					
-					connectedComponentsOp.computeConnectedComponents(sourceInterval, output, blockSizeL, gridBlock[0]);
-					N5Utils.saveBlock(output, n5WriterLocal, outputDatasetName, gridBlock[2]);
-				});
-	}
 
+					long [] offset = gridBlock[0];
+					long [] dimension = gridBlock[1];
+					
+					RandomAccessibleInterval<UnsignedLongType> xPlane1, yPlane1, zPlane1, xPlane2, yPlane2, zPlane2;
+					xPlane1 = yPlane1 = zPlane1 = xPlane2 = yPlane2 = zPlane2 = null;
+					
+					/*final RandomAccessibleInterval<UnsignedLongType> referenceBlock = Views.offsetInterval(source, offset, dimension);
+					xPlane1 = Views.hyperSlice(referenceBlock, 0, dimension[0]-1);
+					yPlane1= Views.hyperSlice(referenceBlock, 1, dimension[1]-1);
+					zPlane1 = Views.hyperSlice(referenceBlock, 2, dimension[2]-1);
+					
+					final RandomAccessibleInterval<UnsignedLongType> blockRight = Views.offsetInterval(source, new long []{offset[0]+blockSize[0], offset[1], offset[2]}, dimension);
+					if(offset[0]+blockSize[0] < sourceDimensions[0]) xPlane2 = Views.hyperSlice(blockRight, 0, 0);
+					
+					final RandomAccessibleInterval<UnsignedLongType> blockBottom = Views.offsetInterval(source, new long []{offset[0], offset[1]+blockSize[1], offset[2]}, dimension);
+					if(offset[1]+blockSize[1] < sourceDimensions[1]) yPlane2 = Views.hyperSlice(blockBottom, 1, 0);
+					
+					final RandomAccessibleInterval<UnsignedLongType> blockAbove = Views.offsetInterval(source, new long []{offset[0], offset[1], offset[2]+blockSize[2]}, dimension);
+					if(offset[2]+blockSize[2] < sourceDimensions[2]) zPlane2 = Views.hyperSlice(blockAbove, 2, 0);
+					*/
+					long xOffset = offset[0]+blockSize[0];
+					long yOffset = offset[1]+blockSize[1];
+					long zOffset = offset[2]+blockSize[2];
+					xPlane1 = Views.offsetInterval(source, new long []{xOffset-1, offset[1], offset[2]}, new long[]{1, dimension[1], dimension[2]});
+					yPlane1 = Views.offsetInterval(source, new long []{offset[0], yOffset-1, offset[2]}, new long[]{dimension[0], 1, dimension[2]});
+					zPlane1 = Views.offsetInterval(source, new long []{offset[0], offset[1], zOffset-1}, new long[]{dimension[0], dimension[1], 1});
+
+					
+					if(xOffset < sourceDimensions[0]) xPlane2 = Views.offsetInterval(source, new long []{xOffset, offset[1], offset[2]}, new long[]{1, dimension[1], dimension[2]});
+					if(yOffset < sourceDimensions[1]) yPlane2 = Views.offsetInterval(source, new long []{offset[0], yOffset, offset[2]}, new long[]{dimension[0], 1, dimension[2]});
+					if(zOffset < sourceDimensions[2]) zPlane2 = Views.offsetInterval(source, new long []{offset[0], offset[1], zOffset}, new long[]{dimension[0], dimension[1], 1});
+
+					Map<Long, Long> globalIDtoGlobalIDMap = new HashMap<Long, Long>();
+					
+					getGlobalIDsToMerge(xPlane1, xPlane2, globalIDtoGlobalIDMap);
+					getGlobalIDsToMerge(yPlane1, yPlane2, globalIDtoGlobalIDMap);
+					getGlobalIDsToMerge(zPlane1, zPlane2, globalIDtoGlobalIDMap);
+					
+					return globalIDtoGlobalIDMap;
+				});
+		
+		// collect RDD for printing
+		long t0 = System.currentTimeMillis();
+		int totalUnions = 0;
+		List<Map<Long,Long>> globalIDtoGlobalIDmaps=javaRDDmaps.collect();
+        for(Map<Long, Long> value:globalIDtoGlobalIDmaps){
+        	totalUnions+=value.size();
+        }
+		long t1 = System.currentTimeMillis();
+		
+        long [][] arrayOfUnions = new long[totalUnions][2];
+        int count = 0;
+        for(Map<Long, Long> currentMap:globalIDtoGlobalIDmaps){
+        	if (!currentMap.isEmpty()) {
+        		for (Map.Entry<Long, Long> entry : currentMap.entrySet()) {
+        			arrayOfUnions[count][0] = entry.getKey(); 
+        			arrayOfUnions[count][1] = entry.getValue();
+        			count++;
+        		}
+        	}
+        }
+		long t2 = System.currentTimeMillis();
+
+        System.out.println("Total unions = "+totalUnions);
+        
+        UnionFindDGA unionFind = new UnionFindDGA(arrayOfUnions);
+		long t3 = System.currentTimeMillis();
+		for (Map.Entry<Long, Long> entry : unionFind.globalIDtoRootID.entrySet()) {
+			System.out.println(entry.getKey() + ":" + entry.getValue().toString());
+		}   
+		System.out.println("collect time: "+(t1-t0));
+		System.out.println("build array time: "+(t2-t1));
+		System.out.println("union find time: "+(t3-t2));
+
+	}
+	
+	public static final void getGlobalIDsToMerge(RandomAccessibleInterval<UnsignedLongType> hyperSlice1, RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Map<Long, Long> globalIDtoGlobalID) {
+		if (hyperSlice1!=null && hyperSlice2!=null) {
+			Cursor<UnsignedLongType> hs1Cursor = Views.flatIterable(hyperSlice1).cursor();
+			Cursor<UnsignedLongType> hs2Cursor = Views.flatIterable(hyperSlice2).cursor();
+			while (hs1Cursor.hasNext()) {
+				long hs1Value = hs1Cursor.next().getLong();
+				long hs2Value = hs2Cursor.next().getLong();
+				if (hs1Value >0 && hs2Value > 0 ) {
+					globalIDtoGlobalID.put(Math.min(hs1Value,hs2Value), Math.max(hs1Value,hs2Value));
+				}
+			}
+
+		}
+	}
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 
@@ -180,7 +263,8 @@ public class SparkConnectedComponents {
 		final SparkConf conf = new SparkConf().setAppName("SparkRandomSubsampleN5");
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 
-		connectedComponents(sc, options.getInputN5Path(), options.getOutputN5Path(), options.getInputDatasetName(), options.getOutputDatasetName());
+		connectedComponents(sc, options.getInputN5Path(), options.getOutputN5Path(), options.getInputDatasetName(),
+				options.getOutputDatasetName());
 
 		sc.close();
 

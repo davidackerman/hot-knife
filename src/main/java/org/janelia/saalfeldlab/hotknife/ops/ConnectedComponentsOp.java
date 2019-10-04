@@ -30,6 +30,7 @@
 
 package org.janelia.saalfeldlab.hotknife.ops;
 
+import java.util.Arrays;
 import java.util.function.Consumer;
 
 import net.imglib2.Cursor;
@@ -79,10 +80,10 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		output.dimensions(outputDimensions);
 		final RandomAccessibleInterval<? extends T>  sourceInterval = Views.offsetInterval(source,  minimumPosition, outputDimensions);
 		
-		computeConnectedComponents(sourceInterval, output, outputDimensions);
+		computeConnectedComponents(sourceInterval, output, outputDimensions, null);
 	}
 	
-	public void computeConnectedComponents(RandomAccessibleInterval<? extends T>  sourceInterval, RandomAccessibleInterval<T>  output, long [] outputDimensions) {
+	public void computeConnectedComponents(RandomAccessibleInterval<? extends T>  sourceInterval, RandomAccessibleInterval<T>  output, long [] outputDimensions, long [] offset) {
 		// threshold sourceInterval using cutoff of 127
 		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval, (a, b) -> b.set(a.getRealDouble() >127), new BoolType());
 		
@@ -107,7 +108,12 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 				tO.setReal(tC.getRealDouble());
 
 				// if connected component exists, assign its value to output and update its new label based on first voxel
-				int [] currentVoxelPosition = {o.getIntPosition(0), o.getIntPosition(1), o.getIntPosition(2)};
+				long [] currentVoxelPosition = {o.getIntPosition(0), o.getIntPosition(1), o.getIntPosition(2)};
+				if(offset!=null) {
+					currentVoxelPosition[0]+=offset[0];
+					currentVoxelPosition[1]+=offset[1];
+					currentVoxelPosition[2]+=offset[2];
+				}
 				double currentVoxelIndex = (double) (sourceDimensions[0]*sourceDimensions[1]*currentVoxelPosition[2]+//Z position
 									sourceDimensions[0]*currentVoxelPosition[1]+
 									currentVoxelPosition[0]);
