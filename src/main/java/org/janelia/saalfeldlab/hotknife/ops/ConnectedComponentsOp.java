@@ -31,6 +31,9 @@
 package org.janelia.saalfeldlab.hotknife.ops;
 
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import net.imglib2.Cursor;
@@ -46,7 +49,6 @@ import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.numeric.NumericType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedLongType;
-import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.Views;
 
@@ -83,7 +85,7 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		computeConnectedComponents(sourceInterval, output, outputDimensions, null);
 	}
 	
-	public void computeConnectedComponents(RandomAccessibleInterval<? extends T>  sourceInterval, RandomAccessibleInterval<T>  output, long [] outputDimensions, long [] offset) {
+	public Set<List<Long>> computeConnectedComponents(RandomAccessibleInterval<? extends T>  sourceInterval, RandomAccessibleInterval<T>  output, long [] outputDimensions, long [] offset) {
 		// threshold sourceInterval using cutoff of 127
 		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval, (a, b) -> b.set(a.getRealDouble() >127), new BoolType());
 		
@@ -126,20 +128,26 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 			}
 		}
 		
+		Set<List<Long>> uniqueIDSet = new HashSet<List<Long>>();
 		// update output labels based on max voxel labels
 		o = Views.flatIterable(output).cursor();
 		while (o.hasNext()) {
 			final T tO = o.next();
 			if (tO.getRealDouble()!=0) {
 				double newLabel = 0;
-				newLabel = labelBasedOnMaxVoxelIndexInComponent[(int) tO.getRealDouble()];
 				if (isDisplayed) {//scale to fit in range
 					newLabel *= 65535.0/totalNumberOfVoxelsInSource;
+				}
+				else {
+					newLabel = labelBasedOnMaxVoxelIndexInComponent[(int) tO.getRealDouble()];
+					uniqueIDSet.add(Arrays.asList((long) newLabel, (long) newLabel));
 				}
 				tO.setReal(newLabel);
 			}
 			
 		}
+		
+		return uniqueIDSet;
 	}
 	
 }

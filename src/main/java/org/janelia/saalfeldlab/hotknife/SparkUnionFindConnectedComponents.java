@@ -18,10 +18,7 @@ package org.janelia.saalfeldlab.hotknife;
 
 import java.io.IOException;
 import java.io.Serializable;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.spark.SparkConf;
@@ -126,12 +123,13 @@ public class SparkUnionFindConnectedComponents {
 	 * @throws IOException
 	 */
 	@SuppressWarnings("unchecked")
-	public static final <T extends NativeType<T>> void connectedComponents(
+	public static final <T extends NativeType<T>> UnionFindDGA connectedComponents(
 			final JavaSparkContext sc,
 			final String inputN5Path,
 			final String outputN5Path,
 			final String inputDatasetName,
-			final String outputDatasetName) throws IOException {
+			final String outputDatasetName,
+			Set<List<Long>> globalIDtoGlobalIDFinalSet) throws IOException {
 
 		final N5Writer n5Reader = new N5FSWriter(inputN5Path);
 		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
@@ -154,7 +152,7 @@ public class SparkUnionFindConnectedComponents {
 								outputDimensions,
 								blockSize));
 		
-		JavaRDD<Map<Long,Long>> javaRDDmaps=
+		JavaRDD<Set<List<Long>>> javaRDDsets=
 		rdd.map(
 				gridBlock -> {
 					final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
@@ -168,20 +166,6 @@ public class SparkUnionFindConnectedComponents {
 					RandomAccessibleInterval<UnsignedLongType> xPlane1, yPlane1, zPlane1, xPlane2, yPlane2, zPlane2;
 					xPlane1 = yPlane1 = zPlane1 = xPlane2 = yPlane2 = zPlane2 = null;
 					
-					/*final RandomAccessibleInterval<UnsignedLongType> referenceBlock = Views.offsetInterval(source, offset, dimension);
-					xPlane1 = Views.hyperSlice(referenceBlock, 0, dimension[0]-1);
-					yPlane1= Views.hyperSlice(referenceBlock, 1, dimension[1]-1);
-					zPlane1 = Views.hyperSlice(referenceBlock, 2, dimension[2]-1);
-					
-					final RandomAccessibleInterval<UnsignedLongType> blockRight = Views.offsetInterval(source, new long []{offset[0]+blockSize[0], offset[1], offset[2]}, dimension);
-					if(offset[0]+blockSize[0] < sourceDimensions[0]) xPlane2 = Views.hyperSlice(blockRight, 0, 0);
-					
-					final RandomAccessibleInterval<UnsignedLongType> blockBottom = Views.offsetInterval(source, new long []{offset[0], offset[1]+blockSize[1], offset[2]}, dimension);
-					if(offset[1]+blockSize[1] < sourceDimensions[1]) yPlane2 = Views.hyperSlice(blockBottom, 1, 0);
-					
-					final RandomAccessibleInterval<UnsignedLongType> blockAbove = Views.offsetInterval(source, new long []{offset[0], offset[1], offset[2]+blockSize[2]}, dimension);
-					if(offset[2]+blockSize[2] < sourceDimensions[2]) zPlane2 = Views.hyperSlice(blockAbove, 2, 0);
-					*/
 					long xOffset = offset[0]+blockSize[0];
 					long yOffset = offset[1]+blockSize[1];
 					long zOffset = offset[2]+blockSize[2];
@@ -193,52 +177,52 @@ public class SparkUnionFindConnectedComponents {
 					if(xOffset < sourceDimensions[0]) xPlane2 = Views.offsetInterval(source, new long []{xOffset, offset[1], offset[2]}, new long[]{1, dimension[1], dimension[2]});
 					if(yOffset < sourceDimensions[1]) yPlane2 = Views.offsetInterval(source, new long []{offset[0], yOffset, offset[2]}, new long[]{dimension[0], 1, dimension[2]});
 					if(zOffset < sourceDimensions[2]) zPlane2 = Views.offsetInterval(source, new long []{offset[0], offset[1], zOffset}, new long[]{dimension[0], dimension[1], 1});
-
-					Map<Long, Long> globalIDtoGlobalIDMap = new HashMap<Long, Long>();
 					
-					getGlobalIDsToMerge(xPlane1, xPlane2, globalIDtoGlobalIDMap);
-					getGlobalIDsToMerge(yPlane1, yPlane2, globalIDtoGlobalIDMap);
-					getGlobalIDsToMerge(zPlane1, zPlane2, globalIDtoGlobalIDMap);
+					Set<List<Long>> globalIDtoGlobalIDSet = new HashSet<List<Long>>();
+					getGlobalIDsToMerge(xPlane1, xPlane2, globalIDtoGlobalIDSet);
+					getGlobalIDsToMerge(yPlane1, yPlane2, globalIDtoGlobalIDSet);
+					getGlobalIDsToMerge(zPlane1, zPlane2, globalIDtoGlobalIDSet);
 					
-					return globalIDtoGlobalIDMap;
+					return globalIDtoGlobalIDSet;
 				});
 		
 		// collect RDD for printing
 		long t0 = System.currentTimeMillis();
-		int totalUnions = 0;
-		List<Map<Long,Long>> globalIDtoGlobalIDmaps=javaRDDmaps.collect();
-        for(Map<Long, Long> value:globalIDtoGlobalIDmaps){
-        	totalUnions+=value.size();
-        }
+		List<Set<List<Long>>> globalIDtoGlobalIDCollectedSets=javaRDDsets.collect();
 		long t1 = System.currentTimeMillis();
-		
-        long [][] arrayOfUnions = new long[totalUnions][2];
-        int count = 0;
-        for(Map<Long, Long> currentMap:globalIDtoGlobalIDmaps){
-        	if (!currentMap.isEmpty()) {
-        		for (Map.Entry<Long, Long> entry : currentMap.entrySet()) {
-        			arrayOfUnions[count][0] = entry.getKey(); 
-        			arrayOfUnions[count][1] = entry.getValue();
-        			count++;
-        		}
-        	}
+	
+        for(Set<List<Long>>  globalIDtoGlobalIDCurrentSet:globalIDtoGlobalIDCollectedSets){
+        	globalIDtoGlobalIDFinalSet.addAll(globalIDtoGlobalIDCurrentSet);
         }
+        System.out.println(globalIDtoGlobalIDFinalSet.size());
+        long [][] arrayOfUnions = new long[globalIDtoGlobalIDFinalSet.size()][2];
+        int count = 0;
+        for( List<Long> currentPair : globalIDtoGlobalIDFinalSet) {
+        	arrayOfUnions[count][0] = currentPair.get(0);
+        	arrayOfUnions[count][1] = currentPair.get(1);
+        	count++;
+        }
+        //arrayOfUnions = globalIDtoGlobalIDFinalSet.toArray(arrayOfUnions);
+        System.out.println("Total unions = "+arrayOfUnions.length);
 		long t2 = System.currentTimeMillis();
-
-        System.out.println("Total unions = "+totalUnions);
         
         UnionFindDGA unionFind = new UnionFindDGA(arrayOfUnions);
 		long t3 = System.currentTimeMillis();
 		for (Map.Entry<Long, Long> entry : unionFind.globalIDtoRootID.entrySet()) {
-			System.out.println(entry.getKey() + ":" + entry.getValue().toString());
-		}   
+			System.out.println("{"+entry.getKey() + "," + entry.getValue().toString() + "},");
+		} 
+		unionFind.renumberRoots();
+		for (Map.Entry<Long, Long> entry : unionFind.globalIDtoRootID.entrySet()) {
+			System.out.println("{"+entry.getKey() + "," + entry.getValue().toString() + "},");
+		} 
 		System.out.println("collect time: "+(t1-t0));
 		System.out.println("build array time: "+(t2-t1));
 		System.out.println("union find time: "+(t3-t2));
+		return unionFind;
 
 	}
 	
-	public static final void getGlobalIDsToMerge(RandomAccessibleInterval<UnsignedLongType> hyperSlice1, RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Map<Long, Long> globalIDtoGlobalID) {
+	public static final void getGlobalIDsToMerge(RandomAccessibleInterval<UnsignedLongType> hyperSlice1, RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Set<List<Long>> globalIDtoGlobalIDSet) {
 		if (hyperSlice1!=null && hyperSlice2!=null) {
 			Cursor<UnsignedLongType> hs1Cursor = Views.flatIterable(hyperSlice1).cursor();
 			Cursor<UnsignedLongType> hs2Cursor = Views.flatIterable(hyperSlice2).cursor();
@@ -246,7 +230,7 @@ public class SparkUnionFindConnectedComponents {
 				long hs1Value = hs1Cursor.next().getLong();
 				long hs2Value = hs2Cursor.next().getLong();
 				if (hs1Value >0 && hs2Value > 0 ) {
-					globalIDtoGlobalID.put(Math.min(hs1Value,hs2Value), Math.max(hs1Value,hs2Value));
+					globalIDtoGlobalIDSet.add(Arrays.asList(Math.min(hs1Value,hs2Value), Math.max(hs1Value,hs2Value)));
 				}
 			}
 
@@ -262,9 +246,10 @@ public class SparkUnionFindConnectedComponents {
 
 		final SparkConf conf = new SparkConf().setAppName("SparkRandomSubsampleN5");
 		final JavaSparkContext sc = new JavaSparkContext(conf);
-
+		Set<List<Long>> globalIDtoGlobalIDFinalSet = new HashSet<List<Long>>();
+		 
 		connectedComponents(sc, options.getInputN5Path(), options.getOutputN5Path(), options.getInputDatasetName(),
-				options.getOutputDatasetName());
+				options.getOutputDatasetName(), globalIDtoGlobalIDFinalSet);
 
 		sc.close();
 
