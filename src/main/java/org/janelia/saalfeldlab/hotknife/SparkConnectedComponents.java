@@ -18,7 +18,6 @@ package org.janelia.saalfeldlab.hotknife;
 
 import java.io.IOException;
 import java.io.Serializable;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -42,18 +41,19 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 import net.imglib2.Cursor;
+import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.NativeType;
-import net.imglib2.type.numeric.integer.UnsignedLongType;
+import net.imglib2.type.numeric.integer.*;
 import net.imglib2.view.Views;
 
 /**
- * Export a render stack to N5.
+ * Connected components on entire stack
  *
- * @author Stephan Saalfeld &lt;saalfelds@janelia.hhmi.org&gt;
+ * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
 public class SparkConnectedComponents {
 
@@ -79,6 +79,9 @@ public class SparkConnectedComponents {
 		@Option(name = "--outputN5Group", required = true, usage = "N5 dataset, e.g. /Sec26")
 		private String outputDatasetName = null;
 
+		@Option(name = "--maskN5Path", required = true, usage = "N5 dataset, e.g. /Sec26")
+		private String maskN5Path = null;
+		
 		public Options(final String[] args) {
 
 			final CmdLineParser parser = new CmdLineParser(this);
@@ -110,6 +113,10 @@ public class SparkConnectedComponents {
 		public String getOutputDatasetName() {
 			return outputDatasetName;
 		}
+		
+		public String getMaskN5Path() {
+			return maskN5Path;
+		}
 	}
 
 
@@ -133,7 +140,8 @@ public class SparkConnectedComponents {
 			final String inputN5Path,
 			final String inputDatasetName,
 			final String outputN5Path,
-			final String outputDatasetName) throws IOException {
+			final String outputDatasetName,
+			final String maskN5PathName) throws IOException {
 
 		final N5Writer n5Reader = new N5FSWriter(inputN5Path);
 		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
@@ -159,19 +167,42 @@ public class SparkConnectedComponents {
 
 		JavaRDD<Set<List<Long>>> javaRDDsets = rdd.map(
 				gridBlock -> {
-					final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-					final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
-					final RandomAccessibleInterval<UnsignedLongType> source = N5Utils.open(n5ReaderLocal, inputDatasetName);
+					long [] offset = gridBlock[0];
+					long [] dimension = gridBlock[1];
 					
+					final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
+					
+					final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
+					final RandomAccessibleInterval<UnsignedByteType> source = N5Utils.open(n5ReaderLocal, inputDatasetName);
+					final RandomAccessibleInterval<UnsignedByteType> sourceInterval = Views.offsetInterval(source, offset, dimension);
+					
+					final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5PathName);
+					final RandomAccessibleInterval<UnsignedByteType> mask = N5Utils.open(n5MaskReaderLocal, "/volumes/masks/foreground");
+					final RandomAccessibleInterval<UnsignedByteType> maskInterval = Views.offsetInterval(mask, new long [] {offset[0]/2, offset[1]/2, offset[2]/2}, new long[] {dimension[0]/2, dimension[1]/2, dimension[2]/2});
+					
+					Cursor<UnsignedByteType> sourceCursor = Views.flatIterable(sourceInterval).cursor();
+					RandomAccess<UnsignedByteType> maskRandomAccess = maskInterval.randomAccess();
+//					ImageJFunctions.show(sourceInterval);
+					while (sourceCursor.hasNext()) {
+						final UnsignedByteType voxel = sourceCursor.next();
+						final long [] positionInMask = {(long) Math.floor(sourceCursor.getDoublePosition(0)/2), (long) Math.floor(sourceCursor.getDoublePosition(1)/2), (long) Math.floor(sourceCursor.getDoublePosition(2)/2)};
+						maskRandomAccess.setPosition(positionInMask);
+						if (maskRandomAccess.get().getRealDouble()==0){
+							voxel.setInteger(0);
+						}
+					}
+//					ImageJFunctions.show(maskInterval);
+//					ImageJFunctions.show(sourceInterval);
 					long [] sourceDimensions = {0,0,0};
 					source.dimensions(sourceDimensions);
-					final RandomAccessibleInterval<UnsignedLongType> sourceInterval = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
-					final ConnectedComponentsOp<UnsignedLongType> connectedComponentsOp = new ConnectedComponentsOp<>(sourceInterval, sourceDimensions, false);
+					
+					final ConnectedComponentsOp<UnsignedByteType> connectedComponentsOp = new ConnectedComponentsOp<>(sourceInterval, sourceDimensions, false);
 					long [] currentDimensions = {0,0,0};
 					sourceInterval.dimensions(currentDimensions);
 					final Img< UnsignedLongType> output = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType())
-				            .create( currentDimensions);					
-					Set<List<Long>> uniqueIDSet = connectedComponentsOp.computeConnectedComponents(sourceInterval, output, blockSizeL, gridBlock[0]);
+				            .create( currentDimensions);
+					Set<List<Long>> uniqueIDSet = connectedComponentsOp.computeConnectedComponents(sourceInterval, output, blockSizeL, offset);
+//					ImageJFunctions.show(output);
 					N5Utils.saveBlock(output, n5WriterLocal, outputDatasetName, gridBlock[2]);
 					
 					return uniqueIDSet;
@@ -269,22 +300,15 @@ public class SparkConnectedComponents {
         	arrayOfUnions[count][1] = currentPair.get(1);
         	count++;
         }
-        //arrayOfUnions = globalIDtoGlobalIDFinalSet.toArray(arrayOfUnions);
+
         System.out.println("Total unions = "+arrayOfUnions.length);
 		long t2 = System.currentTimeMillis();
         
         UnionFindDGA unionFind = new UnionFindDGA(arrayOfUnions);
-		/*
-		for (Map.Entry<Long, Long> entry : unionFind.globalIDtoRootID.entrySet()) {
-			System.out.println(entry.getKey() + ":" + entry.getValue().toString());
-		}
-		*/
 		unionFind.renumberRoots();
 		
 		long t3 = System.currentTimeMillis();
-		/*for (Map.Entry<Long, Long> entry : unionFind.globalIDtoRootID.entrySet()) {
-			System.out.println(entry.getKey() + ":" + entry.getValue().toString());
-		}  */ 
+	
 		System.out.println("collect time: "+(t1-t0));
 		System.out.println("build array time: "+(t2-t1));
 		System.out.println("union find time: "+(t3-t2));
@@ -382,15 +406,10 @@ public class SparkConnectedComponents {
 		final SparkConf conf = new SparkConf().setAppName("SparkRandomSubsampleN5");
 		JavaSparkContext sc = new JavaSparkContext(conf);
 
-		Set<List<Long>> uniqueIDSet = blockwiseConnectedComponents(sc, options.getInputN5Path(), options.getInputDatasetName(), options.getOutputN5Path(), options.getOutputDatasetName());
-		//sc.close();
+		Set<List<Long>> uniqueIDSet = blockwiseConnectedComponents(sc, options.getInputN5Path(), options.getInputDatasetName(), options.getOutputN5Path(), options.getOutputDatasetName(), options.getMaskN5Path());
 	
-		//Set<List<Long>> uniqueIDSet = new HashSet<>();
-		//sc = new JavaSparkContext(conf);
 		Map<Long, Long> globalIDtoRootID = unionFindConnectedComponents(sc, options.getOutputN5Path(), options.getOutputDatasetName(), uniqueIDSet);
-		//sc.close();
 		
-		//sc = new JavaSparkContext(conf);
 		mergeConnectedComponents(sc, options.getOutputN5Path(), options.getOutputDatasetName(), options.getOutputN5Path(), options.getOutputDatasetName()+"_renumbered", globalIDtoRootID);
 		sc.close();
 	}

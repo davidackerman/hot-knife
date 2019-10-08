@@ -82,10 +82,10 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		output.dimensions(outputDimensions);
 		final RandomAccessibleInterval<? extends T>  sourceInterval = Views.offsetInterval(source,  minimumPosition, outputDimensions);
 		
-		computeConnectedComponents(sourceInterval, output, outputDimensions, null);
+		computeConnectedComponents(sourceInterval, (RandomAccessibleInterval<UnsignedLongType>) output, outputDimensions, null);
 	}
 	
-	public Set<List<Long>> computeConnectedComponents(RandomAccessibleInterval<? extends T>  sourceInterval, RandomAccessibleInterval<T>  output, long [] outputDimensions, long [] offset) {
+	public Set<List<Long>> computeConnectedComponents(RandomAccessibleInterval<? extends T>  sourceInterval, RandomAccessibleInterval<UnsignedLongType>  output, long [] outputDimensions, long [] offset) {
 		// threshold sourceInterval using cutoff of 127
 		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval, (a, b) -> b.set(a.getRealDouble() >127), new BoolType());
 		
@@ -94,7 +94,7 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		ConnectedComponentAnalysis.connectedComponents(thresholded, components);
 	
 		// cursors over output and components
-		Cursor<T> o = Views.flatIterable(output).cursor();
+		Cursor<UnsignedLongType> o = Views.flatIterable(output).cursor();
 		final Cursor<UnsignedLongType> c = Views.flatIterable(components).cursor();
 		
 		
@@ -104,7 +104,7 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		double labelBasedOnMaxVoxelIndexInComponent[] = new double[(int) (outputDimensions[0]*outputDimensions[1]*outputDimensions[2])]; 
 		
 		while (o.hasNext()) {
-			final T tO = o.next();
+			final UnsignedLongType tO = o.next();
 			final UnsignedLongType tC = c.next();
 			if(tC.getRealDouble()>0) {
 				tO.setReal(tC.getRealDouble());
@@ -132,7 +132,7 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		// update output labels based on max voxel labels
 		o = Views.flatIterable(output).cursor();
 		while (o.hasNext()) {
-			final T tO = o.next();
+			final UnsignedLongType tO = o.next();
 			if (tO.getRealDouble()!=0) {
 				double newLabel = 0;
 				if (isDisplayed) {//scale to fit in range
