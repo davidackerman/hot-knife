@@ -182,7 +182,6 @@ public class SparkConnectedComponents {
 					
 					Cursor<UnsignedByteType> sourceCursor = Views.flatIterable(sourceInterval).cursor();
 					RandomAccess<UnsignedByteType> maskRandomAccess = maskInterval.randomAccess();
-//					ImageJFunctions.show(sourceInterval);
 					while (sourceCursor.hasNext()) {
 						final UnsignedByteType voxel = sourceCursor.next();
 						final long [] positionInMask = {(long) Math.floor(sourceCursor.getDoublePosition(0)/2), (long) Math.floor(sourceCursor.getDoublePosition(1)/2), (long) Math.floor(sourceCursor.getDoublePosition(2)/2)};
@@ -191,8 +190,7 @@ public class SparkConnectedComponents {
 							voxel.setInteger(0);
 						}
 					}
-//					ImageJFunctions.show(maskInterval);
-//					ImageJFunctions.show(sourceInterval);
+
 					long [] sourceDimensions = {0,0,0};
 					source.dimensions(sourceDimensions);
 					
@@ -202,7 +200,6 @@ public class SparkConnectedComponents {
 					final Img< UnsignedLongType> output = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType())
 				            .create( currentDimensions);
 					Set<List<Long>> uniqueIDSet = connectedComponentsOp.computeConnectedComponents(sourceInterval, output, blockSizeL, offset);
-//					ImageJFunctions.show(output);
 					N5Utils.saveBlock(output, n5WriterLocal, outputDatasetName, gridBlock[2]);
 					
 					return uniqueIDSet;
