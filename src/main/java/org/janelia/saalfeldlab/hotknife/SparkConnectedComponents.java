@@ -19,6 +19,7 @@ package org.janelia.saalfeldlab.hotknife;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,6 @@ import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.view.Views;
@@ -356,25 +356,53 @@ public class SparkConnectedComponents {
 						Grid.create(
 								outputDimensions,
 								blockSize));
-
-		rdd.foreach(
+		JavaRDD<Map<Long,long[]>> javaRDDsets=
+		rdd.map(
 				gridBlock -> {
+					long [] offset = gridBlock[0];
+					long [] dimension = gridBlock[1];
 					final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
 					final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
 					final RandomAccessibleInterval<UnsignedLongType> source = N5Utils.open(n5ReaderLocal, inputDatasetName);
 					
-					final RandomAccessibleInterval<UnsignedLongType> sourceInterval = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
+					final RandomAccessibleInterval<UnsignedLongType> sourceInterval = Views.offsetInterval(source, offset, dimension);
 					Cursor<UnsignedLongType> sourceCursor = Views.flatIterable(sourceInterval).cursor();
+					
+					Map<Long, long[]> globalIDtoCOMandVolume = new HashMap<Long,long[]>();
 					while (sourceCursor.hasNext()) {
 						final UnsignedLongType voxel = sourceCursor.next();
 						long currentValue = voxel.getLong();
 						if (currentValue>0){
-							voxel.setLong( globalIDtoRootID.get(currentValue));
+							long currentRoot = globalIDtoRootID.get(currentValue);
+							voxel.setLong( currentRoot);
+							if(!globalIDtoCOMandVolume.containsKey(currentRoot)) {
+								globalIDtoCOMandVolume.put(currentRoot, new long[]{0,0,0,0});
+							}
+							long[] currentRootCOMandVolume = globalIDtoCOMandVolume.get(currentRoot);
+							currentRootCOMandVolume[0]+=sourceCursor.getLongPosition(0)+offset[0];
+							currentRootCOMandVolume[1]+=sourceCursor.getLongPosition(1)+offset[1];
+							currentRootCOMandVolume[2]+=sourceCursor.getLongPosition(2)+offset[2];
+							currentRootCOMandVolume[3]++;
+							globalIDtoCOMandVolume.put(currentRoot, currentRootCOMandVolume);
+							
 						}
-						
 					}
 					N5Utils.saveBlock(sourceInterval, n5WriterLocal, outputDatasetName, gridBlock[2]);
-				});		
+					return globalIDtoCOMandVolume;
+				});	
+		
+		Map<Long, long[]> finalGlobalIDtoCOMandVolume= new HashMap<Long, long[]>();
+		List<Map<Long, long[]>> globalIDtoCOMandVolumeCollectedMaps=javaRDDsets.collect();
+		for(Map<Long, long[]>  currentGlobalIDtoCOMandVolume:globalIDtoCOMandVolumeCollectedMaps){
+			for (Map.Entry<Long, long[]> entry : currentGlobalIDtoCOMandVolume.entrySet()) {
+				long key = entry.getKey();
+				long [] value = entry.getValue();			
+				if(!finalGlobalIDtoCOMandVolume.containsKey(key)) {
+					
+				}
+			}
+			
+        }
 	}
 	
 	public static final void getGlobalIDsToMerge(RandomAccessibleInterval<UnsignedLongType> hyperSlice1, RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Set<List<Long>> globalIDtoGlobalIDSet) {
