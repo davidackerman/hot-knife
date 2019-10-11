@@ -6,19 +6,19 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$ABS_DIR/flintstone/flintstone-lsd.sh
 JAR=$PWD/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkConnectedComponents
-N_NODES=5
+N_NODES=2
 
-INPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_crop.n5'
-INPUTN5GROUP='mito'
-OUTPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_crop.n5'
-OUTPUTN5GROUP='mito_cc'
+INPUTN5PATH='/nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5'
+OUTPUTN5PATH='/groups/cosem/cosem/ackermand/test_2.n5'
+#INPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_crop.n5'
+#OUTPUTN5PATH='/groups/cosem/cosem/ackermand/junk.n5'
 MASKN5PATH='/groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5/'
 
 ARGV="\
+--inputN5Group 'LD' \
 --inputN5Path '$INPUTN5PATH' \
---inputN5Group '$INPUTN5GROUP' \
 --outputN5Path '$OUTPUTN5PATH' \
---outputN5Group '$OUTPUTN5GROUP' \
 --maskN5Path '$MASKN5PATH'"
 
+export RUNTIME="24:00"
 TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV

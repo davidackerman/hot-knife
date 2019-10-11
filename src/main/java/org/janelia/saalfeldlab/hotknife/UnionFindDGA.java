@@ -58,7 +58,7 @@ public class UnionFindDGA {
 			long key = entry.getKey();
 			long value = entry.getValue();			
 			globalIDtoRootID.put(key, renumberRootsMap.get(value));
-		}
+		}		
 	}
 
 	public void union(long globalID1, long globalID2) {
