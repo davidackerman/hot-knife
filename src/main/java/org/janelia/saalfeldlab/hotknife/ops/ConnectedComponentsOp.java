@@ -85,7 +85,7 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 		computeConnectedComponents(sourceInterval, (RandomAccessibleInterval<UnsignedLongType>) output, outputDimensions, null);
 	}
 	
-	public Set<List<Long>> computeConnectedComponents(RandomAccessibleInterval<? extends T>  sourceInterval, RandomAccessibleInterval<UnsignedLongType>  output, long [] outputDimensions, long [] offset) {
+	public Set<Long> computeConnectedComponents(RandomAccessibleInterval<? extends T>  sourceInterval, RandomAccessibleInterval<UnsignedLongType>  output, long [] outputDimensions, long [] offset) {
 		// threshold sourceInterval using cutoff of 127
 		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval, (a, b) -> b.set(a.getRealDouble() >127), new BoolType());
 		
@@ -128,7 +128,7 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 			}
 		}
 		
-		Set<List<Long>> uniqueIDSet = new HashSet<List<Long>>();
+		Set<Long> uniqueIDSet = new HashSet<Long>();
 		// update output labels based on max voxel labels
 		o = Views.flatIterable(output).cursor();
 		while (o.hasNext()) {
@@ -140,7 +140,7 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 				}
 				else {
 					newLabel = labelBasedOnMaxVoxelIndexInComponent[(int) tO.getRealDouble()];
-					uniqueIDSet.add(Arrays.asList((long) newLabel, (long) newLabel));
+					uniqueIDSet.add((long) newLabel);
 				}
 				tO.setReal(newLabel);
 			}

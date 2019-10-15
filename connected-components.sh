@@ -6,7 +6,7 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$ABS_DIR/flintstone/flintstone-lsd.sh
 JAR=$PWD/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkConnectedComponents
-N_NODES=1
+N_NODES=10
 
 INPUTN5PATH='/nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5'
 INPUTN5GROUP='nucleolus'
