@@ -143,13 +143,14 @@ public class SparkConnectedComponents {
 	 * @throws IOException
 	 */
 	@SuppressWarnings("unchecked")
-	public static final <T extends NativeType<T>> List<Set<Long>>  blockwiseConnectedComponents(
+	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc,
 			final String inputN5Path,
 			final String inputDatasetName,
 			final String outputN5Path,
 			final String outputDatasetName,
-			final String maskN5PathName) throws IOException {
+			final String maskN5PathName,
+			List<BlockInformation> blockInformationList) throws IOException {
 
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
 		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
@@ -167,14 +168,12 @@ public class SparkConnectedComponents {
 					org.janelia.saalfeldlab.n5.DataType.UINT64,
 					attributes.getCompression());
 
-		final JavaRDD<long[][]> rdd =
-				sc.parallelize(
-						Grid.create(
-								outputDimensions,
-								blockSize));
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 
-		JavaRDD<Set<Long>> javaRDDsets = rdd.map(
-				gridBlock -> {
+		JavaRDD<BlockInformation> javaRDDsets=
+				rdd.map(
+				currentBlockInformation -> {
+					long [][] gridBlock = currentBlockInformation.gridBlock;
 					long [] offset = gridBlock[0];
 					long [] dimension = gridBlock[1];
 					
@@ -207,15 +206,13 @@ public class SparkConnectedComponents {
 					sourceInterval.dimensions(currentDimensions);
 					final Img< UnsignedLongType> output = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType())
 				            .create( currentDimensions);
-					Set<Long> uniqueIDSet = connectedComponentsOp.computeConnectedComponents(sourceInterval, output, blockSizeL, offset);
+					Set<Long> edgeComponentIDs = connectedComponentsOp.computeConnectedComponents(sourceInterval, output, blockSizeL, offset);
+					currentBlockInformation.edgeComponentIDs = edgeComponentIDs;
 					N5Utils.saveBlock(output, n5WriterLocal, outputDatasetName, gridBlock[2]);
-					
-					return uniqueIDSet;
+					return currentBlockInformation;
 				});
-		
-		List<Set<Long>> uniqueIDCollectedSets=javaRDDsets.collect();
-		return uniqueIDCollectedSets;
-		
+		blockInformationList=javaRDDsets.collect();
+		return blockInformationList;				
 	}
 
 
@@ -234,11 +231,11 @@ public class SparkConnectedComponents {
 	 * @throws IOException
 	 */
 	@SuppressWarnings("unchecked")
-	public static final <T extends NativeType<T>> Map<Long,Long> unionFindConnectedComponents(
+	public static final <T extends NativeType<T>> List< BlockInformation> unionFindConnectedComponents(
 			final JavaSparkContext sc,
 			final String inputN5Path,
 			final String inputDatasetName,
-			final List<Set<Long>> uniqueIDCollectedSets) throws IOException {
+			List<BlockInformation> blockInformationList) throws IOException {
 			
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
 
@@ -246,15 +243,14 @@ public class SparkConnectedComponents {
 		final int[] blockSize = attributes.getBlockSize();
 		final long[] outputDimensions = attributes.getDimensions();
 
-		final JavaRDD<long[][]> rdd =
+		final JavaRDD<BlockInformation> rdd =
 				sc.parallelize(
-						Grid.create(
-								outputDimensions,
-								blockSize));
+						blockInformationList);
 		
 		JavaRDD<Set<List<Long>>> javaRDDsets=
 		rdd.map(
-				gridBlock -> {
+				currentBlockInformation -> {
+					final long[][] gridBlock = currentBlockInformation.gridBlock;
 					final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
 					final RandomAccessibleInterval<UnsignedLongType> source = N5Utils.open(n5ReaderLocal, inputDatasetName);
 					long [] sourceDimensions = {0,0,0};
@@ -295,22 +291,8 @@ public class SparkConnectedComponents {
         }
         System.out.println(globalIDtoGlobalIDFinalSet.size());
         long [][] arrayOfUnions = new long[globalIDtoGlobalIDFinalSet.size()][2];
-        
-		Set<Long> uniqueIDFinalSet = new HashSet<Long>();
-		long totalSize = 0L;
-		for(Set<Long>  currentUniqueIDSet:uniqueIDCollectedSets){
-			uniqueIDFinalSet.addAll(currentUniqueIDSet);
-			totalSize+=currentUniqueIDSet.size();
-			System.out.println("running size: "+totalSize);
-			
-        }
 		
         int count = 0;
-        for( Long currentUnqiueID : uniqueIDFinalSet) {
-        	arrayOfUnions[count][0] = currentUnqiueID;
-        	arrayOfUnions[count][1] = currentUnqiueID;
-        	count++;
-        }
         for( List<Long> currentPair : globalIDtoGlobalIDFinalSet) {
         	arrayOfUnions[count][0] = currentPair.get(0);
         	arrayOfUnions[count][1] = currentPair.get(1);
@@ -321,14 +303,27 @@ public class SparkConnectedComponents {
 		long t2 = System.currentTimeMillis();
         
         UnionFindDGA unionFind = new UnionFindDGA(arrayOfUnions);
-		unionFind.renumberRoots();
+        unionFind.getFinalRoots();
 		
 		long t3 = System.currentTimeMillis();
 	
 		System.out.println("collect time: "+(t1-t0));
 		System.out.println("build array time: "+(t2-t1));
 		System.out.println("union find time: "+(t3-t2));
-		return unionFind.globalIDtoRootID;
+		for(BlockInformation currentBlockInformation : blockInformationList) {
+			Map<Long,Long> currentGlobalIDtoRootIDMap = new HashMap<Long,Long>(); 
+			for(Long currentEdgeComponentID : currentBlockInformation.edgeComponentIDs) {
+				Long key, value;
+				key = currentEdgeComponentID;
+				if(unionFind.globalIDtoRootID.containsKey(key)) {//Need this check since not all edge objects will be connected to neighboring blocks
+					value = unionFind.globalIDtoRootID.get(currentEdgeComponentID);
+					currentGlobalIDtoRootIDMap.put(key, value);
+				}
+			}
+			currentBlockInformation.edgeComponentIDtoRootIDmap = currentGlobalIDtoRootIDMap;
+		}
+		
+		return blockInformationList;
 	}
 	
 	/**
@@ -352,21 +347,17 @@ public class SparkConnectedComponents {
 			final String inputN5Path,
 			final String inputDatasetName,
 			final String outputDatasetName,
-			final List<Set<Long>> uniqueIDCollectedSets,
-			final Map<Long, Long> globalIDtoRootID ) throws IOException {
+			final List< BlockInformation> blockInformationList ) throws IOException {
 		
 		final PrintWriter driverOut = new PrintWriter("/groups/cosem/cosem/ackermand/tmp/logDriver.txt");
 
-		logMsg("A", driverOut);
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
 		final N5Writer n5Writer = new N5FSWriter(inputN5Path);
 
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputDatasetName);
 		final int[] blockSize = attributes.getBlockSize();
 		final long[] outputDimensions = attributes.getDimensions();
-		logMsg("B", driverOut);
 		n5Writer.createGroup(outputDatasetName);
-		logMsg("C", driverOut);
 		n5Writer.createDataset(
 					outputDatasetName,
 					outputDimensions,
@@ -374,8 +365,6 @@ public class SparkConnectedComponents {
 					org.janelia.saalfeldlab.n5.DataType.UINT64,
 					attributes.getCompression());
 		
-		logMsg("D", driverOut);
-		final List< BlockInformation>blockInformation = mapAndGridForMergeConnectedComponents(uniqueIDCollectedSets, globalIDtoRootID, outputDimensions, blockSize); 
 		/*final List<long[][]> chunks = Grid.create(
 				outputDimensions,
 				blockSize);
@@ -385,50 +374,33 @@ public class SparkConnectedComponents {
         final JavaRDD<long[][]> rdd =
 				sc.parallelize(chunks);
         */
-        final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformation);
-		logMsg("E2", driverOut);
+        final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		
 		rdd.foreach(
 				currentBlockInformation -> {
-					final Map<Long,Long> currentBlockGlobalIDtoRootID = currentBlockInformation.map;
+					final Map<Long,Long> edgeComponentIDtoRootIDmap = currentBlockInformation.edgeComponentIDtoRootIDmap;
 					final long[][] gridBlock = currentBlockInformation.gridBlock;
 					long [] offset = gridBlock[0];
 					long [] dimension = gridBlock[1];
 					final PrintWriter out = null; //new PrintWriter(String.format("/groups/cosem/cosem/ackermand/tmp/logMemory-%d_%d_%d.txt", offset[0],offset[1],offset[2]));
-					logMemory("BEFORE", out);
 					final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-					logMemory("N5READER CREATED", out);
 					final RandomAccessibleInterval<UnsignedLongType> source = N5Utils.open(n5ReaderLocal, inputDatasetName);
-					logMemory("SOURCE CREATED", out);
 					//final Map<Long,Long> globalIDtoRootID = broadcastGlobalIDtoRootID.value();
-					logMemory("MAP LOADED", out);
 					final RandomAccessibleInterval<UnsignedLongType> sourceInterval = Views.offsetInterval(source, offset, dimension);
-					logMemory("SOURCE INTERVAL CREATED", out);
 					Cursor<UnsignedLongType> sourceCursor = Views.flatIterable(sourceInterval).cursor();
-					logMemory("CURSOR CREATED", out);
 					while (sourceCursor.hasNext()) {
 						final UnsignedLongType voxel = sourceCursor.next();
 						long currentValue = voxel.getLong();
-						if(currentValue>0) {
-							try {
-								Long currentRoot = currentBlockGlobalIDtoRootID.get(currentValue);
-								voxel.setLong( currentRoot);
-							}
-							catch(Exception e){
-								throw new java.lang.Error("Corrupt map from global ID to renumbered ID");
-							}
-						}
-						
+						if(currentValue>0 && edgeComponentIDtoRootIDmap.containsKey(currentValue)) {
+								Long currentRoot = edgeComponentIDtoRootIDmap.get(currentValue);
+								voxel.setLong( currentRoot);			
+						}			
 					}
-					logMemory("UPDATED SOURCE", out);
 
 					final N5Writer n5WriterLocal = new N5FSWriter(inputN5Path);
-					logMemory("N5WRITER CREATED", out);
 					N5Utils.saveBlock(sourceInterval, n5WriterLocal, outputDatasetName, gridBlock[2]);
-					logMemory("N5 SAVED", out);
 					//out.close();
 				});	
-		logMsg("E3", driverOut);
 
 
 	    driverOut.close();
@@ -450,30 +422,49 @@ public class SparkConnectedComponents {
 		//out.flush();
 		
 	}
-	
-	public static List< BlockInformation> mapAndGridForMergeConnectedComponents(final List<Set<Long>>  setOfUniqueIDs, final Map<Long, Long> globalIDtoRootID, final long[] outputDimensions, final int[] blockSize) {
+/*	
+	public static List< BlockInformation> mapAndGridForMergeConnectedComponents(final List<Set<List<Long>>> globalIDtoGlobalIDCollectedSets, final Map<Long, Long> globalIDtoRootID, final long[] outputDimensions, final int[] blockSize) {
 		final List<long[][]> chunks = Grid.create(
 				outputDimensions,
 				blockSize);
 		
-		//List< BlockInformationPair<Map<Long,Long>, long[][] >> blockInformation = new ArrayList< BlockInformationPair< Map<Long,Long>, long[][] >>();
 		
 		List< BlockInformation> blockInformation = new ArrayList< BlockInformation>();
 		for (int i=0; i<chunks.size(); i++) {
 			long[][] currentGridBlock = chunks.get(i);
 			
-			final Set<Long> currentBlockUniqueIDs = setOfUniqueIDs.get(i);
+			final Set<List<Long>> currentBlockGlobalIDtoGlobalID = globalIDtoGlobalIDCollectedSets.get(i);
 			final Map<Long, Long> currentBlockGlobalIDtoRootID = new HashMap<>();
-			for  (Long currentUniqueID : currentBlockUniqueIDs) {
-				final Long key = currentUniqueID;
+			for  (List<Long> currentGlobalIDToGlobalID : currentBlockGlobalIDtoGlobalID) {
+				final Long key = currentGlobalIDToGlobalID.get(0);
+				//final Long key1 = currentGlobalIDToGlobalID.get(1); //reason for this is that we don't know a priori which of the two keys comes from the block of interest, so add both in case
 				currentBlockGlobalIDtoRootID.put(key, globalIDtoRootID.get(key));
+				//currentBlockGlobalIDtoRootID.put(key1, globalIDtoRootID.get(key1));
+
 			}
 			final BlockInformation currentBlockInformation = new BlockInformation(currentBlockGlobalIDtoRootID, currentGridBlock);
 			blockInformation.add(currentBlockInformation);
 		}
 		return blockInformation;
 	}
+*/
+	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path, final String inputDatasetName) throws IOException{
+		N5Reader n5Reader = new N5FSReader(inputN5Path);
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputDatasetName);
+		final int[] blockSize = attributes.getBlockSize();
+		final long[] outputDimensions = attributes.getDimensions();
 
+		List<long[][]> gridBlockList = Grid.create(
+								outputDimensions,
+								blockSize);
+		List<BlockInformation> blockInformationList = new ArrayList< BlockInformation>();
+		for (int i=0; i<gridBlockList.size(); i++) {
+			long[][] currentGridBlock = gridBlockList.get(i);
+			blockInformationList.add( new BlockInformation(currentGridBlock, null, null));
+		}
+		return blockInformationList;
+	}
+	
 	public static final void getGlobalIDsToMerge(RandomAccessibleInterval<UnsignedLongType> hyperSlice1, RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Set<List<Long>> globalIDtoGlobalIDSet) {
 		if (hyperSlice1!=null && hyperSlice2!=null) {
 			Cursor<UnsignedLongType> hs1Cursor = Views.flatIterable(hyperSlice1).cursor();
@@ -482,7 +473,7 @@ public class SparkConnectedComponents {
 				long hs1Value = hs1Cursor.next().getLong();
 				long hs2Value = hs2Cursor.next().getLong();
 				if (hs1Value >0 && hs2Value > 0 ) {
-					globalIDtoGlobalIDSet.add(Arrays.asList(Math.min(hs1Value,hs2Value), Math.max(hs1Value,hs2Value)));
+					globalIDtoGlobalIDSet.add(Arrays.asList(hs1Value, hs2Value));//hs1->hs2 pair should always be distinct since hs1 is unique to first block
 				}
 			}
 
@@ -514,18 +505,20 @@ public class SparkConnectedComponents {
 			});
 		}
 		System.out.println(Arrays.toString(organelles));
-
+		
 		for(String currentOrganelle : organelles) {
+			
+			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			logMsg(currentOrganelle,null);
+			logMemory(currentOrganelle,null);
 			final String tempOutputDatasetName = currentOrganelle+"_blockwise_cc_temp_to_delete";
 			final String finalOutputDatasetName = currentOrganelle+"_cc";
-			final List<Set<Long>> uniqueIDCollectedSets = blockwiseConnectedComponents(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(), tempOutputDatasetName, options.getMaskN5Path());	
-			logMsg("Stage 1 complete",null);
-			final Map<Long, Long> globalIDtoRootID = unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputDatasetName, uniqueIDCollectedSets);
-			logMsg("Stage 2 complete",null);
-			mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputDatasetName, finalOutputDatasetName, uniqueIDCollectedSets, globalIDtoRootID);
-			logMsg("Stage 3 complete",null);
+			blockInformationList = blockwiseConnectedComponents(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(), tempOutputDatasetName, options.getMaskN5Path(), blockInformationList);	
+			logMemory("Stage 1 complete",null);
+			blockInformationList = unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputDatasetName, blockInformationList);
+			logMemory("Stage 2 complete",null);
+			mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputDatasetName, finalOutputDatasetName, blockInformationList);
+			logMemory("Stage 3 complete",null);
 			sc.close();
 		}
 		

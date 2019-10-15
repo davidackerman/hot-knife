@@ -41,6 +41,12 @@ public class UnionFindDGA {
 
 	}
 	
+	public void getFinalRoots() {
+		for (Map.Entry<Long, Long> entry : globalIDtoRootID.entrySet()) {
+			findRoot(entry.getKey());			
+		}		
+	}
+	
 	public void renumberRoots() {
 		Map <Long, Long> renumberRootsMap = new HashMap<Long, Long>();
 		long count = 1;

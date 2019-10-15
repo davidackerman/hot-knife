@@ -128,7 +128,7 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 			}
 		}
 		
-		Set<Long> uniqueIDSet = new HashSet<Long>();
+		Set<Long> edgeComponentIDs = new HashSet<Long>();
 		// update output labels based on max voxel labels
 		o = Views.flatIterable(output).cursor();
 		while (o.hasNext()) {
@@ -140,14 +140,20 @@ public class ConnectedComponentsOp<T extends RealType<T> & NumericType<T> & Nati
 				}
 				else {
 					newLabel = labelBasedOnMaxVoxelIndexInComponent[(int) tO.getRealDouble()];
-					uniqueIDSet.add((long) newLabel);
+				//	uniqueIDSet.add((long) newLabel);
+					if (o.getIntPosition(0)==0 || o.getIntPosition(0)==outputDimensions[0]-1 ||
+							o.getIntPosition(1)==0 || o.getIntPosition(1)==outputDimensions[1]-1 ||
+							o.getIntPosition(2)==0 || o.getIntPosition(2)==outputDimensions[2]-1) {
+						edgeComponentIDs.add((long) newLabel);
+					}
 				}
+				
 				tO.setReal(newLabel);
 			}
 			
 		}
 		
-		return uniqueIDSet;
+		return edgeComponentIDs;
 	}
 	
 }
