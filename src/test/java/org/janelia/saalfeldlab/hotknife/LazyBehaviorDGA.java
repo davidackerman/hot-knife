@@ -6,7 +6,6 @@ package org.janelia.saalfeldlab.hotknife;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import org.janelia.saalfeldlab.hotknife.ops.ConnectedComponentsOp;
 import org.janelia.saalfeldlab.hotknife.ops.ContactSites;
 import org.janelia.saalfeldlab.hotknife.util.Lazy;
 import org.janelia.saalfeldlab.n5.N5FSReader;
@@ -117,7 +116,7 @@ public class LazyBehaviorDGA {
 		// connected components: here just doing it for one organelle
 		long [] sourceDimensions = {0,0,0};
 		img.get(1).dimensions(sourceDimensions);
-		final ConnectedComponentsOp<DoubleType> connectedComponentsOp = new ConnectedComponentsOp<>(source.get(1), sourceDimensions, true );
+		/*final ConnectedComponentsOp<DoubleType> connectedComponentsOp = new ConnectedComponentsOp<>(source.get(1), sourceDimensions, true );
 		final RandomAccessibleInterval<DoubleType> connectedComponents = Lazy.process(
 				img.get(0),
 				blockSize,
@@ -125,7 +124,7 @@ public class LazyBehaviorDGA {
 				AccessFlags.setOf(AccessFlags.VOLATILE),
 				connectedComponentsOp);
 		analysisResults.add(connectedComponents);
-		
+		*/
 		// show contact sites in blue channel, and connected components in yellow
 		imgCount=0;
 		for (final RandomAccessibleInterval<DoubleType> currentAnalysisResults : analysisResults) {

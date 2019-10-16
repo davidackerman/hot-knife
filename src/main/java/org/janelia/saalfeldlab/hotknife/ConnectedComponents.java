@@ -18,6 +18,9 @@ package org.janelia.saalfeldlab.hotknife;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
@@ -48,7 +51,7 @@ public class ConnectedComponents {
 	 * @throws IOException
 	 */
 	public static void main(final String[] args) throws IOException {
-
+		Set<long[][]> temp = new HashSet<>();
 		final N5FSReader n5 = new N5FSReader("/nrs/saalfeld/FAFB00/v14_align_tps_20170818_dmg.n5");
 		final RandomAccessibleInterval<UnsignedByteType> img = N5Utils.open(n5, "/volumes/predictions/synapses_dt_reblocked/s0");
 

@@ -8,17 +8,32 @@ public class UnionFindDGA {
 	public Map<Long, Long> globalIDtoRootID;
 	public Map<Long, Integer> globalIDtoRank;
 
+	public UnionFindDGA(Set<List<Long>> initialGlobalIDtoGlobalID) {
+		this.globalIDtoRootID = new HashMap<Long, Long>();
+		this.globalIDtoRank = new HashMap<Long, Integer>();
+		for (final List<Long> currentPair : initialGlobalIDtoGlobalID) {
+			long globalID1 = currentPair.get(0);
+			long globalID2 = currentPair.get(1);
+			globalIDtoRootID.put(globalID1, globalID1);
+			globalIDtoRootID.put(globalID2, globalID2);
+			globalIDtoRank.put(globalID1, 0);
+			globalIDtoRank.put(globalID2, 0);
+		}
+
+		for (List<Long> currentPair: initialGlobalIDtoGlobalID) {
+			long globalID1 = currentPair.get(0);
+			long globalID2 = currentPair.get(1);
+			union(globalID1, globalID2);
+		}
+		
+	}
+	
 	public UnionFindDGA(long[][] initialGlobalIDtoGlobalID) {
 		this.globalIDtoRootID = new HashMap<Long, Long>();
 		this.globalIDtoRank = new HashMap<Long, Integer>();
 		for (int i = 0; i < initialGlobalIDtoGlobalID.length; i++) {
 			long globalID1 = initialGlobalIDtoGlobalID[i][0];
 			long globalID2 = initialGlobalIDtoGlobalID[i][1];
-			/*// want to make sure first global ID is already in it
-			if (globalIDtoRootID.containsKey(globalID2) && !globalIDtoRootID.containsKey(globalID1)) {
-				initialGlobalIDtoGlobalID[i][0] = globalID2;
-				initialGlobalIDtoGlobalID[i][1] = globalID1;
-			}*/
 			globalIDtoRootID.put(globalID1, globalID1);
 			globalIDtoRootID.put(globalID2, globalID2);
 			globalIDtoRank.put(globalID1, 0);

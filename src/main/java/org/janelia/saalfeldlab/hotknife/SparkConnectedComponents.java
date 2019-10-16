@@ -64,23 +64,15 @@ import net.imglib2.util.Intervals;
 import net.imglib2.view.Views;
 
 /**
- * Connected components on entire stack
+ * Connected components for an entire n5 volume
  *
  * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
 public class SparkConnectedComponents {
-
-	final static public String ownerFormat = "%s/owner/%s";
-	final static public String stackListFormat = ownerFormat + "/stacks";
-	final static public String stackFormat = ownerFormat + "/project/%s/stack/%s";
-	final static public String stackBoundsFormat = stackFormat + "/bounds";
-	final static public String boundingBoxFormat = stackFormat + "/z/%d/box/%d,%d,%d,%d,%f";
-	final static public String renderParametersFormat = boundingBoxFormat + "/render-parameters";
-
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
-		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
 		private String inputN5Path = null;
 
 		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
@@ -89,10 +81,13 @@ public class SparkConnectedComponents {
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
 		private String inputDatasetName = null;
 
-		@Option(name = "--maskN5Path", required = true, usage = "mask N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		@Option(name = "--outputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito_d20")
+		private String outputDatasetName = null;
+
+		@Option(name = "--maskN5Path", required = true, usage = "mask N5 path, e.g. /groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5")
 		private String maskN5Path = null;
 
-		@Option(name = "--thresholdDistance", required = false, usage = "Distance to threshold at")
+		@Option(name = "--thresholdDistance", required = false, usage = "Distance for thresholding (positive inside, negative outside)")
 		private double thresholdDistance = 0;
 
 		public Options(final String[] args) {
@@ -119,6 +114,10 @@ public class SparkConnectedComponents {
 			return inputDatasetName;
 		}
 
+		public String getOutputDatasetName() {
+			return outputDatasetName;
+		}
+
 		public String getOutputN5Path() {
 			return outputN5Path;
 		}
@@ -127,57 +126,65 @@ public class SparkConnectedComponents {
 			return maskN5Path;
 		}
 
-		public double getThresholdIntensity() {
+		public double getThresholdIntensityCutoff() {
 			return 128 * Math.tanh(thresholdDistance / 50) + 127;
 		}
 	}
 
 	/**
-	 * Copy an existing N5 dataset into another with a different blockSize.
+	 * Find connected components on a block-by-block basis and write out to
+	 * temporary n5.
 	 *
-	 * Parallelizes over blocks of [max(input, output)] to reduce redundant loading.
-	 * If blockSizes are integer multiples of each other, no redundant loading will
-	 * happen.
+	 * Takes as input a threshold intensity, above which voxels are used for
+	 * calculating connected components. Parallelization is done using a
+	 * blockInformationList.
 	 *
 	 * @param sc
-	 * @param n5Path
-	 * @param datasetName
-	 * @param outDatasetName
-	 * @param outBlockSize
+	 * @param inputN5Path
+	 * @param inputDatasetName
+	 * @param outputN5Path
+	 * @param outputDatasetName
+	 * @param maskN5PathName
+	 * @param thresholdIntensity
+	 * @param blockInformationList
 	 * @throws IOException
 	 */
 	@SuppressWarnings("unchecked")
 	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputDatasetName,
 			final String outputN5Path, final String outputDatasetName, final String maskN5PathName,
-			final double thresholdIntensity, List<BlockInformation> blockInformationList) throws IOException {
+			final double thresholdIntensityCutoff, List<BlockInformation> blockInformationList) throws IOException {
 
+		// Get attributes of input data set
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
-		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
-
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputDatasetName);
-		final int n = attributes.getNumDimensions();
 		final int[] blockSize = attributes.getBlockSize();
 		final long[] blockSizeL = new long[] { blockSize[0], blockSize[1], blockSize[2] };
 		final long[] outputDimensions = attributes.getDimensions();
+
+		// Create output dataset
+		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
 		n5Writer.createGroup(outputDatasetName);
 		n5Writer.createDataset(outputDatasetName, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
 
+		// Set up rdd to parallelize over blockInformation list and run RDD, which will
+		// return updated block information containing list of components on the edge of
+		// the corresponding block
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
-
 		JavaRDD<BlockInformation> javaRDDsets = rdd.map(currentBlockInformation -> {
+			// Get information for reading in/writing current block
 			long[][] gridBlock = currentBlockInformation.gridBlock;
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 
-			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
-
+			// Read in source block
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-			final RandomAccessibleInterval<UnsignedByteType> source = N5Utils.open(n5ReaderLocal, inputDatasetName);
-			final RandomAccessibleInterval<UnsignedByteType> sourceInterval = Views.offsetInterval(source, offset,
+			final RandomAccessibleInterval<UnsignedByteType> sourceInterval = Views.offsetInterval(
+					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputDatasetName), offset,
 					dimension);
 
+			// Read in mask block
 			final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5PathName);
 			final RandomAccessibleInterval<UnsignedByteType> mask = N5Utils.open(n5MaskReaderLocal,
 					"/volumes/masks/foreground");
@@ -185,6 +192,8 @@ public class SparkConnectedComponents {
 					new long[] { offset[0] / 2, offset[1] / 2, offset[2] / 2 },
 					new long[] { dimension[0] / 2, dimension[1] / 2, dimension[2] / 2 });
 
+			// Mask out appropriate region in source block; need to do it this way rather
+			// than converter since mask is half the size of source
 			Cursor<UnsignedByteType> sourceCursor = Views.flatIterable(sourceInterval).cursor();
 			RandomAccess<UnsignedByteType> maskRandomAccess = maskInterval.randomAccess();
 			while (sourceCursor.hasNext()) {
@@ -198,20 +207,28 @@ public class SparkConnectedComponents {
 				}
 			}
 
-			long[] sourceDimensions = { 0, 0, 0 };
-			source.dimensions(sourceDimensions);
-
+			// Create the output based on the current dimensions
 			long[] currentDimensions = { 0, 0, 0 };
 			sourceInterval.dimensions(currentDimensions);
 			final Img<UnsignedLongType> output = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType())
 					.create(currentDimensions);
-			Set<Long> edgeComponentIDs = computeConnectedComponents(sourceInterval, output, sourceDimensions,
-					blockSizeL, offset, thresholdIntensity);
+
+			// Compute the connected components which returns the components along the block
+			// edges, and update the corresponding blockInformation object
+			Set<Long> edgeComponentIDs = computeConnectedComponents(sourceInterval, output, outputDimensions,
+					blockSizeL, offset, thresholdIntensityCutoff);
 			currentBlockInformation.edgeComponentIDs = edgeComponentIDs;
+
+			// Write out output to temporary n5 stack
+			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
 			N5Utils.saveBlock(output, n5WriterLocal, outputDatasetName, gridBlock[2]);
+
 			return currentBlockInformation;
 		});
+
+		// Run, collect and return blockInformationList
 		blockInformationList = javaRDDsets.collect();
+
 		return blockInformationList;
 	}
 
@@ -238,7 +255,6 @@ public class SparkConnectedComponents {
 
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputDatasetName);
 		final int[] blockSize = attributes.getBlockSize();
-		final long[] outputDimensions = attributes.getDimensions();
 
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 
@@ -274,7 +290,7 @@ public class SparkConnectedComponents {
 				zPlane2 = Views.offsetInterval(source, new long[] { offset[0], offset[1], zOffset },
 						new long[] { dimension[0], dimension[1], 1 });
 
-			Set<List<Long>> globalIDtoGlobalIDSet = new HashSet<List<Long>>();
+			Set<List<Long>> globalIDtoGlobalIDSet = new HashSet<>();
 			getGlobalIDsToMerge(xPlane1, xPlane2, globalIDtoGlobalIDSet);
 			getGlobalIDsToMerge(yPlane1, yPlane2, globalIDtoGlobalIDSet);
 			getGlobalIDsToMerge(zPlane1, zPlane2, globalIDtoGlobalIDSet);
@@ -287,31 +303,19 @@ public class SparkConnectedComponents {
 		List<Set<List<Long>>> globalIDtoGlobalIDCollectedSets = javaRDDsets.collect();
 		long t1 = System.currentTimeMillis();
 
-		Set<List<Long>> globalIDtoGlobalIDFinalSet = new HashSet<List<Long>>();
+		Set<List<Long>> globalIDtoGlobalIDFinalSet = new HashSet<>();
 		for (Set<List<Long>> currentGlobalIDtoGlobalIDSet : globalIDtoGlobalIDCollectedSets) {
 			globalIDtoGlobalIDFinalSet.addAll(currentGlobalIDtoGlobalIDSet);
 		}
 		System.out.println(globalIDtoGlobalIDFinalSet.size());
-		long[][] arrayOfUnions = new long[globalIDtoGlobalIDFinalSet.size()][2];
-
-		int count = 0;
-		for (List<Long> currentPair : globalIDtoGlobalIDFinalSet) {
-			arrayOfUnions[count][0] = currentPair.get(0);
-			arrayOfUnions[count][1] = currentPair.get(1);
-			count++;
-		}
-
-		System.out.println("Total unions = " + arrayOfUnions.length);
-		long t2 = System.currentTimeMillis();
-
-		UnionFindDGA unionFind = new UnionFindDGA(arrayOfUnions);
+		System.out.println("Total unions = " + globalIDtoGlobalIDFinalSet.size());
+		UnionFindDGA unionFind = new UnionFindDGA(globalIDtoGlobalIDFinalSet);
 		unionFind.getFinalRoots();
 
-		long t3 = System.currentTimeMillis();
+		long t2 = System.currentTimeMillis();
 
 		System.out.println("collect time: " + (t1 - t0));
-		System.out.println("build array time: " + (t2 - t1));
-		System.out.println("union find time: " + (t3 - t2));
+		System.out.println("union find time: " + (t2 - t1));
 		for (BlockInformation currentBlockInformation : blockInformationList) {
 			Map<Long, Long> currentGlobalIDtoRootIDMap = new HashMap<Long, Long>();
 			for (Long currentEdgeComponentID : currentBlockInformation.edgeComponentIDs) {
@@ -445,66 +449,58 @@ public class SparkConnectedComponents {
 	}
 
 	public static Set<Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
-			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions,
-			long[] outputDimensions, long[] offset, double thresholdIntensity) {
-		// threshold sourceInterval using cutoff of 127
-		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval,
-				(a, b) -> b.set(a.getRealDouble() >= thresholdIntensity), new BoolType());
+			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
+			long[] offset, double thresholdIntensityCutoff) {
 
-		// run connected component analysis, storing results in components
+		// Threshold sourceInterval using thresholdIntensityCutoff
+		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval,
+				(a, b) -> b.set(a.getRealDouble() >= thresholdIntensityCutoff), new BoolType());
+
+		// Run connected component analysis, storing results in components
 		final ArrayImg<UnsignedLongType, LongArray> components = ArrayImgs
 				.unsignedLongs(Intervals.dimensionsAsLongArray(thresholded));
 		ConnectedComponentAnalysis.connectedComponents(thresholded, components);
 
-		// cursors over output and components
+		// Cursors over output and components
 		Cursor<UnsignedLongType> o = Views.flatIterable(output).cursor();
 		final Cursor<UnsignedLongType> c = Views.flatIterable(components).cursor();
 
-		// assign values from components to output and create array for relabeling
-		// connected components based on the first voxel in the connected component
-
-		double labelBasedOnMaxVoxelIndexInComponent[] = new double[(int) (outputDimensions[0] * outputDimensions[1]
-				* outputDimensions[2])];
+		
+		// Relabel object ids with unique ids corresponding to a global voxel index
+		// within the object, and store/return object ids on edge
+		Map<Long, Long> defaultIDtoGlobalID = new HashMap<>();
+		Set<Long> edgeComponentIDs = new HashSet<>();
 
 		while (o.hasNext()) {
+			
 			final UnsignedLongType tO = o.next();
 			final UnsignedLongType tC = c.next();
+			
 			if (tC.getRealDouble() > 0) {
-				tO.setReal(tC.getRealDouble());
+				//If the voxel is part of an object, set the corresponding output voxel to a unique global ID
+				long defaultID = tC.get();
+				
+				if (!defaultIDtoGlobalID.containsKey(defaultID)) {
+					//Get global ID
+					
+					long[] currentVoxelPosition = { o.getIntPosition(0), o.getIntPosition(1), o.getIntPosition(2) };
+					currentVoxelPosition[0] += offset[0];
+					currentVoxelPosition[1] += offset[1];
+					currentVoxelPosition[2] += offset[2];
 
-				// if connected component exists, assign its value to output and update its new
-				// label based on first voxel
-				long[] currentVoxelPosition = { o.getIntPosition(0), o.getIntPosition(1), o.getIntPosition(2) };
-				currentVoxelPosition[0] += offset[0];
-				currentVoxelPosition[1] += offset[1];
-				currentVoxelPosition[2] += offset[2];
+					long globalID = (sourceDimensions[0] * sourceDimensions[1] * currentVoxelPosition[2]
+							+ sourceDimensions[0] * currentVoxelPosition[1] + currentVoxelPosition[0]);
 
-				double currentVoxelIndex = (double) (sourceDimensions[0] * sourceDimensions[1] * currentVoxelPosition[2]
-						+ // Z position
-						sourceDimensions[0] * currentVoxelPosition[1] + currentVoxelPosition[0]);
-
-				int defaultLabel = tC.getInteger();
-				if (currentVoxelIndex > labelBasedOnMaxVoxelIndexInComponent[defaultLabel]) {
-					labelBasedOnMaxVoxelIndexInComponent[defaultLabel] = currentVoxelIndex;
+					defaultIDtoGlobalID.put(defaultID, globalID);
 				}
-
-			}
-		}
-
-		Set<Long> edgeComponentIDs = new HashSet<Long>();
-		// update output labels based on max voxel labels
-		o = Views.flatIterable(output).cursor();
-		while (o.hasNext()) {
-			final UnsignedLongType tO = o.next();
-			if (tO.getRealDouble() != 0) {
-				double newLabel = 0;
-				newLabel = labelBasedOnMaxVoxelIndexInComponent[(int) tO.getRealDouble()];
+				
+				tO.setReal(defaultIDtoGlobalID.get(defaultID));
+				
 				if (o.getIntPosition(0) == 0 || o.getIntPosition(0) == outputDimensions[0] - 1
 						|| o.getIntPosition(1) == 0 || o.getIntPosition(1) == outputDimensions[1] - 1
 						|| o.getIntPosition(2) == 0 || o.getIntPosition(2) == outputDimensions[2] - 1) {
-					edgeComponentIDs.add((long) newLabel);
+					edgeComponentIDs.add(defaultIDtoGlobalID.get(defaultID));
 				}
-				tO.setReal(newLabel);
 			}
 		}
 
@@ -522,8 +518,14 @@ public class SparkConnectedComponents {
 
 		// Get all organelles
 		String[] organelles = { "" };
+		String tempOutputDatasetName = null;
+		String finalOutputDatasetName = null;
 		if (options.getInputDatasetName() != null) {
 			organelles = options.getInputDatasetName().split(",");
+			if (options.getOutputDatasetName() != null) {
+				tempOutputDatasetName = options.getOutputDatasetName() + "_blockwise_cc_temp_to_delete";
+				finalOutputDatasetName = options.getOutputDatasetName() + "_cc";
+			}
 		} else {
 			File file = new File(options.getInputN5Path());
 			organelles = file.list(new FilenameFilter() {
@@ -542,11 +544,14 @@ public class SparkConnectedComponents {
 					currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			logMemory(currentOrganelle, null);
-			final String tempOutputDatasetName = currentOrganelle + "_blockwise_cc_temp_to_delete";
-			final String finalOutputDatasetName = currentOrganelle + "_cc";
+			if (tempOutputDatasetName == null) {
+				tempOutputDatasetName = currentOrganelle + "_blockwise_cc_temp_to_delete";
+				finalOutputDatasetName = currentOrganelle + "_cc";
+			}
+
 			blockInformationList = blockwiseConnectedComponents(sc, options.getInputN5Path(), currentOrganelle,
 					options.getOutputN5Path(), tempOutputDatasetName, options.getMaskN5Path(),
-					options.getThresholdIntensity(), blockInformationList);
+					options.getThresholdIntensityCutoff(), blockInformationList);
 			logMemory("Stage 1 complete", null);
 			blockInformationList = unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputDatasetName,
 					blockInformationList);
@@ -558,9 +563,12 @@ public class SparkConnectedComponents {
 		}
 
 		for (String currentOrganelle : organelles) {
-			final String tempOutputDatasetName = currentOrganelle + "_blockwise_cc_temp_to_delete";
+			if (tempOutputDatasetName == null) {
+				tempOutputDatasetName = currentOrganelle + "_blockwise_cc_temp_to_delete";
+			}
 			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + tempOutputDatasetName));
 		}
+		logMemory("Stage 4 complete", null);
 
 	}
 }
