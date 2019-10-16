@@ -228,7 +228,7 @@ public class SparkConnectedComponents {
 
 		// Run, collect and return blockInformationList
 		blockInformationList = javaRDDsets.collect();
-
+		
 		return blockInformationList;
 	}
 
@@ -465,24 +465,24 @@ public class SparkConnectedComponents {
 		Cursor<UnsignedLongType> o = Views.flatIterable(output).cursor();
 		final Cursor<UnsignedLongType> c = Views.flatIterable(components).cursor();
 
-		
 		// Relabel object ids with unique ids corresponding to a global voxel index
 		// within the object, and store/return object ids on edge
-		Map<Long, Long> defaultIDtoGlobalID = new HashMap<>();
+		long defaultIDtoGlobalID[] = new long[(int) (outputDimensions[0] * outputDimensions[1] * outputDimensions[2])];
 		Set<Long> edgeComponentIDs = new HashSet<>();
 
 		while (o.hasNext()) {
-			
+
 			final UnsignedLongType tO = o.next();
 			final UnsignedLongType tC = c.next();
 			
-			if (tC.getRealDouble() > 0) {
-				//If the voxel is part of an object, set the corresponding output voxel to a unique global ID
-				long defaultID = tC.get();
-				
-				if (!defaultIDtoGlobalID.containsKey(defaultID)) {
-					//Get global ID
-					
+			int defaultID = tC.getInteger();
+			if (defaultID > 0) {
+				// If the voxel is part of an object, set the corresponding output voxel to a
+				// unique global ID
+
+				if (defaultIDtoGlobalID[defaultID] == 0) {
+					// Get global ID
+
 					long[] currentVoxelPosition = { o.getIntPosition(0), o.getIntPosition(1), o.getIntPosition(2) };
 					currentVoxelPosition[0] += offset[0];
 					currentVoxelPosition[1] += offset[1];
@@ -491,15 +491,15 @@ public class SparkConnectedComponents {
 					long globalID = (sourceDimensions[0] * sourceDimensions[1] * currentVoxelPosition[2]
 							+ sourceDimensions[0] * currentVoxelPosition[1] + currentVoxelPosition[0]);
 
-					defaultIDtoGlobalID.put(defaultID, globalID);
+					defaultIDtoGlobalID[defaultID] = globalID;
 				}
-				
-				tO.setReal(defaultIDtoGlobalID.get(defaultID));
-				
+
+				tO.setReal(defaultIDtoGlobalID[defaultID]);
+
 				if (o.getIntPosition(0) == 0 || o.getIntPosition(0) == outputDimensions[0] - 1
 						|| o.getIntPosition(1) == 0 || o.getIntPosition(1) == outputDimensions[1] - 1
 						|| o.getIntPosition(2) == 0 || o.getIntPosition(2) == outputDimensions[2] - 1) {
-					edgeComponentIDs.add(defaultIDtoGlobalID.get(defaultID));
+					edgeComponentIDs.add(defaultIDtoGlobalID[defaultID]);
 				}
 			}
 		}
