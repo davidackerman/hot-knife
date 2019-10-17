@@ -19,7 +19,6 @@ package org.janelia.saalfeldlab.hotknife;
 import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.io.Serializable;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -246,7 +245,6 @@ public class SparkConnectedComponents {
 	 * @param blockInformationList
 	 * @throws IOException
 	 */
-	@SuppressWarnings("unchecked")
 	public static final <T extends NativeType<T>> List<BlockInformation> unionFindConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			List<BlockInformation> blockInformationList) throws IOException {
