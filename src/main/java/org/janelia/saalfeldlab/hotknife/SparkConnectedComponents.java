@@ -353,8 +353,6 @@ public class SparkConnectedComponents {
 			final String inputN5Path, final String inputDatasetName, final String outputDatasetName,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
-		final PrintWriter driverOut = new PrintWriter("/groups/cosem/cosem/ackermand/tmp/logDriver.txt");
-
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
 		final N5Writer n5Writer = new N5FSWriter(inputN5Path);
 
@@ -372,9 +370,6 @@ public class SparkConnectedComponents {
 			final long[][] gridBlock = currentBlockInformation.gridBlock;
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
-			final PrintWriter out = null; // new
-											// PrintWriter(String.format("/groups/cosem/cosem/ackermand/tmp/logMemory-%d_%d_%d.txt",
-											// offset[0],offset[1],offset[2]));
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
 			final RandomAccessibleInterval<UnsignedLongType> source = N5Utils.open(n5ReaderLocal, inputDatasetName);
 			// final Map<Long,Long> globalIDtoRootID = broadcastGlobalIDtoRootID.value();
@@ -394,8 +389,6 @@ public class SparkConnectedComponents {
 			N5Utils.saveBlock(sourceInterval, n5WriterLocal, outputDatasetName, gridBlock[2]);
 			// out.close();
 		});
-
-		driverOut.close();
 
 	}
 
@@ -447,7 +440,7 @@ public class SparkConnectedComponents {
 
 		}
 	}
-
+	
 	public static Set<Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
 			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
 			long[] offset, double thresholdIntensityCutoff) {
@@ -467,7 +460,7 @@ public class SparkConnectedComponents {
 
 		// Relabel object ids with unique ids corresponding to a global voxel index
 		// within the object, and store/return object ids on edge
-		long defaultIDtoGlobalID[] = new long[(int) (outputDimensions[0] * outputDimensions[1] * outputDimensions[2])];
+		long [] defaultIDtoGlobalID = new long[(int) (outputDimensions[0] * outputDimensions[1] * outputDimensions[2])];
 		Set<Long> edgeComponentIDs = new HashSet<>();
 
 		while (o.hasNext()) {
@@ -488,13 +481,13 @@ public class SparkConnectedComponents {
 					currentVoxelPosition[1] += offset[1];
 					currentVoxelPosition[2] += offset[2];
 
-					long globalID = (sourceDimensions[0] * sourceDimensions[1] * currentVoxelPosition[2]
-							+ sourceDimensions[0] * currentVoxelPosition[1] + currentVoxelPosition[0]);
+					long globalID = sourceDimensions[0] * sourceDimensions[1] * currentVoxelPosition[2]
+							+ sourceDimensions[0] * currentVoxelPosition[1] + currentVoxelPosition[0]+1;
 
 					defaultIDtoGlobalID[defaultID] = globalID;
 				}
 
-				tO.setReal(defaultIDtoGlobalID[defaultID]);
+				tO.setLong(defaultIDtoGlobalID[defaultID]);
 
 				if (o.getIntPosition(0) == 0 || o.getIntPosition(0) == outputDimensions[0] - 1
 						|| o.getIntPosition(1) == 0 || o.getIntPosition(1) == outputDimensions[1] - 1
@@ -506,6 +499,7 @@ public class SparkConnectedComponents {
 
 		return edgeComponentIDs;
 	}
+	
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 
