@@ -5,6 +5,8 @@ import java.util.*;
 import net.imglib2.algorithm.util.unionfind.IntArrayRankedUnionFind;
 
 public class UnionFindDGA {
+	//Algorithm based on wiki: https://en.wikipedia.org/wiki/Disjoint-set_data_structure
+	
 	public Map<Long, Long> globalIDtoRootID;
 	public Map<Long, Integer> globalIDtoRank;
 
