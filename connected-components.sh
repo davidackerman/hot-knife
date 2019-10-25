@@ -14,8 +14,8 @@ MASKN5PATH='/groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5/'
 
 ARGV="\
 --inputN5DatasetName 'mito' \
---thresholdDistance '1' \
---outputN5DatasetSuffix '_cc_d1' \
+--thresholdDistance '5' \
+--outputN5DatasetSuffix '_cc_d5' \
 --inputN5Path '$INPUTN5PATH' \
 --outputN5Path '$OUTPUTN5PATH' \
 --maskN5Path '$MASKN5PATH'"

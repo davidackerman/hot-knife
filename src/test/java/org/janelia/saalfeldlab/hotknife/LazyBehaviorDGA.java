@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 
 import org.janelia.saalfeldlab.hotknife.ops.ContactSites;
+import org.janelia.saalfeldlab.hotknife.ops.GradientCenter;
+import org.janelia.saalfeldlab.hotknife.ops.TubenessCenter;
 import org.janelia.saalfeldlab.hotknife.util.Lazy;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
@@ -16,6 +18,7 @@ import bdv.util.BdvOptions;
 import bdv.util.BdvStackSource;
 import bdv.util.volatiles.VolatileViews;
 import ij.ImageJ;
+import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.Volatile;
 import net.imglib2.converter.Converters;
@@ -113,18 +116,11 @@ public class LazyBehaviorDGA {
 			analysisResults.add(currentContactSites);
 		}
 		
+		
 		// connected components: here just doing it for one organelle
 		long [] sourceDimensions = {0,0,0};
 		img.get(1).dimensions(sourceDimensions);
-		/*final ConnectedComponentsOp<DoubleType> connectedComponentsOp = new ConnectedComponentsOp<>(source.get(1), sourceDimensions, true );
-		final RandomAccessibleInterval<DoubleType> connectedComponents = Lazy.process(
-				img.get(0),
-				blockSize,
-				new DoubleType(),
-				AccessFlags.setOf(AccessFlags.VOLATILE),
-				connectedComponentsOp);
-		analysisResults.add(connectedComponents);
-		*/
+
 		// show contact sites in blue channel, and connected components in yellow
 		imgCount=0;
 		for (final RandomAccessibleInterval<DoubleType> currentAnalysisResults : analysisResults) {

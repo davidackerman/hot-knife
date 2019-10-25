@@ -36,7 +36,9 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.hotknife.util.Grid;
+import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -46,20 +48,31 @@ import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
+import bdv.labels.labelset.Label;
+import ij.ImageJ;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
+import net.imglib2.algorithm.morphology.distance.DistanceTransform;
+import net.imglib2.algorithm.morphology.distance.DistanceTransform.DISTANCE_TYPE;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.Img;
+import net.imglib2.img.NativeImg;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.LongArray;
+import net.imglib2.img.cell.CellImgFactory;
+import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.BoolType;
+import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.integer.*;
+import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
+import net.imglib2.view.IntervalView;
+import net.imglib2.view.SubsampleIntervalView;
 import net.imglib2.view.Views;
 
 /**
@@ -130,6 +143,125 @@ public class SparkConnectedComponents {
 		}
 	}
 
+	public static final void calculateDistanceTransform(
+			final JavaSparkContext sc,
+			final String n5Path,
+			final String datasetName,
+			final String n5OutputPath,
+			final String outputDatasetName,
+			final long[] initialPadding,
+			final double weight,
+			final List<BlockInformation> blockInformationList) throws IOException {
+
+		final N5Reader n5Reader = new N5FSReader(n5Path);
+
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		final int n = dimensions.length;
+
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		n5Writer.createDataset(
+				outputDatasetName,
+				dimensions,
+				blockSize,
+				DataType.UINT16,
+				new GzipCompression());
+
+		/*
+		 * grid block size for parallelization to minimize double loading of
+		 * blocks
+		 */
+		boolean show=false;
+		if(show) new ImageJ();
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		rdd.foreach(blockInformation -> {
+			final long [][] gridBlock = blockInformation.gridBlock;
+			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			final RandomAccessibleInterval<FloatType> source;
+			source = Converters.convert(
+					// for OpenJDK 8, Eclipse could do without the intermediate raw cast...
+					(RandomAccessibleInterval<IntegerType<?>>)(RandomAccessibleInterval)N5Utils.open(n5BlockReader, datasetName),
+					(a, b) -> {
+						final double x = (a.getInteger()-127)/128.0;
+						final double d = 25*Math.log((1+x)/(1-x));
+						b.set((float) Math.max(0,d));
+						//b.set((float)a.getRealDouble()); 
+						//if(d>0) b.set(1);
+						//else b.set(0);
+					},
+					new FloatType());
+			final long[] padding = initialPadding.clone();
+A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(padding, i -> padding[i] + initialPadding[i])) {
+
+				paddingIsTooSmall = false;
+
+				final long maxPadding =  Arrays.stream(padding).max().getAsLong();
+				final long squareMaxPadding = maxPadding * maxPadding;
+
+				final long[] paddedBlockMin = new long[n];
+				final long[] paddedBlockSize = new long[n];
+				Arrays.setAll(paddedBlockMin, i -> gridBlock[0][i] - padding[i]);
+				Arrays.setAll(paddedBlockSize, i -> gridBlock[1][i] + 2*padding[i]);
+				System.out.println(Arrays.toString(gridBlock[0]) + ", padding = " + Arrays.toString(padding) + ", padded blocksize = " + Arrays.toString(paddedBlockSize));
+				
+				final long maxBlockDimension = Arrays.stream(paddedBlockSize).max().getAsLong();
+				final IntervalView<FloatType> sourceBlock =
+						Views.offsetInterval(
+								Views.extendValue(
+										source,
+										new FloatType((float) Math.pow(maxBlockDimension,2))), //new FloatType(Label.OUTSIDE)),
+								paddedBlockMin,
+								paddedBlockSize);
+				
+				/* make distance transform */				
+				if(show) ImageJFunctions.show(sourceBlock, "sourceBlock");
+				final NativeImg<FloatType, ?> targetBlock = ArrayImgs.floats(paddedBlockSize);
+				
+				DistanceTransform.transform(sourceBlock, targetBlock, DISTANCE_TYPE.EUCLIDIAN,weight);
+				if(show) ImageJFunctions.show(targetBlock,"dt");
+
+				final long[] minInside = new long[n];
+				final long[] dimensionsInside = new long[n];
+				Arrays.setAll(minInside, i -> padding[i] );
+				Arrays.setAll(dimensionsInside, i -> gridBlock[1][i] );
+
+				final IntervalView<FloatType> insideBlock = Views.offsetInterval(targetBlock, minInside, dimensionsInside);
+				if(show) ImageJFunctions.show(insideBlock,"inside");
+
+				/* test whether distances at inside boundary are smaller than padding */
+				for (int d = 0; d < n; ++d) {
+
+					final IntervalView<FloatType> topSlice = Views.hyperSlice(insideBlock, d, 1);
+					for (final FloatType t : topSlice)
+						if (t.get() >= squareMaxPadding) {
+							paddingIsTooSmall = true;
+							System.out.println("padding too small");
+							continue A;
+						}
+
+					final IntervalView<FloatType> botSlice = Views.hyperSlice(insideBlock, d, insideBlock.max(d));
+					for (final FloatType t : botSlice)
+						if (t.get() >= squareMaxPadding) {
+							paddingIsTooSmall = true;
+							System.out.println("padding too small");
+							continue A;
+						}
+				}
+
+				/* padding was sufficient, save */
+				final RandomAccessibleInterval<UnsignedShortType> convertedOutputBlock = Converters.convert(
+						(RandomAccessibleInterval<FloatType>) insideBlock,
+						(a, b) -> b.set(Math.min(65535, (int)Math.round(256*Math.sqrt(a.get())))),
+						new UnsignedShortType());
+				if(show==true) ImageJFunctions.show(convertedOutputBlock,"output");
+
+				final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
+				N5Utils.saveNonEmptyBlock(convertedOutputBlock, n5BlockWriter, outputDatasetName, gridBlock[2], new UnsignedShortType(2));
+			}
+		});
+	}
+	
 	/**
 	 * Find connected components on a block-by-block basis and write out to
 	 * temporary n5.
@@ -553,12 +685,16 @@ public class SparkConnectedComponents {
 			logMemory(currentOrganelle);	
 			tempOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix() + "_blockwise_temp_to_delete";
 			finalOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix();
-
+			
 			//Create block information list
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
 				currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-
+			double weights [] = {0.0001}; 
+			for (double weight : weights) {
+				calculateDistanceTransform(sc, options.getInputN5Path(), currentOrganelle,
+						options.getOutputN5Path(), "distance_transform_w"+String.valueOf(weight).replace('.', 'p'), new long[] {16,16,16}, weight, blockInformationList);
+			}
 			blockInformationList = blockwiseConnectedComponents(sc, options.getInputN5Path(), currentOrganelle,
 					options.getOutputN5Path(), tempOutputN5DatasetName, options.getMaskN5Path(),
 					options.getThresholdIntensityCutoff(), blockInformationList);
