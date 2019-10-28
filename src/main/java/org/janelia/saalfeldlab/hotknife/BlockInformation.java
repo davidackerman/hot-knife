@@ -1,8 +1,16 @@
 package org.janelia.saalfeldlab.hotknife;
 
+import java.io.IOException;
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import org.janelia.saalfeldlab.hotknife.util.Grid;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.N5FSReader;
+import org.janelia.saalfeldlab.n5.N5Reader;
 
 public class BlockInformation implements Serializable {
 	/**
@@ -21,5 +29,23 @@ public class BlockInformation implements Serializable {
 		this.edgeComponentIDs = edgeComponentIDs;
 		this.edgeComponentIDtoRootIDmap = edgeComponentIDtoRootIDmap;
 		this.gridBlock = gridBlock;
+	}
+	
+	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
+			final String inputN5DatasetName) throws IOException {
+		//Get block attributes
+		N5Reader n5Reader = new N5FSReader(inputN5Path);
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
+		final int[] blockSize = attributes.getBlockSize();
+		final long[] outputDimensions = attributes.getDimensions();
+		
+		//Build list
+		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
+		List<BlockInformation> blockInformationList = new ArrayList<BlockInformation>();
+		for (int i = 0; i < gridBlockList.size(); i++) {
+			long[][] currentGridBlock = gridBlockList.get(i);
+			blockInformationList.add(new BlockInformation(currentGridBlock, null, null));
+		}
+		return blockInformationList;
 	}
 }

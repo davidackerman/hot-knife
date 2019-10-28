@@ -162,13 +162,14 @@ public class SparkMedialSurface {
 		/*
 		 * grid block size for parallelization to minimize double loading of blocks
 		 */
-		boolean show = false;
+		boolean show = true;
 		if (show)
 			new ImageJ();
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		rdd.foreach(blockInformation -> {
 			final long[][] gridBlock = blockInformation.gridBlock;
 			// final long [][] gridBlock= {{64, 128, 64}, {64, 64, 64}, {1, 2, 1}};
+			gridBlock[0][0]=490;
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			final RandomAccessibleInterval<NativeBoolType> source;
 			source = Converters.convert(
@@ -183,6 +184,7 @@ public class SparkMedialSurface {
 						// if(d>0) b.set(1);
 						// else b.set(0);
 					}, new NativeBoolType());
+			
 			final long[] padding = initialPadding.clone();
 			A: for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(padding,
 					i -> padding[i] + initialPadding[i])) {
@@ -199,9 +201,23 @@ public class SparkMedialSurface {
 						+ ", padded blocksize = " + Arrays.toString(paddedBlockSize));
 
 				final long maxBlockDimension = Arrays.stream(paddedBlockSize).max().getAsLong();
+				
 				final IntervalView<NativeBoolType> sourceBlock = Views.offsetInterval(
 						Views.extendValue(source, new NativeBoolType(true)), // new FloatType(Label.OUTSIDE)),
 						paddedBlockMin, paddedBlockSize);
+				
+				RandomAccessibleInterval temp = Views.offsetInterval(
+						(RandomAccessibleInterval) N5Utils.open(n5BlockReader,
+								datasetName), // new FloatType(Label.OUTSIDE)),
+						new long[]{450,-10,-10}, paddedBlockSize);
+				if (show) ImageJFunctions.show(temp, "sourcestuff");
+				Cursor tempCursor = Views.flatIterable(temp).cursor();
+				int count=0;
+				while(tempCursor.hasNext()) {
+					tempCursor.next();
+					count++;
+				}
+				System.out.println(count);
 
 				/* make distance transform */
 				final NativeImg<FloatType, ?> targetBlock = ArrayImgs.floats(paddedBlockSize);

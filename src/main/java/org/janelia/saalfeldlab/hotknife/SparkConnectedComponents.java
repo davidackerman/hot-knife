@@ -71,6 +71,7 @@ import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
+import net.imglib2.view.ExtendedRandomAccessibleInterval;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.SubsampleIntervalView;
 import net.imglib2.view.Views;
@@ -226,7 +227,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 				Arrays.setAll(minInside, i -> padding[i] );
 				Arrays.setAll(dimensionsInside, i -> gridBlock[1][i] );
 
-				final IntervalView<FloatType> insideBlock = Views.offsetInterval(targetBlock, minInside, dimensionsInside);
+				final IntervalView<FloatType> insideBlock = Views.offsetInterval(Views.extendZero(targetBlock), minInside, dimensionsInside);
 				if(show) ImageJFunctions.show(insideBlock,"inside");
 
 				/* test whether distances at inside boundary are smaller than padding */
@@ -311,15 +312,15 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 			// Read in source block
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-			final RandomAccessibleInterval<UnsignedByteType> sourceInterval = Views.offsetInterval(
-					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName),
-					offset, dimension);
+			final RandomAccessibleInterval<UnsignedByteType> sourceInterval = Views.offsetInterval(Views.extendZero(
+					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
+					),offset, dimension);
 
 			// Read in mask block
 			final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5PathName);
 			final RandomAccessibleInterval<UnsignedByteType> mask = N5Utils.open(n5MaskReaderLocal,
 					"/volumes/masks/foreground");
-			final RandomAccessibleInterval<UnsignedByteType> maskInterval = Views.offsetInterval(mask,
+			final RandomAccessibleInterval<UnsignedByteType> maskInterval = Views.offsetInterval(Views.extendZero(mask),
 					new long[] { offset[0] / 2, offset[1] / 2, offset[2] / 2 },
 					new long[] { dimension[0] / 2, dimension[1] / 2, dimension[2] / 2 });
 
@@ -397,7 +398,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 			// Get source
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-			final RandomAccessibleInterval<UnsignedLongType> source = N5Utils.open(n5ReaderLocal, inputN5DatasetName);
+			final RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5ReaderLocal, inputN5DatasetName);
 			long[] sourceDimensions = { 0, 0, 0 };
 			source.dimensions(sourceDimensions);
 
@@ -409,21 +410,21 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			long xOffset = offset[0] + blockSize[0];
 			long yOffset = offset[1] + blockSize[1];
 			long zOffset = offset[2] + blockSize[2];
-			xPlane1 = Views.offsetInterval(source, new long[] { xOffset - 1, offset[1], offset[2] },
+			xPlane1 = Views.offsetInterval(Views.extendZero(source), new long[] { xOffset - 1, offset[1], offset[2] },
 					new long[] { 1, dimension[1], dimension[2] });
-			yPlane1 = Views.offsetInterval(source, new long[] { offset[0], yOffset - 1, offset[2] },
+			yPlane1 = Views.offsetInterval(Views.extendZero(source), new long[] { offset[0], yOffset - 1, offset[2] },
 					new long[] { dimension[0], 1, dimension[2] });
-			zPlane1 = Views.offsetInterval(source, new long[] { offset[0], offset[1], zOffset - 1 },
+			zPlane1 = Views.offsetInterval(Views.extendZero(source), new long[] { offset[0], offset[1], zOffset - 1 },
 					new long[] { dimension[0], dimension[1], 1 });
 
 			if (xOffset < sourceDimensions[0])
-				xPlane2 = Views.offsetInterval(source, new long[] { xOffset, offset[1], offset[2] },
+				xPlane2 = Views.offsetInterval(Views.extendZero(source), new long[] { xOffset, offset[1], offset[2] },
 						new long[] { 1, dimension[1], dimension[2] });
 			if (yOffset < sourceDimensions[1])
-				yPlane2 = Views.offsetInterval(source, new long[] { offset[0], yOffset, offset[2] },
+				yPlane2 = Views.offsetInterval(Views.extendZero(source), new long[] { offset[0], yOffset, offset[2] },
 						new long[] { dimension[0], 1, dimension[2] });
 			if (zOffset < sourceDimensions[2])
-				zPlane2 = Views.offsetInterval(source, new long[] { offset[0], offset[1], zOffset },
+				zPlane2 = Views.offsetInterval(Views.extendZero(source), new long[] { offset[0], offset[1], zOffset },
 						new long[] { dimension[0], dimension[1], 1 });
 
 			// Calculate the set of object IDs that are touching and need to be merged
@@ -518,8 +519,8 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 			// Read in source data
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-			final RandomAccessibleInterval<UnsignedLongType> sourceInterval = Views.offsetInterval(
-					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName),
+			final RandomAccessibleInterval<UnsignedLongType> sourceInterval = Views.offsetInterval(Views.extendZero(
+					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)),
 					offset, dimension);
 
 			//Relabel objects
@@ -690,11 +691,11 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
 				currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			double weights [] = {0.0001}; 
+			/*double weights [] = {0.0001}; 
 			for (double weight : weights) {
 				calculateDistanceTransform(sc, options.getInputN5Path(), currentOrganelle,
 						options.getOutputN5Path(), "distance_transform_w"+String.valueOf(weight).replace('.', 'p'), new long[] {16,16,16}, weight, blockInformationList);
-			}
+			}*/
 			blockInformationList = blockwiseConnectedComponents(sc, options.getInputN5Path(), currentOrganelle,
 					options.getOutputN5Path(), tempOutputN5DatasetName, options.getMaskN5Path(),
 					options.getThresholdIntensityCutoff(), blockInformationList);
