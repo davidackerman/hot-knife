@@ -382,7 +382,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			List<BlockInformation> blockInformationList) throws IOException {
 
-		// Get attributes of input data set
+		// Get attributes of input data set:
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
 		final int[] blockSize = attributes.getBlockSize();
@@ -438,13 +438,8 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 		// Collect and combine the sets of objects to merge
 		long t0 = System.currentTimeMillis();
-		List<Set<List<Long>>> globalIDtoGlobalIDCollectedSets = javaRDDsets.collect();
+		Set<List<Long>> globalIDtoGlobalIDFinalSet = javaRDDsets.reduce((a,b) -> {a.addAll(b); return a; });
 		long t1 = System.currentTimeMillis();
-
-		Set<List<Long>> globalIDtoGlobalIDFinalSet = new HashSet<>();
-		for (Set<List<Long>> currentGlobalIDtoGlobalIDSet : globalIDtoGlobalIDCollectedSets) {
-			globalIDtoGlobalIDFinalSet.addAll(currentGlobalIDtoGlobalIDSet);
-		}
 		System.out.println(globalIDtoGlobalIDFinalSet.size());
 		System.out.println("Total unions = " + globalIDtoGlobalIDFinalSet.size());
 
@@ -456,6 +451,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 		System.out.println("collect time: " + (t1 - t0));
 		System.out.println("union find time: " + (t2 - t1));
+		System.out.println("Total edge objects: " + unionFind.globalIDtoRootID.values().stream().distinct().count());
 
 		// Add block-specific relabel map to the corresponding block information object
 		for (BlockInformation currentBlockInformation : blockInformationList) {
@@ -682,6 +678,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 		String tempOutputN5DatasetName = null;
 		String finalOutputN5DatasetName = null;
+		List<String> directoriesToDelete = new ArrayList<String>();
 		for (String currentOrganelle : organelles) {
 			logMemory(currentOrganelle);	
 			tempOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix() + "_blockwise_temp_to_delete";
@@ -709,15 +706,14 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName, finalOutputN5DatasetName,
 					blockInformationList);
 			logMemory("Stage 3 complete");
+
+			directoriesToDelete.add(options.getOutputN5Path() + "/" + tempOutputN5DatasetName);
 			
 			sc.close();
 		}
 
 		//Remove temporary files
-		for (String currentOrganelle : organelles) {
-			tempOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix() + "_blockwise_temp_to_delete";
-			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + tempOutputN5DatasetName));
-		}
+		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 		logMemory("Stage 4 complete");
 
 	}

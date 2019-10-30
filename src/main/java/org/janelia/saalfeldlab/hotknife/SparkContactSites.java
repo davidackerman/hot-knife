@@ -21,6 +21,7 @@ import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
@@ -247,7 +248,7 @@ public class SparkContactSites {
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkConnectedComponents");
+		final SparkConf conf = new SparkConf().setAppName("SparkContactSites");
 
 		// Get all organelles
 		String[] organelles = { "" };
@@ -263,6 +264,7 @@ public class SparkContactSites {
 			});
 		}
 
+		List<String> directoriesToDelete = new ArrayList<String>();
 		for (int i = 0; i<organelles.length; i++) {
 			final String organelle1 =organelles[i];
 			for(int j= i+1; j< organelles.length; j++) {
@@ -273,46 +275,41 @@ public class SparkContactSites {
 				JavaSparkContext sc = new JavaSparkContext(conf);
 				
 				final String organelleContactString = organelle1 + "_to_" + organelle2 + options.getOutputN5DatasetSuffix();
-				final String tempOutputN5DatasetName = organelleContactString + "_cc_blockwise_temp_to_delete";
+				final String tempOutputN5ContactSites = organelleContactString + "_cc_blockwise_temp_to_delete";
+				final String tempOutputN5ConnectedComponents = organelleContactString+"_temp_to_delete";
 				final String finalOutputN5DatasetName = organelleContactString + "_cc";
 				
 				System.out.println(organelleContactString + " " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
 				
-				calculateContactSites(sc, options.getInputN5Path(), organelle1, organelle2, options.getOutputN5Path(), organelleContactString+"_temp_to_delete", options.getMaskN5Path(),
+				calculateContactSites(sc, options.getInputN5Path(), organelle1, organelle2, options.getOutputN5Path(), tempOutputN5ConnectedComponents, options.getMaskN5Path(),
 							options.getContactDistance(), blockInformationList);
 				
 				System.out.println("Stage 1 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
 				
-				blockInformationList = SparkConnectedComponents.blockwiseConnectedComponents(sc, options.getOutputN5Path(), organelleContactString+"_temp_to_delete",
-						options.getOutputN5Path(), tempOutputN5DatasetName, options.getMaskN5Path(),
+				blockInformationList = SparkConnectedComponents.blockwiseConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ConnectedComponents,
+						options.getOutputN5Path(), tempOutputN5ContactSites, options.getMaskN5Path(),
 						1, blockInformationList);				
 				
 				System.out.println("Stage 2 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
 
-				blockInformationList = SparkConnectedComponents.unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName,
+				blockInformationList = SparkConnectedComponents.unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ContactSites,
 						blockInformationList);
 				
 				System.out.println("Stage 3 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
 				
-				SparkConnectedComponents.mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName, finalOutputN5DatasetName,
+				SparkConnectedComponents.mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ContactSites, finalOutputN5DatasetName,
 						blockInformationList);
 				
 				System.out.println("Stage 4 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
 
+				directoriesToDelete.add(options.getOutputN5Path() + "/" + tempOutputN5ContactSites);
+				directoriesToDelete.add(options.getOutputN5Path() + "/" + tempOutputN5ConnectedComponents);
 				sc.close();
 			}
 		}
 		
-		for (int i = 0; i<organelles.length; i++) {
-			final String organelle1 =organelles[i];
-			for(int j= i+1; j< organelles.length; j++) {
-				final String organelle2 = organelles[j];			
-				final String organelleContactString = organelle1 + "_to_" + organelle2 + options.getOutputN5DatasetSuffix();
-				FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + organelleContactString+"_temp_to_delete"));
-				FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + organelleContactString + "_cc_blockwise_temp_to_delete"));
-
-			}
-		}
-
+		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
+		System.out.println("Stage 5 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
+		
 	}
 }
