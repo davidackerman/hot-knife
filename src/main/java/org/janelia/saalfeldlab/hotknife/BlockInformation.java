@@ -21,12 +21,12 @@ public class BlockInformation implements Serializable {
 	 */
 	private static final long serialVersionUID = 1L;
 	public long[][] gridBlock;
-	public Set<Long> edgeComponentIDs;
+	public Map<Long,Long> edgeComponentIDtoVolumeMap;
 	public Map<Long, Long> edgeComponentIDtoRootIDmap;
-
-	public BlockInformation(long[][] gridBlock, Set<Long> edgeComponentIDs,
+	
+	public BlockInformation(long[][] gridBlock, Map<Long,Long> edgeComponentIDs,
 			Map<Long, Long> edgeComponentIDtoRootIDmap) {
-		this.edgeComponentIDs = edgeComponentIDs;
+		this.edgeComponentIDtoVolumeMap = edgeComponentIDs;
 		this.edgeComponentIDtoRootIDmap = edgeComponentIDtoRootIDmap;
 		this.gridBlock = gridBlock;
 	}

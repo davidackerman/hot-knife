@@ -28,8 +28,11 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
@@ -47,6 +50,7 @@ import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
+import org.spark_project.guava.collect.Sets;
 
 import bdv.labels.labelset.Label;
 import ij.ImageJ;
@@ -102,6 +106,9 @@ public class SparkConnectedComponents {
 
 		@Option(name = "--thresholdDistance", required = false, usage = "Distance for thresholding (positive inside, negative outside)")
 		private double thresholdDistance = 0;
+		
+		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept")
+		private int minimumVolumeCutoff = 100;
 
 		public Options(final String[] args) {
 
@@ -142,6 +149,11 @@ public class SparkConnectedComponents {
 		public double getThresholdIntensityCutoff() {
 			return 128 * Math.tanh(thresholdDistance / 50) + 127;
 		}
+		
+		public int getMinimumVolumeCutoff() {
+			return minimumVolumeCutoff;
+		}
+
 	}
 
 	public static final void calculateDistanceTransform(
@@ -285,7 +297,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
-			final double thresholdIntensityCutoff, List<BlockInformation> blockInformationList) throws IOException {
+			final double thresholdIntensityCutoff, int minimumVolumeCutoff, List<BlockInformation> blockInformationList) throws IOException {
 
 		// Get attributes of input data set
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
@@ -347,9 +359,8 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 			// Compute the connected components which returns the components along the block
 			// edges, and update the corresponding blockInformation object
-			Set<Long> edgeComponentIDs = computeConnectedComponents(sourceInterval, output, outputDimensions,
-					blockSizeL, offset, thresholdIntensityCutoff);
-			currentBlockInformation.edgeComponentIDs = edgeComponentIDs;
+			currentBlockInformation.edgeComponentIDtoVolumeMap = computeConnectedComponents(sourceInterval, output, outputDimensions,
+					blockSizeL, offset, thresholdIntensityCutoff, minimumVolumeCutoff);
 
 			// Write out output to temporary n5 stack
 			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
@@ -379,7 +390,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 	 * @throws IOException
 	 */
 	public static final <T extends NativeType<T>> List<BlockInformation> unionFindConnectedComponents(
-			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
+			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, int minimumVolumeCutoff,
 			List<BlockInformation> blockInformationList) throws IOException {
 
 		// Get attributes of input data set:
@@ -454,19 +465,35 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		System.out.println("Total edge objects: " + unionFind.globalIDtoRootID.values().stream().distinct().count());
 
 		// Add block-specific relabel map to the corresponding block information object
+		Map<Long, Long> rootIDtoVolumeMap= new HashMap<Long, Long>();
 		for (BlockInformation currentBlockInformation : blockInformationList) {
 			Map<Long, Long> currentGlobalIDtoRootIDMap = new HashMap<Long, Long>();
-			for (Long currentEdgeComponentID : currentBlockInformation.edgeComponentIDs) {
+			for (Long currentEdgeComponentID : currentBlockInformation.edgeComponentIDtoVolumeMap.keySet()) {
 				Long key, value;
 				key = currentEdgeComponentID;
 				if (unionFind.globalIDtoRootID.containsKey(key)) {// Need this check since not all edge objects will be
 																	// connected to neighboring blocks
 					value = unionFind.globalIDtoRootID.get(currentEdgeComponentID);
 					currentGlobalIDtoRootIDMap.put(key, value);
+					rootIDtoVolumeMap.put(value, rootIDtoVolumeMap.getOrDefault(value, 0L) + currentBlockInformation.edgeComponentIDtoVolumeMap.get(key));
+				}
+				else {
+					currentGlobalIDtoRootIDMap.put(key, key);
 				}
 			}
 			currentBlockInformation.edgeComponentIDtoRootIDmap = currentGlobalIDtoRootIDMap;
 		}
+		
+		for (BlockInformation currentBlockInformation : blockInformationList) {
+			for (Entry <Long,Long> e : currentBlockInformation.edgeComponentIDtoRootIDmap.entrySet()) {
+				Long key = e.getKey();
+				Long value = e.getValue();
+				currentBlockInformation.edgeComponentIDtoRootIDmap.put(key, 
+						currentBlockInformation.edgeComponentIDtoVolumeMap.get(key) <= minimumVolumeCutoff ? 0L : value);
+			}
+		}
+		
+		
 
 		return blockInformationList;
 	}
@@ -557,9 +584,9 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 	}
 
 	
-	public static Set<Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
+	public static Map<Long,Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
 			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
-			long[] offset, double thresholdIntensityCutoff) {
+			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff) {
 
 		// Threshold sourceInterval using thresholdIntensityCutoff
 		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval,
@@ -578,7 +605,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		// within the object, and store/return object ids on edge
 		long[] defaultIDtoGlobalID = new long[(int) (outputDimensions[0] * outputDimensions[1] * outputDimensions[2])];
 		Set<Long> edgeComponentIDs = new HashSet<>();
-
+		Map<Long,Long> allComponentIDtoVolumeMap = new HashMap<>();
 		while (o.hasNext()) {
 
 			final UnsignedLongType tO = o.next();
@@ -613,10 +640,29 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 						|| o.getIntPosition(2) == 0 || o.getIntPosition(2) == outputDimensions[2] - 1) {
 					edgeComponentIDs.add(defaultIDtoGlobalID[defaultID]);
 				}
+				allComponentIDtoVolumeMap.put(defaultIDtoGlobalID[defaultID], allComponentIDtoVolumeMap.getOrDefault(defaultIDtoGlobalID[defaultID],0L)+1);	
+			}
+		}
+		Set<Long> allComponentIDs = allComponentIDtoVolumeMap.keySet();
+		Set<Long> selfContainedObjectIDs = Sets.difference(allComponentIDs, edgeComponentIDs);
+		
+		final Map<Long,Long> edgeComponentIDtoVolumeMap =  edgeComponentIDs.stream()
+		        .filter(allComponentIDtoVolumeMap::containsKey)
+		        .collect(Collectors.toMap(Function.identity(), allComponentIDtoVolumeMap::get));
+		
+		final Map<Long,Long> selfContainedComponentIDtoVolumeMap =  selfContainedObjectIDs.stream()
+		        .filter(allComponentIDtoVolumeMap::containsKey)
+		        .collect(Collectors.toMap(Function.identity(), allComponentIDtoVolumeMap::get));
+		
+		o = Views.flatIterable(output).cursor();
+		while (o.hasNext()) {
+			final UnsignedLongType tO = o.next();
+			if (selfContainedComponentIDtoVolumeMap.getOrDefault(tO.get(), Long.MAX_VALUE) <= minimumVolumeCutoff){
+				tO.set(0);
 			}
 		}
 
-		return edgeComponentIDs;
+		return edgeComponentIDtoVolumeMap;
 	}
 	
 	public static final void getGlobalIDsToMerge(RandomAccessibleInterval<UnsignedLongType> hyperSlice1,
@@ -693,13 +739,16 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 				calculateDistanceTransform(sc, options.getInputN5Path(), currentOrganelle,
 						options.getOutputN5Path(), "distance_transform_w"+String.valueOf(weight).replace('.', 'p'), new long[] {16,16,16}, weight, blockInformationList);
 			}*/
+			int minimumVolumeCutoff = options.getMinimumVolumeCutoff();
+			if(currentOrganelle.equals("ribosomes") || currentOrganelle.equals("microtubules")) {
+				minimumVolumeCutoff = 0;
+			}
 			blockInformationList = blockwiseConnectedComponents(sc, options.getInputN5Path(), currentOrganelle,
 					options.getOutputN5Path(), tempOutputN5DatasetName, options.getMaskN5Path(),
-					options.getThresholdIntensityCutoff(), blockInformationList);
+					options.getThresholdIntensityCutoff(), minimumVolumeCutoff, blockInformationList);
 			logMemory("Stage 1 complete");
 			
-			
-			blockInformationList = unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName,
+			blockInformationList = unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName, minimumVolumeCutoff,
 					blockInformationList);
 			logMemory("Stage 2 complete");
 			

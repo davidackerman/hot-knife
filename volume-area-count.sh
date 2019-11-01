@@ -8,7 +8,7 @@ JAR=$PWD/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkVolumeAreaCount
 N_NODES=10
 
-INPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_connected_components.n5'
+INPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_connected_components_minVolumeCutoff.n5'
 
 ARGV="--inputN5Path '$INPUTN5PATH'"
 

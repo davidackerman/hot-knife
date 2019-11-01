@@ -285,14 +285,14 @@ public class SparkContactSites {
 							options.getContactDistance(), blockInformationList);
 				
 				System.out.println("Stage 1 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
-				
+				int minimumVolumeCutoff = 100;
 				blockInformationList = SparkConnectedComponents.blockwiseConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ConnectedComponents,
 						options.getOutputN5Path(), tempOutputN5ContactSites, options.getMaskN5Path(),
-						1, blockInformationList);				
+						1, minimumVolumeCutoff, blockInformationList);				
 				
 				System.out.println("Stage 2 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
 
-				blockInformationList = SparkConnectedComponents.unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ContactSites,
+				blockInformationList = SparkConnectedComponents.unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ContactSites, minimumVolumeCutoff,
 						blockInformationList);
 				
 				System.out.println("Stage 3 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
