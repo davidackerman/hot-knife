@@ -61,7 +61,7 @@ import net.imglib2.view.Views;
  *
  * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
-public class SparkVolumeAreaCount {
+public class SparkGeneralCosemObjectInformation {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
@@ -121,10 +121,20 @@ public class SparkVolumeAreaCount {
 	 */
 	@SuppressWarnings("unchecked")
 	public static final <T extends NativeType<T>> void calculateVolumeAreaCount(
-			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, final String outputDirectory,
+			final JavaSparkContext sc, final String inputN5Path, final String[] datasetNames, final String outputDirectory,
 			List<BlockInformation> blockInformationList) throws IOException {
 		
-		
+		final String inputN5DatasetName, organelle1N5Dataset, organelle2N5Dataset;
+		if(datasetNames.length==1) {
+			organelle1N5Dataset=null;
+			organelle2N5Dataset=null;
+			inputN5DatasetName = datasetNames[0];
+		}
+		else {
+			organelle1N5Dataset = datasetNames[0]+"_contact_boundary_temp_to_delete";
+			organelle2N5Dataset = datasetNames[1]+"_contact_boundary_temp_to_delete";
+			inputN5DatasetName = datasetNames[2];
+		}
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
 		final long[] outputDimensions = attributes.getDimensions();
@@ -135,7 +145,7 @@ public class SparkVolumeAreaCount {
 		// Set up reader to get n5 attributes
 				
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
-		JavaRDD<VolumeAreaCountClass> javaRDDvolumeAreaCount  = rdd.map(currentBlockInformation -> {
+		JavaRDD<Map<Long,long[]>> javaRDDvolumeAreaCount  = rdd.map(currentBlockInformation -> {
 			// Get information for reading in/writing current block
 			long[][] gridBlock = currentBlockInformation.gridBlock;
 			long[] extendedOffset = gridBlock[0];
@@ -151,10 +161,15 @@ public class SparkVolumeAreaCount {
 					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName),new UnsignedLongType(outOfBoundsValue)), extendedOffset, extendedDimension);
 			final RandomAccess<UnsignedLongType> sourceRandomAccess = sourceInterval.randomAccess();
 			
-			Set<Long> allObjectIDs = new HashSet<>();
-			Set<Long> edgeObjectIDs = new HashSet<>();
-			Map<Long, Long> objectIDtoVolume = new HashMap<>();
-			Map<Long, Long> objectIDtoSurfaceArea = new HashMap<>();
+			RandomAccess<UnsignedLongType> organelle1RandomAccess = null,organelle2RandomAccess=null;
+			if(datasetNames.length>1) {
+				organelle1RandomAccess = Views.offsetInterval(Views.extendValue(
+						(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle1N5Dataset),new UnsignedLongType(outOfBoundsValue)), extendedOffset, extendedDimension).randomAccess();
+				organelle2RandomAccess = Views.offsetInterval(Views.extendValue(
+						(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle2N5Dataset),new UnsignedLongType(outOfBoundsValue)), extendedOffset, extendedDimension).randomAccess();
+			}
+			
+			Map<Long, long[]> objectIDtoInformationMap = new HashMap<>(); //Volume, Surface Area, com xyz, min xyz, max xyz
 
 			for(long x=1; x<=dimension[0]; x++) {
 				for(long y=1; y<=dimension[1]; y++) {
@@ -163,92 +178,83 @@ public class SparkVolumeAreaCount {
 						long currentVoxelValue=sourceRandomAccess.get().get();
 						
 						if (currentVoxelValue >0  && currentVoxelValue != outOfBoundsValue ) {
-							incrementCountInMap(objectIDtoVolume, currentVoxelValue);
-
-							allObjectIDs.add(currentVoxelValue);			
-							if((x==1 || x==dimension[0]) || (y==1 || y==dimension[1]) || (z==1 || z==dimension[2]) ) {
-								edgeObjectIDs.add(currentVoxelValue);
-							}
-						
+							
+							boolean isOnSurface = false;
 							if(isSurfaceVoxel(sourceRandomAccess, outOfBoundsValue)){
-								incrementCountInMap(objectIDtoSurfaceArea, currentVoxelValue);
+								isOnSurface = true;
 							}
+							
+							long[] absolutePosition = {x+extendedOffset[0],y+extendedOffset[1],z+extendedOffset[2]};
+							long[] organelleIDs = {-1, -1};
+							if(datasetNames.length>1) {
+								organelle1RandomAccess.setPosition(new long[] {x,y,z});
+								organelle2RandomAccess.setPosition(new long[] {x,y,z});
+								organelleIDs[0] = organelle1RandomAccess.get().get();
+								organelleIDs[1] = organelle2RandomAccess.get().get();
+							}
+							addNewVoxelToObjectInformation(objectIDtoInformationMap, currentVoxelValue, absolutePosition, isOnSurface, organelleIDs);
 						}
 					}
 				}
 			}
-			
-			final Set<Long> selfContainedObjectIDs = Sets.difference(allObjectIDs, edgeObjectIDs);
-			final Map<Long,Long> volumeHistogramAsMap = new HashMap<>();
-			final Map<Long,Long> surfaceHistogramAsMap = new HashMap<>();
-			final Map<Float,Long> surfaceAreaToVolumeRatioHistogramAsMap = new HashMap<>();
-			for(Long objectID : selfContainedObjectIDs) {
-				final long currentObjectVolume = objectIDtoVolume.get(objectID);
-				incrementCountInMap(volumeHistogramAsMap, currentObjectVolume);
-				
-				final long currentObjectSurfaceArea = objectIDtoSurfaceArea.get(objectID);
-				incrementCountInMap(surfaceHistogramAsMap, currentObjectSurfaceArea);
-				
-				final float currentObjectSurfaceAreaToVolumeRatio = Math.round(1000.0F*currentObjectSurfaceArea/currentObjectVolume)/1000.0F;
-				incrementCountInMap(surfaceAreaToVolumeRatioHistogramAsMap, currentObjectSurfaceAreaToVolumeRatio);
-			}
-			
-			
-			final Map<Long,Long> edgeObjectIDtoVolume =  edgeObjectIDs.stream()
-			        .filter(objectIDtoVolume::containsKey)
-			        .collect(Collectors.toMap(Function.identity(), objectIDtoVolume::get));		
-			
-			final Map<Long,Long> edgeObjectIDtoSurfaceArea =  edgeObjectIDs.stream()
-			        .filter(objectIDtoSurfaceArea::containsKey)
-			        .collect(Collectors.toMap(Function.identity(), objectIDtoSurfaceArea::get));		
-			
-			VolumeAreaCountClass volumeAreaCount = new VolumeAreaCountClass(volumeHistogramAsMap, surfaceHistogramAsMap, surfaceAreaToVolumeRatioHistogramAsMap, edgeObjectIDtoVolume, edgeObjectIDtoSurfaceArea);
-			
-			return volumeAreaCount;
+						
+			return objectIDtoInformationMap;
 		});
 		
-		VolumeAreaCountClass collectedVolumeAreaCount = javaRDDvolumeAreaCount.reduce((a,b) -> {
-				combineCountsFromTwoMaps(a.edgeObjectIDtoVolume, b.edgeObjectIDtoVolume);
-				combineCountsFromTwoMaps(a.edgeObjectIDtoSurfaceArea, b.edgeObjectIDtoSurfaceArea);
-				combineCountsFromTwoMaps(a.volumeHistogramAsMap, b.volumeHistogramAsMap);
-				combineCountsFromTwoMaps(a.surfaceAreaHistogramAsMap, b.surfaceAreaHistogramAsMap);
-				combineCountsFromTwoMaps(a.surfaceAreaToVolumeRatioHistogramAsMap, b.surfaceAreaToVolumeRatioHistogramAsMap);
+		Map<Long, long[]> collectedObjectInformation = javaRDDvolumeAreaCount.reduce((a,b) -> {
+				combineObjectInformationMaps(a,b);
 				return a;
 			});
 		
-		addEdgeObjectValuesToHistogramMap(collectedVolumeAreaCount.edgeObjectIDtoVolume, collectedVolumeAreaCount.volumeHistogramAsMap); 
-		addEdgeObjectValuesToHistogramMap(collectedVolumeAreaCount.edgeObjectIDtoSurfaceArea, collectedVolumeAreaCount.surfaceAreaHistogramAsMap); 
-		for(Long currentObjectID : collectedVolumeAreaCount.edgeObjectIDtoSurfaceArea.keySet()) {
-			float currentObjectSurfaceAreaToVolumeRatio = Math.round(1000.0F*collectedVolumeAreaCount.edgeObjectIDtoSurfaceArea.get(currentObjectID)/collectedVolumeAreaCount.edgeObjectIDtoVolume.get(currentObjectID))/1000.0F;
-			incrementCountInMap(collectedVolumeAreaCount.surfaceAreaToVolumeRatioHistogramAsMap, currentObjectSurfaceAreaToVolumeRatio);
-		}
-		collectedVolumeAreaCount.volumeHistogramAsMap = new TreeMap<Long, Long>(collectedVolumeAreaCount.volumeHistogramAsMap);
-		collectedVolumeAreaCount.surfaceAreaHistogramAsMap = new TreeMap<Long, Long>(collectedVolumeAreaCount.surfaceAreaHistogramAsMap);
-		collectedVolumeAreaCount.surfaceAreaToVolumeRatioHistogramAsMap = new TreeMap<Float, Long>(collectedVolumeAreaCount.surfaceAreaToVolumeRatioHistogramAsMap);
-		
-		collectedVolumeAreaCount.totalObjectCounts = 0;
-		for (Entry <Long,Long> entry : collectedVolumeAreaCount.volumeHistogramAsMap.entrySet()) {
-			collectedVolumeAreaCount.totalObjectCounts+=entry.getValue();
-		}
-		System.out.println("Number of objects: " + collectedVolumeAreaCount.totalObjectCounts);
-		writeData(collectedVolumeAreaCount, outputDirectory, inputN5DatasetName);
+		System.out.println("Total objects: "+collectedObjectInformation.size());
+		writeData(collectedObjectInformation, outputDirectory, datasetNames);
 	}
 	
-	public static <T> void incrementCountInMap(final Map<T,Long> map, T key) {
-		map.put(key, map.getOrDefault(key, 0L)+1);
-	}
-
-	public static <T> void combineCountsFromTwoMaps(Map<T,Long> a, Map<T,Long> b){
-		for( T key : b.keySet()) {
-			a.put(key, a.getOrDefault(key,0L)+b.get(key));
-		}	
+	public static void addNewVoxelToObjectInformation(Map<Long,long[]> objectIDtoInformationMap, long objectID, long[] position, boolean isSurfaceVoxel, long[] organelleIDs) {
+		if(!objectIDtoInformationMap.containsKey(objectID)) {
+			objectIDtoInformationMap.put(objectID, new long[]{1,isSurfaceVoxel?1:0,position[0],position[1],position[2],position[0],position[1],position[2],position[0],position[1],position[2], -1, -1});
+		}
+		else {
+			long[] objectInformation = objectIDtoInformationMap.get(objectID);
+			
+			objectInformation[0]++; //Volume
+			
+			if(isSurfaceVoxel) { //Surface Area
+			objectInformation[1]++;
+			}
+			
+			for(int i=0; i<3; i++) {
+				objectInformation[2+i]+=position[i]; //COM (will divide by volume at end)
+				objectInformation[5+i] = Math.min(objectInformation[5+i], position[i]); //xyz min
+				objectInformation[8+i] = Math.max(objectInformation[8+i], position[i]); //xyz max
+			}
+			 objectInformation[11] = organelleIDs[0];
+			 objectInformation[12] = organelleIDs[1];
+			
+		}
 	}
 	
-	public static<T> void addEdgeObjectValuesToHistogramMap(Map<Long,Long> edgeIDtoValue, Map<Long,Long> valueHistogram) {
-		for( Entry<Long, Long> idAndValue : edgeIDtoValue.entrySet()) {
-			long currentValue = idAndValue.getValue();
-			incrementCountInMap(valueHistogram, currentValue);
+	public static Map<Long,long[]> combineObjectInformationMaps(Map<Long,long[]> objectInformationMapA, Map<Long,long[]> objectInformationMapB) {
+		for(long objectID : objectInformationMapB.keySet() ) {
+			if(objectInformationMapA.containsKey(objectID)) {
+				long[] objectInformationA = objectInformationMapA.get(objectID);
+				long[] objectInformationB = objectInformationMapB.get(objectID);
+				
+				for(int i=0; i<2; i++) {
+					objectInformationA[i]+=objectInformationB[i]; //Volume, surface area
+				}
+				for(int i=0; i<3; i++) {
+					objectInformationA[2+i]+= objectInformationB[2+i]; //com xyz
+					objectInformationA[5+i] = Math.min(objectInformationA[5+i], objectInformationB[5+i]); //min xyz
+					objectInformationA[8+i] = Math.max(objectInformationA[8+i], objectInformationB[8+i]); //max xyz
+				}
+				objectInformationMapA.put(objectID, objectInformationA);
+			}
+			else {
+				objectInformationMapA.put(objectID, objectInformationMapB.get(objectID));
+			}
 		}
+		return objectInformationMapA;
 	}
 	
 	
@@ -273,33 +279,62 @@ public class SparkVolumeAreaCount {
 	
 	}
 	
-	public static void writeData(VolumeAreaCountClass vac, String outputDirectory, String organelle) throws IOException {
+	public static void writeData(Map<Long,long[]> collectedObjectInformation, String outputDirectory, String [] datasetNames) throws IOException {
 		if (! new File(outputDirectory).exists()){
 			new File(outputDirectory).mkdirs();
 	    }
-		FileWriter csvWriter = new FileWriter(outputDirectory+"/"+organelle+".csv");
-		List<String> v = convertMapToStringList(vac.volumeHistogramAsMap);
-		List<String> s = convertMapToStringList(vac.surfaceAreaHistogramAsMap);
-		List<String> svr = convertMapToStringList(vac.surfaceAreaToVolumeRatioHistogramAsMap);
-		final long lines = Math.max(Math.max(v.size(), s.size()), svr.size());
-		csvWriter.append("Volume Bin,Volume Count,Surface Area Bin,Surface Area Count,Surface Area To Volume Ratio Bin,Surface Area To Volume Ratio Count,Total Objects\n");
-		for(int i=0; i<lines; i++) {
-			List<String> outputString = new ArrayList<>();
-			outputString = addToString(outputString, v,i);
-			outputString = addToString(outputString, s, i);
-			outputString = addToString(outputString, svr, i);
-			outputString.add(i==0 ? Long.toString(vac.totalObjectCounts): "");
-			String csvLine = String.join(",", outputString)+"\n";
-			csvWriter.append(csvLine);
+		
+		String outputFile, organelle1=null, organelle2=null;
+		if(datasetNames.length == 1) {
+			outputFile = datasetNames[0];
+		}
+		else {
+			organelle1 = datasetNames[0];
+			organelle2 = datasetNames[1];
+			outputFile = datasetNames[2];
+		}
+		FileWriter csvWriter = new FileWriter(outputDirectory+"/"+outputFile+".csv");
+		if(datasetNames.length == 1) {
+			csvWriter.append("Object ID,Volume,Surface Area,COM X,COM Y,COM Z,MIN X,MIN Y,MIN Z,MAX X,MAX Y,MAX Z,,Total Objects\n");
+		}
+		else {
+			csvWriter.append("Object ID,Volume,Surface Area,COM X,COM Y,COM Z,MIN X,MIN Y,MIN Z,MAX X,MAX Y,MAX Z,"+organelle1+" ID,"+organelle2+" ID,,Total Objects\n");
+		}
+		boolean firstLine = true;
+		for(Entry<Long,long[]> objectIDandInformation: collectedObjectInformation.entrySet()) {
+			String outputString = Long.toString(objectIDandInformation.getKey());
+			long [] objectInformation = objectIDandInformation.getValue();
+			outputString+=","+Long.toString(objectInformation[0]); // volume
+			outputString+=","+Long.toString(objectInformation[1]); //surface area
+			outputString+=","+Float.toString((float)objectInformation[2]/(float)objectInformation[0]); //com x
+			outputString+=","+Float.toString((float)objectInformation[3]/(float)objectInformation[0]); //com y
+			outputString+=","+Float.toString((float)objectInformation[4]/(float)objectInformation[0]); //com z
+			for(int i=5;i<11;i++) {
+				outputString+=","+Long.toString(objectInformation[i]);// min and max xyz
+			}
+			if(datasetNames.length>1) {
+				outputString+=","+Long.toString(objectInformation[11])+","+Long.toString(objectInformation[12]);//organelle ids
+			}
+			if(firstLine) {
+				outputString+=",,"+collectedObjectInformation.size()+"\n";
+				firstLine = false;
+			}
+			else {
+				outputString+=",\n";
+			}
+			csvWriter.append(outputString);
 		}
 		csvWriter.flush();
 		csvWriter.close();
 		
-		csvWriter = new FileWriter(outputDirectory+"/allCounts.csv", true);
+		boolean firstLineInAllCountsFile = false;
 		if (! new File(outputDirectory+"/allCounts.csv").exists()) {
-			csvWriter.append("Object,Count\n");
+			firstLineInAllCountsFile = true;
 		}
-		csvWriter.append(organelle+","+vac.totalObjectCounts+"\n");			
+		csvWriter = new FileWriter(outputDirectory+"/allCounts.csv", true);
+		if(firstLineInAllCountsFile) csvWriter.append("Object,Count\n");
+
+		csvWriter.append(outputFile+","+collectedObjectInformation.size()+"\n");			
 		csvWriter.flush();
 		csvWriter.close();
 	}
@@ -323,7 +358,7 @@ public class SparkVolumeAreaCount {
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkVolumeAreaCount");
+		final SparkConf conf = new SparkConf().setAppName("SparkGeneralCosemInformation");
 
 		// Get all organelles
 		String[] organelles = { "" };
@@ -344,10 +379,22 @@ public class SparkVolumeAreaCount {
 		System.out.println(Arrays.toString(organelles));
 		for (String currentOrganelle : organelles) {
 			System.out.println(currentOrganelle);
+			String [] datasetNames = {currentOrganelle};
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
-			calculateVolumeAreaCount(sc, options.getInputN5Path(), currentOrganelle, options.getOutputDirectory(), blockInformationList);
+			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[0]);
+			calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
 			sc.close();
+		}
+		for (int i=0; i<organelles.length; i++) {
+			for(int j=i+1; j<organelles.length;j++) {
+				String [] datasetNames = {organelles[i],organelles[j],organelles[i]+"_to_"+organelles[j]+"_cc"};
+				System.out.println(datasetNames[2]);
+				
+				JavaSparkContext sc = new JavaSparkContext(conf);
+				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[2]);
+				calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
+				sc.close();
+			}
 		}
 	}
 }

@@ -375,6 +375,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		return blockInformationList;
 	}
 
+
 	
 	/**
 	 * Merge all necessary objects obtained from blockwise connected components.

@@ -8,14 +8,12 @@ JAR=$PWD/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkContactSites
 N_NODES=10
 
-INPUTN5PATH='/nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5'
-OUTPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_connected_components.n5'
+INPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_connected_components_minVolumeCutoff.n5'
 MASKN5PATH='/groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5/'
 
 ARGV="\
---inputN5DatasetName 'plasma_membrane,mito,golgi,vesicle,MVB,lysosome,LD,er,nucleus,microtubules,ribosomes' \
+--inputN5DatasetName 'plasma_membrane_cc,mito_cc,golgi_cc,vesicle_cc,MVB_cc,lysosome_cc,LD_cc,er_cc,nucleus_cc,microtubules_cc,ribosomes_cc' \
 --inputN5Path '$INPUTN5PATH' \
---outputN5Path '$OUTPUTN5PATH' \
 --maskN5Path '$MASKN5PATH'"
 
 export RUNTIME="48:00"
