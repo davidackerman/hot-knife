@@ -341,10 +341,7 @@ public class SparkMedialSurface {
 						// if(d>0) b.set(1);
 						// else b.set(0);
 					}, new BitType());
-			final IntervalView<NativeBoolType> sourceBlock = Views.offsetInterval(
-					Views.extendValue(source, new NativeBoolType(true)), // new FloatType(Label.OUTSIDE)),
-					paddedBlockMin, paddedBlockSize);
-			net.imagej.ImageJ ij = new net.imagej.ImageJ();
+					net.imagej.ImageJ ij = new net.imagej.ImageJ();
 			ImageJFunctions.show(source);
 			@SuppressWarnings("unchecked")
 			final Img<BitType> outImg = (Img<BitType>) ij.op().run(ThinZhangSuen.class, Img.class, source);
