@@ -27,6 +27,79 @@ import ij.process.ImageProcessor;
 
 import java.util.ArrayList;
 
+import java.io.File;
+import java.io.FilenameFilter;
+import java.io.IOException;
+import java.io.Serializable;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.janelia.saalfeldlab.hotknife.util.Grid;
+import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.GzipCompression;
+import org.janelia.saalfeldlab.n5.N5FSReader;
+import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.kohsuke.args4j.CmdLineException;
+import org.kohsuke.args4j.CmdLineParser;
+import org.kohsuke.args4j.Option;
+
+import bdv.labels.labelset.Label;
+import ij.ImageJ.*;
+import ij.IJ;
+import ij.ImagePlus;
+import net.imagej.ImageJ;
+import net.imglib2.Cursor;
+import net.imglib2.RandomAccess;
+import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
+import net.imglib2.algorithm.morphology.distance.DistanceTransform;
+import net.imglib2.algorithm.morphology.distance.DistanceTransform.DISTANCE_TYPE;
+import net.imglib2.converter.Converters;
+import net.imglib2.img.Img;
+import net.imglib2.img.NativeImg;
+import net.imglib2.img.array.ArrayImg;
+import net.imglib2.img.array.ArrayImgFactory;
+import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.basictypeaccess.array.BooleanArray;
+import net.imglib2.img.basictypeaccess.array.LongArray;
+import net.imglib2.img.cell.CellImgFactory;
+import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.img.imageplus.ImagePlusImg;
+import net.imglib2.img.imageplus.ImagePlusImgFactory;
+import net.imglib2.type.NativeType;
+import net.imglib2.type.label.Test;
+import net.imglib2.type.logic.BoolType;
+import net.imglib2.type.logic.NativeBoolType;
+import net.imglib2.type.numeric.IntegerType;
+import net.imglib2.type.numeric.NumericType;
+import net.imglib2.type.numeric.RealType;
+import net.imglib2.type.numeric.integer.*;
+import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Intervals;
+import net.imglib2.view.IntervalView;
+import net.imglib2.view.SubsampleIntervalView;
+import net.imglib2.view.Views;
+import net.imagej.ops.morphology.thin.*;
+import net.imglib2.type.logic.BitType;
+
+import ij.plugin.*;
+
 /**
  * Main class.
  * This class is a plugin for the ImageJ interface for 2D and 3D thinning 
@@ -109,6 +182,41 @@ public class Skeletonize3D_ implements PlugInFilter
 		this.inputImage.update(ip);
 	} /* end run */
 
+	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
+		//new ij.ImageJ();
+		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_binary.tif");
+		//imp.show();
+		Skeletonize3D_ skeletonize3D = new Skeletonize3D_();
+		String arg = "";
+		skeletonize3D.setup(arg,imp);
+		skeletonize3D.run(imp.getStack().getProcessor(1));
+		imp.show();
+	}
+	
+	
+	
+	public final boolean thinningForParallelization(ImagePlus inputForSkeletonization) {
+		String arg = "";
+		this.setup(arg,inputForSkeletonization);
+
+		this.width = this.imRef.getWidth();
+		this.height = this.imRef.getHeight();
+		this.depth = this.imRef.getStackSize();
+		this.inputImage = this.imRef.getStack();
+							
+		// Prepare data
+		prepareData(this.inputImage);
+		
+		// Compute Thinning	
+		boolean needToThinAgain = thinPaddedImageOneIteration(this.inputImage);
+		
+		// Convert image to binary 0-255
+		for(int i = 1; i <= this.inputImage.getSize(); i++)
+			this.inputImage.getProcessor(i).multiply(255);
+	
+		return needToThinAgain;
+
+	}
 	/* -----------------------------------------------------------------------*/
 	/**
 	 * Prepare data for computation.
@@ -118,9 +226,7 @@ public class Skeletonize3D_ implements PlugInFilter
 	 * @param outputImage output image stack
 	 */
 	public void prepareData(ImageStack outputImage) 
-	{
-		IJ.showStatus("Prepare Data: Copy input to output ...");
-		
+	{		
 		// Copy the input to the output, changing all foreground pixels to
         // have value 1 in the process.
 		for (int z = 0; z < depth; z++) 
@@ -129,7 +235,6 @@ public class Skeletonize3D_ implements PlugInFilter
 					if ( ((byte[]) this.inputImage.getPixels(z + 1))[x + y * width] != 0 )
 						((byte[]) outputImage.getPixels(z + 1))[x + y * width] = 1;
 
-		IJ.showStatus("Prepare Data End.");
 	} /* end prepareData */
 	
 	/* -----------------------------------------------------------------------*/
@@ -138,7 +243,144 @@ public class Skeletonize3D_ implements PlugInFilter
 	 * 
 	 * @param outputImage output image stack
 	 */
-	public void computeThinImage(ImageStack outputImage) 
+	public boolean thinPaddedImageOneIteration(ImageStack outputImage) 
+	{						
+		// Prepare Euler LUT [Lee94]
+		int eulerLUT[] = new int[256]; 
+		fillEulerLUT( eulerLUT );
+		
+		// Prepare number of points LUT
+		int pointsLUT[] = new int[ 256 ];
+		fillnumOfPointsLUT(pointsLUT);
+		
+		// Following Lee[94], save versions (Q) of input image S, while 
+		// deleting each type of border points (R)
+		ArrayList <int[]> simpleBorderPoints = new ArrayList<int[]>();				
+		
+		iterations = 0;
+		// Loop through the image several times until there is no change.
+		int unchangedBorders = 0;
+		{						
+			unchangedBorders = 0;
+			iterations++;
+			for( int currentBorder = 1; currentBorder <= 6; currentBorder++)
+			{
+				IJ.showStatus("Thinning iteration " + iterations + " (" + currentBorder +"/6 borders) ...");
+
+				boolean noChange = true;				
+				
+				// Loop through the image.				 
+				for (int z = 0; z < depth; z++)
+				{
+					for (int y = 0; y < height; y++)
+					{
+						for (int x = 0; x < width; x++)						
+						{
+
+							// check if point is foreground
+							if ( getPixelNoCheck(outputImage, x, y, z) != 1 )
+							{
+								continue;         // current point is already background 
+							}
+																				
+							// check 6-neighbors if point is a border point of type currentBorder
+							boolean isBorderPoint = false;
+							// North
+							if( currentBorder == 1 && N(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							// South
+							if( currentBorder == 2 && S(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							// East
+							if( currentBorder == 3 && E(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							// West
+							if( currentBorder == 4 && W(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							if(outputImage.getSize() > 1)
+							{
+								// Up							
+								if( currentBorder == 5 && U(outputImage, x, y, z) <= 0 )
+									isBorderPoint = true;
+								// Bottom
+								if( currentBorder == 6 && B(outputImage, x, y, z) <= 0 )
+									isBorderPoint = true;
+							}
+							if( !isBorderPoint )
+							{
+								continue;         // current point is not deletable
+							}
+
+							if( isEndPoint( outputImage, x, y, z))
+							{
+								continue;
+							}
+
+							final byte[] neighborhood = getNeighborhood(outputImage, x, y, z);
+							
+							// Check if point is Euler invariant (condition 1 in Lee[94])
+							if( !isEulerInvariant( neighborhood, eulerLUT ) )
+							{
+								continue;         // current point is not deletable
+							}
+
+							// Check if point is simple (deletion does not change connectivity in the 3x3x3 neighborhood)
+							// (conditions 2 and 3 in Lee[94])
+							if( !isSimplePoint( neighborhood ) )
+							{
+								continue;         // current point is not deletable
+							}
+
+
+
+							// add all simple border points to a list for sequential re-checking
+							int[] index = new int[3];
+							index[0] = x;
+							index[1] = y;
+							index[2] = z;
+							simpleBorderPoints.add(index);
+						}
+					}					
+				}							
+
+
+				// sequential re-checking to preserve connectivity when
+				// deleting in a parallel way
+				int[] index;
+
+				for (int[] simpleBorderPoint : simpleBorderPoints) {
+					index = simpleBorderPoint;
+
+					// Check if border points is simple			        
+					if (isSimplePoint(getNeighborhood(outputImage, index[0], index[1], index[2]))) {
+						// we can delete the current point
+						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
+						if((index[0]>0 && index[0]<width-1) && (index[1]>0 && index[1]<height-1) && (index[2]>0 && index[2]<depth-1)) //Don't care about changes to padded part
+							noChange = false;
+					}
+
+
+				}
+
+				if( noChange )
+					unchangedBorders++;
+
+				simpleBorderPoints.clear();
+			} // end currentBorder for loop
+		}
+
+		IJ.showStatus("Computed thin image.");
+		return unchangedBorders<6;
+	} 	
+	
+	
+	/* -----------------------------------------------------------------------*/
+	/**
+	 * Post processing for computing thinning.
+	 * 
+	 * @param outputImage output image stack
+	 */
+	public int computeThinImage(ImageStack outputImage) 
 	{
 		IJ.showStatus("Computing thin image ...");
 						
@@ -268,6 +510,7 @@ public class Skeletonize3D_ implements PlugInFilter
 		}
 
 		IJ.showStatus("Computed thin image.");
+		return unchangedBorders;
 	} /* end computeThinImage */	
 	
 	
