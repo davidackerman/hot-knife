@@ -49,7 +49,10 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 import bdv.labels.labelset.Label;
-import ij.ImageJ;
+import ij.ImageJ.*;
+import ij.IJ;
+import ij.ImagePlus;
+import net.imagej.ImageJ;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
@@ -66,7 +69,10 @@ import net.imglib2.img.basictypeaccess.array.BooleanArray;
 import net.imglib2.img.basictypeaccess.array.LongArray;
 import net.imglib2.img.cell.CellImgFactory;
 import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.img.imageplus.ImagePlusImg;
+import net.imglib2.img.imageplus.ImagePlusImgFactory;
 import net.imglib2.type.NativeType;
+import net.imglib2.type.label.Test;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.logic.NativeBoolType;
 import net.imglib2.type.numeric.IntegerType;
@@ -76,6 +82,10 @@ import net.imglib2.util.Intervals;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.SubsampleIntervalView;
 import net.imglib2.view.Views;
+import net.imagej.ops.morphology.thin.*;
+import net.imglib2.type.logic.BitType;
+
+import ij.plugin.*;
 
 /**
  * Connected components for an entire n5 volume
@@ -145,6 +155,205 @@ public class SparkMedialSurface {
 		}
 	}
 
+	public static final void performThinning(final JavaSparkContext sc, final String n5Path,
+			final String datasetName, final String n5OutputPath, final String outputDatasetName,
+			final long[] initialPadding, final List<BlockInformation> blockInformationList) throws IOException {
+
+		final N5Reader n5Reader = new N5FSReader(n5Path);
+
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		final int n = dimensions.length;
+
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT8, new GzipCompression());
+
+		/*
+		 * grid block size for parallelization to minimize double loading of blocks
+		 */
+		boolean show = false;
+		if (show)
+			new ImageJ();
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		rdd.foreach(blockInformation -> {
+			final long[][] gridBlock = blockInformation.gridBlock;
+			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			final RandomAccessibleInterval<NativeBoolType> source;
+			source = Converters.convert(
+					(RandomAccessibleInterval<IntegerType<?>>) (RandomAccessibleInterval) N5Utils.open(n5BlockReader,
+							datasetName),
+					(a, b) -> {
+						final double x = (a.getInteger() - 127) / 128.0;
+						final double d = 25 * Math.log((1 + x) / (1 - x));
+						b.set(a.getInteger() < 127);
+					}, new NativeBoolType());
+			
+			final long[] padding = initialPadding.clone();
+			A: for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(padding,
+					i -> padding[i] + initialPadding[i])) {
+
+				paddingIsTooSmall = false;
+
+				final long maxPadding = Arrays.stream(padding).max().getAsLong();
+				final long squareMaxPadding = maxPadding * maxPadding;
+				final long[] paddedBlockMin = new long[n];
+				final long[] paddedBlockSize = new long[n];
+				Arrays.setAll(paddedBlockMin, i -> gridBlock[0][i] - padding[i]);
+				Arrays.setAll(paddedBlockSize, i -> gridBlock[1][i] + 2 * padding[i]);
+				System.out.println(Arrays.toString(gridBlock[0]) + ", padding = " + Arrays.toString(padding)
+						+ ", padded blocksize = " + Arrays.toString(paddedBlockSize));
+
+				final long maxBlockDimension = Arrays.stream(paddedBlockSize).max().getAsLong();
+				
+				final IntervalView<NativeBoolType> sourceBlock = Views.offsetInterval(
+						Views.extendValue(source, new NativeBoolType(true)), // new FloatType(Label.OUTSIDE)),
+						paddedBlockMin, paddedBlockSize);
+				
+				
+				//System.out.println(count);
+
+				/* make distance transform */
+				final NativeImg<FloatType, ?> targetBlock = ArrayImgs.floats(paddedBlockSize);
+				
+				DistanceTransform.binaryTransform(sourceBlock, targetBlock, DISTANCE_TYPE.EUCLIDIAN);
+				if (show) ImageJFunctions.show(targetBlock, "dt");
+
+				final long[] minInside = new long[n];
+				final long[] dimensionsInside = new long[n];
+				Arrays.setAll(minInside, i -> padding[i]);
+				Arrays.setAll(dimensionsInside, i -> gridBlock[1][i]);
+
+				final IntervalView<FloatType> insideBlock = Views.offsetInterval(targetBlock, minInside,dimensionsInside);
+				if (show) ImageJFunctions.show(insideBlock, "inside");
+
+				/* test whether distances at inside boundary are smaller than padding */
+				for (int d = 0; d < n; ++d) {
+
+					final IntervalView<FloatType> topSlice = Views.hyperSlice(insideBlock, d, 1);
+					for (final FloatType t : topSlice)
+						if (t.get() >= squareMaxPadding) {
+							paddingIsTooSmall = true;
+							System.out.println("padding too small");
+							continue A;
+						}
+
+					final IntervalView<FloatType> botSlice = Views.hyperSlice(insideBlock, d, insideBlock.max(d));
+					for (final FloatType t : botSlice)
+						if (t.get() >= squareMaxPadding) {
+							paddingIsTooSmall = true;
+							System.out.println("padding too small");
+							continue A;
+						}
+				}
+				RandomAccessibleInterval<UnsignedByteType> inputForSkeleton = (RandomAccessibleInterval) N5Utils.open(n5BlockReader,
+						datasetName); 
+
+				final IntervalView<UnsignedByteType> inputForSkeletonBlock = Views.offsetInterval(
+						Views.extendZero(inputForSkeleton),
+						paddedBlockMin, paddedBlockSize);
+				
+				ImagePlusImg< UnsignedByteType, ? > intermediateOutputImage = new ImagePlusImgFactory<>( new UnsignedByteType() ).create( paddedBlockSize );
+				final Cursor<UnsignedByteType> intermediateOutputImageCursor = intermediateOutputImage.cursor();
+				final Cursor<UnsignedByteType> inputForSkeletonBlockCursor = inputForSkeletonBlock.cursor();
+				while(inputForSkeletonBlockCursor.hasNext()) {
+					UnsignedByteType v1 = inputForSkeletonBlockCursor.next();
+					UnsignedByteType v2 = intermediateOutputImageCursor.next();
+					if(v1.get()>=127) {
+						v2.set(255);
+					}
+				}
+				if(show) {
+					ImageJFunctions.show(intermediateOutputImage,"inputImage");
+				}
+				IJ.run(intermediateOutputImage.getImagePlus(),"Skeletonize (2D/3D)","");
+
+				final RandomAccessibleInterval<UnsignedByteType> finalOutputImage =  Views.offsetInterval(intermediateOutputImage,minInside,dimensionsInside);
+				if(show == true) {
+					ImageJFunctions.show(intermediateOutputImage,"inputImage");
+					ImageJFunctions.show(finalOutputImage,"inputblock");
+				}
+				
+				
+				
+				/*net.imagej.ImageJ ij = new net.imagej.ImageJ();	
+				final Img<BitType> outImg = (Img<BitType>) ij.op().run(ThinZhangSuen.class, Img.class, inputForSkeletonBlock);
+				final IntervalView<BitType> outImgCrop = Views.offsetInterval(outImg, minInside,dimensionsInside);
+
+				final NativeImg<UnsignedShortType, ?> finalOutputImage = ArrayImgs.unsignedShorts(dimensionsInside);
+				final Cursor<UnsignedShortType> finalOutputImageCursor = finalOutputImage.cursor();
+				final Cursor<BitType> outImgCropCursor = outImgCrop.cursor();
+				while(outImgCropCursor.hasNext()) {
+					BitType outImgVoxel = outImgCropCursor.next();
+					UnsignedShortType finalOutputImageVoxel = finalOutputImageCursor.next();
+					if(outImgVoxel.get()) {
+						finalOutputImageVoxel.set(255);
+					}
+				}
+				if (show == true) {
+					ImageJFunctions.show(outImg, "outImg");
+					ImageJFunctions.show(outImgCrop, "outImgCrop");
+					ImageJFunctions.show(finalOutputImage, "finalOutputImage");
+				}
+				*/
+
+				final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
+				N5Utils.saveBlock(finalOutputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
+			}
+		});
+	}
+
+	public static final void tempPerformThinning(final JavaSparkContext sc, final String n5Path,
+			final String datasetName, final String n5OutputPath, final String outputDatasetName,
+			final long[] initialPadding, final List<BlockInformation> blockInformationList) throws IOException {
+
+		final N5Reader n5Reader = new N5FSReader(n5Path);
+
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		final int n = dimensions.length;
+
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT16, new GzipCompression());
+
+		/*
+		 * grid block size for parallelization to minimize double loading of blocks
+		 */
+		boolean show = true;
+		if (show)
+			new ij.ImageJ();
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		rdd.foreach(blockInformation -> {
+			
+			final long[][] gridBlock = blockInformation.gridBlock;
+			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			final RandomAccessibleInterval<BitType> source;
+			source = Converters.convert(
+					// for OpenJDK 8, Eclipse could do without the intermediate raw cast...
+					(RandomAccessibleInterval<IntegerType<?>>) (RandomAccessibleInterval) N5Utils.open(n5BlockReader,
+							datasetName),
+					(a, b) -> {
+						final double x = (a.getInteger() - 127) / 128.0;
+						final double d = 25 * Math.log((1 + x) / (1 - x));
+						b.set(a.getInteger() > 127);
+						// b.set((float)a.getRealDouble());
+						// if(d>0) b.set(1);
+						// else b.set(0);
+					}, new BitType());
+			final IntervalView<NativeBoolType> sourceBlock = Views.offsetInterval(
+					Views.extendValue(source, new NativeBoolType(true)), // new FloatType(Label.OUTSIDE)),
+					paddedBlockMin, paddedBlockSize);
+			net.imagej.ImageJ ij = new net.imagej.ImageJ();
+			ImageJFunctions.show(source);
+			@SuppressWarnings("unchecked")
+			final Img<BitType> outImg = (Img<BitType>) ij.op().run(ThinZhangSuen.class, Img.class, source);
+			ImageJFunctions.show(outImg);
+			int i=1;
+		});
+	}
+
+	
 	public static final void calculateMedialSurface(final JavaSparkContext sc, final String n5Path,
 			final String datasetName, final String n5OutputPath, final String outputDatasetName,
 			final long[] initialPadding, final List<BlockInformation> blockInformationList) throws IOException {
@@ -169,7 +378,7 @@ public class SparkMedialSurface {
 		rdd.foreach(blockInformation -> {
 			final long[][] gridBlock = blockInformation.gridBlock;
 			// final long [][] gridBlock= {{64, 128, 64}, {64, 64, 64}, {1, 2, 1}};
-			gridBlock[0][0]=490;
+			//gridBlock[0][0]=490;
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			final RandomAccessibleInterval<NativeBoolType> source;
 			source = Converters.convert(
@@ -217,7 +426,7 @@ public class SparkMedialSurface {
 					tempCursor.next();
 					count++;
 				}
-				System.out.println(count);
+				//System.out.println(count);
 
 				/* make distance transform */
 				final NativeImg<FloatType, ?> targetBlock = ArrayImgs.floats(paddedBlockSize);
@@ -240,6 +449,7 @@ public class SparkMedialSurface {
 				if (show) ImageJFunctions.show(tempSourceBlock, "sourceBlock");
 				DistanceTransform.binaryTransform(tempSourceBlock, targetBlock, DISTANCE_TYPE.EUCLIDIAN);
 				 */
+				
 				DistanceTransform.binaryTransform(sourceBlock, targetBlock, DISTANCE_TYPE.EUCLIDIAN);
 				if (show) ImageJFunctions.show(targetBlock, "dt");
 
@@ -419,18 +629,12 @@ public class SparkMedialSurface {
 						int plusOrMinus[][] = { { 1, 1, 1 }, { -1, 1, 1 }, { 1, -1, 1 }, { 1, 1, -1 }, { -1, -1, 1 },
 								{ -1, 1, -1 }, { 1, -1, -1 }, { -1, -1, -1 } };
 						for (int index = 0; index < 8; index++) {
-							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * i, plusOrMinus[index][1] * j,
-									plusOrMinus[index][2] * k));
-							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * i, plusOrMinus[index][1] * k,
-									plusOrMinus[index][2] * j));
-							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * j, plusOrMinus[index][1] * i,
-									plusOrMinus[index][2] * k));
-							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * j, plusOrMinus[index][1] * k,
-									plusOrMinus[index][2] * i));
-							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * k, plusOrMinus[index][1] * i,
-									plusOrMinus[index][2] * j));
-							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * k, plusOrMinus[index][1] * j,
-									plusOrMinus[index][2] * i));
+							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * i, plusOrMinus[index][1] * j, plusOrMinus[index][2] * k));
+							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * i, plusOrMinus[index][1] * k, plusOrMinus[index][2] * j));
+							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * j, plusOrMinus[index][1] * i, plusOrMinus[index][2] * k));
+							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * j, plusOrMinus[index][1] * k, plusOrMinus[index][2] * i));
+							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * k, plusOrMinus[index][1] * i, plusOrMinus[index][2] * j));
+							voxelsToCheck.add(Arrays.asList(plusOrMinus[index][0] * k, plusOrMinus[index][1] * j, plusOrMinus[index][2] * i));
 						}
 						return voxelsToCheck;
 
@@ -445,6 +649,7 @@ public class SparkMedialSurface {
 	}
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
+		System.setProperty("plugins.dir", "/groups/scicompsoft/home/ackermand/Fiji.app/plugins/");
 
 		final Options options = new Options(args);
 
@@ -481,8 +686,8 @@ public class SparkMedialSurface {
 					currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 
-			calculateMedialSurface(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
-					"medial_surface", new long[] { 16, 16, 16 }, blockInformationList);
+			tempPerformThinning(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
+					"skeletonize", new long[] { 16, 16, 16 }, blockInformationList);
 
 			sc.close();
 		}
