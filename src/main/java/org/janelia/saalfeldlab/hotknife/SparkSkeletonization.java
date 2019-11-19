@@ -177,7 +177,7 @@ public class SparkSkeletonization {
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 			
-			int padding = 7;
+			int padding = 6;
 			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			
