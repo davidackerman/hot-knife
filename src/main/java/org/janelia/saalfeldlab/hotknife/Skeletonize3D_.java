@@ -405,7 +405,7 @@ public class Skeletonize3D_ implements PlugInFilter
 					index = simpleBorderPoint;
 
 					// Check if border points is simple			        
-					if (isSimplePoint(getNeighborhood(outputImage, index[0], index[1], index[2])) && !isEulerInvariant( getNeighborhood(outputImage, index[0], index[1], index[2]), eulerLUT )) {
+					if (isSimplePoint(getNeighborhood(outputImage, index[0], index[1], index[2])) && isEulerInvariant( getNeighborhood(outputImage, index[0], index[1], index[2]), eulerLUT )) {
 						// we can delete the current point
 						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
 						noChange = false;
@@ -621,8 +621,10 @@ public class Skeletonize3D_ implements PlugInFilter
 	
 	private void setPixel(RandomAccess<UnsignedByteType> ra, int x, int y, int z, byte value)
 	{
-		ra.setPosition(new int[] {x,y,z});
-		ra.get().set(value);
+		if(x >= 0 && x < this.width && y >= 0 && y < this.height && z >= 0 && z < this.depth) {
+			ra.setPosition(new int[] {x,y,z});
+			ra.get().set(value);
+		}
 	} /* end setPixel */
 
 	/* -----------------------------------------------------------------------*/
