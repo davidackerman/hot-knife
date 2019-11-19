@@ -121,8 +121,6 @@ import ij.plugin.*;
  */
 public class Skeletonize3D_ implements PlugInFilter 
 {
-	/** working image plus */
-	private ImagePlus imRef;
 
 	/** working image width */
 	private int width = 0;
@@ -131,111 +129,23 @@ public class Skeletonize3D_ implements PlugInFilter
 	/** working image depth */
 	private int depth = 0;
 	/** working image stack*/
-	private ImageStack inputImage = null;
+	private IntervalView<UnsignedByteType> inputImage = null;
     /** number of iterations thinning took */
 	private int iterations;
-	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * This method is called once when the filter is loaded.
-	 * 
-	 * @param arg argument specified for this plugin
-	 * @param imp currently active image
-	 * @return flag word that specifies the filters capabilities
-	 */
-	public int setup(String arg, ImagePlus imp) 
-	{
-		this.imRef = imp;
-		
-		if (arg.equals("about")) {
-			showAbout();
-			return DONE;
-		}
 
-		return DOES_8G;
-	} /* end setup */
-	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * Process the image.
-	 * 
-	 * @see ij.plugin.filter.PlugInFilter#run(ij.process.ImageProcessor)
-	 */
-	public void run(ImageProcessor ip) 
-	{
-		
-		this.width = this.imRef.getWidth();
-		this.height = this.imRef.getHeight();
-		this.depth = this.imRef.getStackSize();
-		this.inputImage = this.imRef.getStack();
-							
-		// Prepare data
-		prepareData(this.inputImage);
+	public final boolean thinningForParallelization(IntervalView<UnsignedByteType> inputImage, int padding ) {
+		this.inputImage = inputImage;
+		this.width = (int) this.inputImage.dimension(0);
+		this.height = (int) this.inputImage.dimension(1);
+		this.depth = (int) this.inputImage.dimension(2);
 		
 		// Compute Thinning	
-		computeThinImage(this.inputImage);
-		
-		// Convert image to binary 0-255
-		for(int i = 1; i <= this.inputImage.getSize(); i++)
-			this.inputImage.getProcessor(i).multiply(255);
-		
-		this.inputImage.update(ip);
-	} /* end run */
-
-	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
-		//new ij.ImageJ();
-		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_binary.tif");
-		//imp.show();
-		Skeletonize3D_ skeletonize3D = new Skeletonize3D_();
-		String arg = "";
-		skeletonize3D.setup(arg,imp);
-		skeletonize3D.run(imp.getStack().getProcessor(1));
-		imp.show();
-	}
-	
-	
-	
-	public final boolean thinningForParallelization(ImagePlus inputForSkeletonization) {
-		String arg = "";
-		this.setup(arg,inputForSkeletonization);
-
-		this.width = this.imRef.getWidth();
-		this.height = this.imRef.getHeight();
-		this.depth = this.imRef.getStackSize();
-		this.inputImage = this.imRef.getStack();
-							
-		// Prepare data
-		prepareData(this.inputImage);
-		
-		// Compute Thinning	
-		boolean needToThinAgain = thinPaddedImageOneIteration(this.inputImage);
-		
-		// Convert image to binary 0-255
-		for(int i = 1; i <= this.inputImage.getSize(); i++)
-			this.inputImage.getProcessor(i).multiply(255);
+		boolean needToThinAgain = thinPaddedImageOneIteration(this.inputImage, padding);
 	
 		return needToThinAgain;
 
 	}
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * Prepare data for computation.
-	 * Copy the input image to the output image, changing from the input
-	 * type to the output type.
-	 * 
-	 * @param outputImage output image stack
-	 */
-	public void prepareData(ImageStack outputImage) 
-	{		
-		// Copy the input to the output, changing all foreground pixels to
-        // have value 1 in the process.
-		for (int z = 0; z < depth; z++) 
-			for (int x = 0; x < width; x++) 
-				for (int y = 0; y < height; y++)
-					if ( ((byte[]) this.inputImage.getPixels(z + 1))[x + y * width] != 0 )
-						((byte[]) outputImage.getPixels(z + 1))[x + y * width] = 1;
-
-	} /* end prepareData */
+	
 	
 	/* -----------------------------------------------------------------------*/
 	/**
@@ -243,8 +153,10 @@ public class Skeletonize3D_ implements PlugInFilter
 	 * 
 	 * @param outputImage output image stack
 	 */
-	public boolean thinPaddedImageOneIteration(ImageStack outputImage) 
+	public boolean thinPaddedImageOneIteration(IntervalView<UnsignedByteType> outputImage, int padding) 
 	{						
+		RandomAccess<UnsignedByteType> outputImageRandomAccess = outputImage.randomAccess();
+		
 		// Prepare Euler LUT [Lee94]
 		int eulerLUT[] = new int[256]; 
 		fillEulerLUT( eulerLUT );
@@ -260,12 +172,12 @@ public class Skeletonize3D_ implements PlugInFilter
 		iterations = 0;
 		// Loop through the image several times until there is no change.
 		int unchangedBorders = 0;
+		//while(unchangedBorders<6)
 		{						
 			unchangedBorders = 0;
 			iterations++;
 			for( int currentBorder = 1; currentBorder <= 6; currentBorder++)
 			{
-				IJ.showStatus("Thinning iteration " + iterations + " (" + currentBorder +"/6 borders) ...");
 
 				boolean noChange = true;				
 				
@@ -278,7 +190,7 @@ public class Skeletonize3D_ implements PlugInFilter
 						{
 
 							// check if point is foreground
-							if ( getPixelNoCheck(outputImage, x, y, z) != 1 )
+							if ( getPixelNoCheck(outputImageRandomAccess, x, y, z) == 0 )
 							{
 								continue;         // current point is already background 
 							}
@@ -286,24 +198,24 @@ public class Skeletonize3D_ implements PlugInFilter
 							// check 6-neighbors if point is a border point of type currentBorder
 							boolean isBorderPoint = false;
 							// North
-							if( currentBorder == 1 && N(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 1 && N(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// South
-							if( currentBorder == 2 && S(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 2 && S(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// East
-							if( currentBorder == 3 && E(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 3 && E(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// West
-							if( currentBorder == 4 && W(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 4 && W(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
-							if(outputImage.getSize() > 1)
+							if(outputImage.dimension(2) > 1)
 							{
 								// Up							
-								if( currentBorder == 5 && U(outputImage, x, y, z) <= 0 )
+								if( currentBorder == 5 && U(outputImageRandomAccess, x, y, z) <= 0 )
 									isBorderPoint = true;
 								// Bottom
-								if( currentBorder == 6 && B(outputImage, x, y, z) <= 0 )
+								if( currentBorder == 6 && B(outputImageRandomAccess, x, y, z) <= 0 )
 									isBorderPoint = true;
 							}
 							if( !isBorderPoint )
@@ -311,12 +223,12 @@ public class Skeletonize3D_ implements PlugInFilter
 								continue;         // current point is not deletable
 							}
 
-							if( isEndPoint( outputImage, x, y, z))
+							if( isEndPoint( outputImageRandomAccess, x, y, z))
 							{
 								continue;
 							}
 
-							final byte[] neighborhood = getNeighborhood(outputImage, x, y, z);
+							final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
 							
 							// Check if point is Euler invariant (condition 1 in Lee[94])
 							if( !isEulerInvariant( neighborhood, eulerLUT ) )
@@ -351,11 +263,12 @@ public class Skeletonize3D_ implements PlugInFilter
 				for (int[] simpleBorderPoint : simpleBorderPoints) {
 					index = simpleBorderPoint;
 
-					// Check if border points is simple			        
-					if (isSimplePoint(getNeighborhood(outputImage, index[0], index[1], index[2]))) {
+					// Check if border points is simple
+					byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
+					if (isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT )) {
 						// we can delete the current point
-						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
-						if((index[0]>0 && index[0]<width-1) && (index[1]>0 && index[1]<height-1) && (index[2]>0 && index[2]<depth-1)) //Don't care about changes to padded part
+						setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
+						if((index[0]>=padding && index[0]<width-padding) && (index[1]>=padding && index[1]<height-padding) && (index[2]>=padding && index[2]<depth-padding)) //Don't care about changes to padded part
 							noChange = false;
 					}
 
@@ -369,7 +282,6 @@ public class Skeletonize3D_ implements PlugInFilter
 			} // end currentBorder for loop
 		}
 
-		IJ.showStatus("Computed thin image.");
 		return unchangedBorders<6;
 	} 	
 	
@@ -493,7 +405,7 @@ public class Skeletonize3D_ implements PlugInFilter
 					index = simpleBorderPoint;
 
 					// Check if border points is simple			        
-					if (isSimplePoint(getNeighborhood(outputImage, index[0], index[1], index[2]))) {
+					if (isSimplePoint(getNeighborhood(outputImage, index[0], index[1], index[2])) && !isEulerInvariant( getNeighborhood(outputImage, index[0], index[1], index[2]), eulerLUT )) {
 						// we can delete the current point
 						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
 						noChange = false;
@@ -527,6 +439,19 @@ public class Skeletonize3D_ implements PlugInFilter
 	{
 		int numberOfNeighbors = -1;   // -1 and not 0 because the center pixel will be counted as well
         byte[] neighbor = getNeighborhood(image, x, y, z);
+        for( int i = 0; i < 27; i++ ) // i =  0..26
+        {					        	
+          if( neighbor[i] == 1 )
+            numberOfNeighbors++;
+        }
+
+        return  numberOfNeighbors == 1;        
+	}
+	
+	boolean isEndPoint(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		int numberOfNeighbors = -1;   // -1 and not 0 because the center pixel will be counted as well
+        byte[] neighbor = getNeighborhood(ra, x, y, z);
         for( int i = 0; i < 27; i++ ) // i =  0..26
         {					        	
           if( neighbor[i] == 1 )
@@ -589,6 +514,49 @@ public class Skeletonize3D_ implements PlugInFilter
 		return neighborhood;
 	} /* end getNeighborhood */
 	
+	public byte[] getNeighborhood(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		byte[] neighborhood = new byte[27];
+		
+		neighborhood[ 0] = getPixel(ra, x-1, y-1, z-1);
+		neighborhood[ 1] = getPixel(ra, x  , y-1, z-1);
+		neighborhood[ 2] = getPixel(ra, x+1, y-1, z-1);
+		
+		neighborhood[ 3] = getPixel(ra, x-1, y,   z-1);
+		neighborhood[ 4] = getPixel(ra, x,   y,   z-1);
+		neighborhood[ 5] = getPixel(ra, x+1, y,   z-1);
+		
+		neighborhood[ 6] = getPixel(ra, x-1, y+1, z-1);
+		neighborhood[ 7] = getPixel(ra, x,   y+1, z-1);
+		neighborhood[ 8] = getPixel(ra, x+1, y+1, z-1);
+		
+		neighborhood[ 9] = getPixel(ra, x-1, y-1, z  );
+		neighborhood[10] = getPixel(ra, x,   y-1, z  );
+		neighborhood[11] = getPixel(ra, x+1, y-1, z  );
+		
+		neighborhood[12] = getPixel(ra, x-1, y,   z  );
+		neighborhood[13] = getPixel(ra, x,   y,   z  );
+		neighborhood[14] = getPixel(ra, x+1, y,   z  );
+		
+		neighborhood[15] = getPixel(ra, x-1, y+1, z  );
+		neighborhood[16] = getPixel(ra, x,   y+1, z  );
+		neighborhood[17] = getPixel(ra, x+1, y+1, z  );
+		
+		neighborhood[18] = getPixel(ra, x-1, y-1, z+1);
+		neighborhood[19] = getPixel(ra, x,   y-1, z+1);
+		neighborhood[20] = getPixel(ra, x+1, y-1, z+1);
+		
+		neighborhood[21] = getPixel(ra, x-1, y,   z+1);
+		neighborhood[22] = getPixel(ra, x,   y,   z+1);
+		neighborhood[23] = getPixel(ra, x+1, y,   z+1);
+		
+		neighborhood[24] = getPixel(ra, x-1, y+1, z+1);
+		neighborhood[25] = getPixel(ra, x,   y+1, z+1);
+		neighborhood[26] = getPixel(ra, x+1, y+1, z+1);
+		
+		return neighborhood;
+	} /* end getNeighborhood */
+	
 	/* -----------------------------------------------------------------------*/
 	/**
 	 * Get pixel in 3D image (0 border conditions) 
@@ -603,6 +571,15 @@ public class Skeletonize3D_ implements PlugInFilter
 	{
 		if(x >= 0 && x < this.width && y >= 0 && y < this.height && z >= 0 && z < this.depth)
 			return ((byte[]) image.getPixels(z + 1))[x + y * this.width];
+		else return 0;
+	} /* end getPixel */
+	
+	private byte getPixel(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		if(x >= 0 && x < this.width && y >= 0 && y < this.height && z >= 0 && z < this.depth) {
+			ra.setPosition(new int[] {x,y,z});
+			return ra.get().getByte();
+		}
 		else return 0;
 	} /* end getPixel */
 	
@@ -621,6 +598,10 @@ public class Skeletonize3D_ implements PlugInFilter
 		return ((byte[]) image.getPixels(z + 1))[x + y * this.width];		
 	} /* end getPixelNocheck */
 	
+	private byte getPixelNoCheck(RandomAccess<UnsignedByteType> ra, int x, int y, int z) {
+		ra.setPosition(new int[] {x,y,z});
+		return ra.get().getByte();
+	}
 	
 	/* -----------------------------------------------------------------------*/
 	/**
@@ -636,6 +617,12 @@ public class Skeletonize3D_ implements PlugInFilter
 	{
 		if(x >= 0 && x < this.width && y >= 0 && y < this.height && z >= 0 && z < this.depth)
 			((byte[]) image.getPixels(z + 1))[x + y * this.width] = value;
+	} /* end setPixel */
+	
+	private void setPixel(RandomAccess<UnsignedByteType> ra, int x, int y, int z, byte value)
+	{
+		ra.setPosition(new int[] {x,y,z});
+		ra.get().set(value);
 	} /* end setPixel */
 
 	/* -----------------------------------------------------------------------*/
@@ -653,6 +640,11 @@ public class Skeletonize3D_ implements PlugInFilter
 		return getPixel(image, x, y-1, z);
 	} /* end N */
 	
+	private byte N(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		return getPixel(ra, x, y-1, z);
+	} /* end N */
+	
 	/* -----------------------------------------------------------------------*/
 	/**
 	 * South neighborhood (0 border conditions) 
@@ -666,6 +658,11 @@ public class Skeletonize3D_ implements PlugInFilter
 	private byte S(ImageStack image, int x, int y, int z)
 	{
 		return getPixel(image, x, y+1, z);
+	} /* end S */
+	
+	private byte S(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		return getPixel(ra, x, y+1, z);
 	} /* end S */
 	
 	/* -----------------------------------------------------------------------*/
@@ -683,6 +680,11 @@ public class Skeletonize3D_ implements PlugInFilter
 		return getPixel(image, x+1, y, z);
 	} /* end E */
 	
+	private byte E(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		return getPixel(ra, x+1, y, z);
+	} /* end E */
+	
 	/* -----------------------------------------------------------------------*/
 	/**
 	 * West neighborhood (0 border conditions) 
@@ -697,6 +699,12 @@ public class Skeletonize3D_ implements PlugInFilter
 	{
 		return getPixel(image, x-1, y, z);
 	} /* end W */
+	
+	private byte W(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		return getPixel(ra, x-1, y, z);
+	} /* end E */
+	
 	
 	/* -----------------------------------------------------------------------*/
 	/**
@@ -713,6 +721,11 @@ public class Skeletonize3D_ implements PlugInFilter
 		return getPixel(image, x, y, z+1);
 	} /* end U */
 	
+	private byte U(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		return getPixel(ra, x, y, z+1);
+	} /* end E */
+	
 	/* -----------------------------------------------------------------------*/
 	/**
 	 * Bottom neighborhood (0 border conditions) 
@@ -726,6 +739,11 @@ public class Skeletonize3D_ implements PlugInFilter
 	private byte B(ImageStack image, int x, int y, int z)
 	{
 		return getPixel(image, x, y, z-1);
+	} /* end B */
+	
+	private byte B(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		return getPixel(ra, x, y, z-1);
 	} /* end B */
 	
 	/* -----------------------------------------------------------------------*/
@@ -1538,6 +1556,20 @@ public class Skeletonize3D_ implements PlugInFilter
 	 */
 	public int getThinningIterations() {
 		return iterations;
+	}
+
+
+	@Override
+	public int setup(String arg, ImagePlus imp) {
+		// TODO Auto-generated method stub
+		return 0;
+	}
+
+
+	@Override
+	public void run(ImageProcessor ip) {
+		// TODO Auto-generated method stub
+		
 	}
 
 } /* end skeletonize3D */
