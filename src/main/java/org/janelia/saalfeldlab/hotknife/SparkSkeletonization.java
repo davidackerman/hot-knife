@@ -177,39 +177,48 @@ public class SparkSkeletonization {
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 			
-			int padding = 7;
+			int padding = 2;
 			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			
 			
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			
-			IntervalView<UnsignedByteType> outputImage = null;
+			IntervalView<UnsignedByteType> inputImage = null;
+			IntervalView<UnsignedByteType>  outputImage = null;
+
 			if(iteration==0 ) {
 				final RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, originalInputDatasetName);
 				final IntervalView<UnsignedLongType> sourceCropped = Views.offsetInterval(
 					Views.extendValue(source, new UnsignedLongType(0)),
 					paddedOffset, paddedDimension);
 				
+				inputImage = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
 				outputImage = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
-				
+
 				final Cursor<UnsignedLongType> sourceCroppedCursor = sourceCropped.cursor();
+				final Cursor<UnsignedByteType> inputImageCursor = outputImage.cursor();
 				final Cursor<UnsignedByteType> outputImageCursor = outputImage.cursor();
 				while(sourceCroppedCursor.hasNext()) {
 					UnsignedLongType v1 = sourceCroppedCursor.next();
-					UnsignedByteType v2 = outputImageCursor.next();
+					UnsignedByteType v2 = inputImageCursor.next();
+					UnsignedByteType v3 = outputImageCursor.next();
 					if(v1.get()>0) {
 					//if (sourceCroppedCursor.getIntPosition(0)>20 && sourceCroppedCursor.getIntPosition(0)<30 && sourceCroppedCursor.getIntPosition(1)>10 && sourceCroppedCursor.getIntPosition(1)<30 && sourceCroppedCursor.getIntPosition(2)>25 && sourceCroppedCursor.getIntPosition(2)<38) {  
-
 						v2.set(1);
+						v3.set(1);
 					}
 				}	
 			}
 			else {
 				final RandomAccessibleInterval<UnsignedByteType> source = (RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, inputDatasetName);
+				inputImage = Views.offsetInterval(
+						Views.extendValue(source, new UnsignedByteType(0)),
+						paddedOffset, paddedDimension);
 				outputImage = Views.offsetInterval(
 					Views.extendValue(source, new UnsignedByteType(0)),
 					paddedOffset, paddedDimension);
+				
 			}
 			
 			Boolean needToThinAgain = false;
@@ -217,7 +226,7 @@ public class SparkSkeletonization {
 			if(show)
 				ImageJFunctions.show(outputImage);
 			Skeletonize3D_ skeletonize3D = new Skeletonize3D_();
-			needToThinAgain = skeletonize3D.thinningForParallelization(outputImage, padding);
+			needToThinAgain = skeletonize3D.thinningForParallelization(inputImage, outputImage, padding);
 			outputImage = Views.offsetInterval(outputImage,new long[]{padding,padding,padding}, dimension);
 		
 			if(show)

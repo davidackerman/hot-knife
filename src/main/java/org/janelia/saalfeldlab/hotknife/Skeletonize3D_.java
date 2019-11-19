@@ -130,17 +130,19 @@ public class Skeletonize3D_ implements PlugInFilter
 	private int depth = 0;
 	/** working image stack*/
 	private IntervalView<UnsignedByteType> inputImage = null;
+	private IntervalView<UnsignedByteType> outputImage = null;
     /** number of iterations thinning took */
 	private int iterations;
 
-	public final boolean thinningForParallelization(IntervalView<UnsignedByteType> inputImage, int padding ) {
+	public final boolean thinningForParallelization(IntervalView<UnsignedByteType> inputImage, IntervalView<UnsignedByteType> outputImage, int padding ) {
 		this.inputImage = inputImage;
+		this.outputImage = outputImage;
 		this.width = (int) this.inputImage.dimension(0);
 		this.height = (int) this.inputImage.dimension(1);
 		this.depth = (int) this.inputImage.dimension(2);
-		
+
 		// Compute Thinning	
-		boolean needToThinAgain = thinPaddedImageOneIteration(this.inputImage, padding);
+		boolean needToThinAgain = thinPaddedImageOneIteration(this.inputImage, this.outputImage, padding);
 	
 		return needToThinAgain;
 
@@ -153,10 +155,11 @@ public class Skeletonize3D_ implements PlugInFilter
 	 * 
 	 * @param outputImage output image stack
 	 */
-	public boolean thinPaddedImageOneIteration(IntervalView<UnsignedByteType> outputImage, int padding) 
+	public boolean thinPaddedImageOneIteration(IntervalView<UnsignedByteType> inputImage, IntervalView<UnsignedByteType> outputImage, int padding) 
 	{						
 		RandomAccess<UnsignedByteType> outputImageRandomAccess = outputImage.randomAccess();
-		
+		RandomAccess<UnsignedByteType> inputImageRandomAccess = inputImage.randomAccess();
+				
 		// Prepare Euler LUT [Lee94]
 		int eulerLUT[] = new int[256]; 
 		fillEulerLUT( eulerLUT );
@@ -176,6 +179,7 @@ public class Skeletonize3D_ implements PlugInFilter
 		{						
 			unchangedBorders = 0;
 			iterations++;
+			stopLooping:
 			for( int currentBorder = 1; currentBorder <= 6; currentBorder++)
 			{
 
@@ -267,6 +271,11 @@ public class Skeletonize3D_ implements PlugInFilter
 					byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
 					if (isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT )) {
 						// we can delete the current point
+						if( (index[0]==1 || index[0]==width-2) || (index[1]==1 || index[1]==height-2) || (index[2]==1 || index[2]==depth-2)) {
+							outputImage = inputImage;
+							unchangedBorders = 0;
+							break stopLooping;
+						}
 						setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
 						if((index[0]>=padding && index[0]<width-padding) && (index[1]>=padding && index[1]<height-padding) && (index[2]>=padding && index[2]<depth-padding)) //Don't care about changes to padded part
 							noChange = false;
@@ -281,7 +290,7 @@ public class Skeletonize3D_ implements PlugInFilter
 				simpleBorderPoints.clear();
 			} // end currentBorder for loop
 		}
-
+		
 		return unchangedBorders<6;
 	} 	
 	
