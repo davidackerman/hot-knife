@@ -52,7 +52,6 @@ import bdv.labels.labelset.Label;
 import ij.ImageJ.*;
 import ij.IJ;
 import ij.ImagePlus;
-import ij.ImageStack;
 import net.imagej.ImageJ;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
@@ -146,37 +145,33 @@ public class SparkSkeletonization {
 
 	
 
-	public static final Boolean skeletonizationIteration(final JavaSparkContext sc, final String n5Path,
-			final String originalInputDatasetName, final String n5OutputPath, String originalOutputDatasetName,
-			final List<BlockInformation> blockInformationList, final int iteration) throws IOException {
+	public static final void tempPerformThinning(final JavaSparkContext sc, final String n5Path,
+			final String datasetName, final String n5OutputPath, final String outputDatasetName,
+			final long[] initialPadding, final List<BlockInformation> blockInformationList) throws IOException {
 
 		final N5Reader n5Reader = new N5FSReader(n5Path);
 
-		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(originalInputDatasetName);
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
 		final long[] dimensions = attributes.getDimensions();
 		final int[] blockSize = attributes.getBlockSize();
 		final int n = dimensions.length;
 
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT8, new GzipCompression());
+
 		/*
 		 * grid block size for parallelization to minimize double loading of blocks
 		 */
-		boolean show = false;
+		boolean show = true;
 		if (show)
 			new ij.ImageJ();
-
-		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
-		final String inputDatasetName = originalOutputDatasetName+(iteration%2==0 ? "_odd" : "_even");
-		final String outputDatasetName = originalOutputDatasetName+(iteration%2==0 ? "_even" : "_odd");
-		
-		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT8, new GzipCompression());
-
-		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
-		JavaRDD<Boolean> needToThinAgainSet = rdd.map(blockInformation -> {
+		rdd.foreach(blockInformation -> {
 			final long[][] gridBlock = blockInformation.gridBlock;
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 			
+<<<<<<< HEAD
 			int padding = 2;
 			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
@@ -231,15 +226,52 @@ public class SparkSkeletonization {
 		
 			if(show)
 				ImageJFunctions.show(outputImage);
+=======
+			long [] paddedOffset = {offset[0]-1, offset[1]-1, offset[2]-1};
+			long [] paddedDimension = {dimension[0]+1, dimension[1]+1, dimension[2]+1};
+			
+			
+			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			final RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, datasetName);
+			final IntervalView<UnsignedLongType> inputForSkeletonization = Views.offsetInterval(
+					Views.extendValue(source, new UnsignedLongType(1)),
+					paddedOffset, paddedDimension);
+			
+			ImagePlusImg< UnsignedByteType, ? > intermediateOutputImage = new ImagePlusImgFactory<>( new UnsignedByteType() ).create( paddedDimension  );
+			final Cursor<UnsignedByteType> intermediateOutputImageCursor = intermediateOutputImage.cursor();
+			
+			final Cursor<UnsignedLongType> inputForSkeletonizationCursor = inputForSkeletonization.cursor();
+
+			int objectVoxelCount = 0;
+			while(inputForSkeletonizationCursor.hasNext()) {
+				UnsignedLongType v1 = inputForSkeletonizationCursor.next();
+				UnsignedByteType v2 = intermediateOutputImageCursor.next();
+				if(v1.getLong()>0) {
+					v2.set(255);
+					objectVoxelCount++;
+				}
+			}
+			if (show)
+				intermediateOutputImage.getImagePlus().show();
+			
+			boolean needToThinAgain = false;
+			if (objectVoxelCount == 0 || objectVoxelCount == dimensions[0]*dimensions[1]*dimensions[2]) {
+				//cant thin yet;
+				needToThinAgain = true;
+			}
+			else {
+				Skeletonize3D_ skeletonize3D = new Skeletonize3D_();
+				needToThinAgain = skeletonize3D.thinningForParallelization(intermediateOutputImage.getImagePlus());
+			}
+			if (show)
+				intermediateOutputImage.getImagePlus().show();
+>>>>>>> parent of 921ff55... works with example image with padding of 7...but this might just be luck, may not work depending on structure of image
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 
-			N5Utils.saveBlock(outputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
-			return needToThinAgain;
+			Views.offsetInterval((RandomAccessible<UnsignedByteType>) intermediateOutputImage.getImagePlus(), new long[]{1,1,1},dimension);
+			N5Utils.saveBlock(intermediateOutputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
 		});
-		
-		Boolean needToThinAgain = needToThinAgainSet.reduce((a,b) -> {return a || b; });
-		return needToThinAgain;
 	}
 
 	
@@ -300,14 +332,9 @@ public class SparkSkeletonization {
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
 					currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			int iteration=0;
-			Boolean needToThinAgain = true;
-			while(needToThinAgain) {
-				needToThinAgain = skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
-						"skeletonize", blockInformationList, iteration);
-				iteration++;
-				System.out.println(iteration);
-			}
+
+			tempPerformThinning(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
+					"skeletonize", new long[] { 16, 16, 16 }, blockInformationList);
 
 			sc.close();
 		}
