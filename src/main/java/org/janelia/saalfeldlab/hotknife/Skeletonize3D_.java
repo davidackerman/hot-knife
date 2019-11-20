@@ -132,15 +132,21 @@ public class Skeletonize3D_ implements PlugInFilter
 	private IntervalView<UnsignedByteType> inputImage = null;
     /** number of iterations thinning took */
 	private int iterations;
+	private int padding;
+	
+	private byte BORDER = 2;
+	private byte NOTENDPOINT = 4;
+	private byte EULER = 8;
+	private byte SIMPLE = 16;
 
 	public final boolean thinningForParallelization(IntervalView<UnsignedByteType> inputImage, int padding ) {
 		this.inputImage = inputImage;
 		this.width = (int) this.inputImage.dimension(0);
 		this.height = (int) this.inputImage.dimension(1);
 		this.depth = (int) this.inputImage.dimension(2);
-		
+		this.padding = padding;
 		// Compute Thinning	
-		boolean needToThinAgain = thinPaddedImageOneIteration(this.inputImage, padding);
+		boolean needToThinAgain = thinPaddedImageOneIteration(this.inputImage);
 	
 		return needToThinAgain;
 
@@ -153,7 +159,7 @@ public class Skeletonize3D_ implements PlugInFilter
 	 * 
 	 * @param outputImage output image stack
 	 */
-	public boolean thinPaddedImageOneIteration(IntervalView<UnsignedByteType> outputImage, int padding) 
+	public boolean thinPaddedImageOneIteration(IntervalView<UnsignedByteType> outputImage) 
 	{						
 		RandomAccess<UnsignedByteType> outputImageRandomAccess = outputImage.randomAccess();
 		
@@ -182,11 +188,11 @@ public class Skeletonize3D_ implements PlugInFilter
 				boolean noChange = true;				
 				
 				// Loop through the image.				 
-				for (int z = 0; z < depth; z++)
+				for (int z = 1; z < depth-1; z++)
 				{
-					for (int y = 0; y < height; y++)
+					for (int y = 1; y < height-1; y++)
 					{
-						for (int x = 0; x < width; x++)						
+						for (int x = 1; x < width-1; x++)						
 						{
 
 							// check if point is foreground
@@ -222,27 +228,26 @@ public class Skeletonize3D_ implements PlugInFilter
 							{
 								continue;         // current point is not deletable
 							}
-
+							
 							if( isEndPoint( outputImageRandomAccess, x, y, z))
-							{
+							{	
 								continue;
 							}
-
+							
 							final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
 							
 							// Check if point is Euler invariant (condition 1 in Lee[94])
 							if( !isEulerInvariant( neighborhood, eulerLUT ) )
-							{
+							{   
 								continue;         // current point is not deletable
 							}
-
+							
 							// Check if point is simple (deletion does not change connectivity in the 3x3x3 neighborhood)
 							// (conditions 2 and 3 in Lee[94])
 							if( !isSimplePoint( neighborhood ) )
-							{
+							{   
 								continue;         // current point is not deletable
 							}
-
 
 
 							// add all simple border points to a list for sequential re-checking
@@ -425,7 +430,10 @@ public class Skeletonize3D_ implements PlugInFilter
 		return unchangedBorders;
 	} /* end computeThinImage */	
 	
-	
+	void bitwiseOrPixel(RandomAccess<UnsignedByteType> ra, int x, int y, int z, byte b){
+		byte newValue = (byte) (getPixelByte(ra, x, y, z) | b);
+		setPixel(ra, x, y, z, newValue);
+	}
 	/**
 	 * Check if a point in the given stack is at the end of an arc
 	 * 
@@ -575,6 +583,21 @@ public class Skeletonize3D_ implements PlugInFilter
 	} /* end getPixel */
 	
 	private byte getPixel(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
+	{
+		if(x >= 0 && x < this.width && y >= 0 && y < this.height && z >= 0 && z < this.depth) {
+			ra.setPosition(new int[] {x,y,z});
+			if (ra.get().getByte()>0) {
+				return 1;
+			}
+			else {
+				return 0;
+			}
+		}
+		else return 0;
+	} /* end getPixel */
+	
+	
+	private byte getPixelByte(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
 	{
 		if(x >= 0 && x < this.width && y >= 0 && y < this.height && z >= 0 && z < this.depth) {
 			ra.setPosition(new int[] {x,y,z});

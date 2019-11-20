@@ -177,7 +177,7 @@ public class SparkSkeletonization {
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 			
-			int padding = 8;
+			int padding = 2;
 			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			
@@ -293,9 +293,10 @@ public class SparkSkeletonization {
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			int iteration=0;
 			Boolean needToThinAgain = true;
-			while(needToThinAgain) {
+			//while(needToThinAgain) 
+			{
 				needToThinAgain = skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
-						"skeletonize_padding8", blockInformationList, iteration);
+						"skeletonize_newPadding", blockInformationList, iteration);
 				iteration++;
 				System.out.println(iteration);
 			}
