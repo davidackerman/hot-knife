@@ -362,7 +362,7 @@ public class SparkMedialSurface {
 				needToThinAgain = true;
 			}
 			else {
-				Skeletonize3D_ skeletonize3D = new Skeletonize3D_();
+				//Skeletonize3D_ skeletonize3D = new Skeletonize3D_();
 				///needToThinAgain = skeletonize3D.thinningForParallelization(intermediateOutputImage.getImagePlus());
 			}
 			if (show)
