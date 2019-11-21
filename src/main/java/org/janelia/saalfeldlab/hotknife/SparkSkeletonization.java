@@ -147,9 +147,6 @@ public class SparkSkeletonization {
 			
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			
-			//System.out.println("offset "+ Arrays.toString(offset));
-
-			
 			IntervalView<UnsignedByteType> outputImage = null;
 			Boolean needToThinAgain = true;
 			boolean needToExpand = true;
@@ -181,7 +178,7 @@ public class SparkSkeletonization {
 						paddedOffset, paddedDimension);
 				}
 
-				Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, paddedOffset, dimension, currentBorder);
+				Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, padding, currentBorder);
 				int skeletonizationResult = skeletonize3D.thinPaddedImageOneIteration();
 				if(skeletonizationResult ==1) { //need to expand
 					padding+=1;
@@ -273,7 +270,7 @@ public class SparkSkeletonization {
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			int iteration=0;
 			Boolean needToThinAgain = true;
-			//while(needToThinAgain) 
+			while(needToThinAgain) 
 			{
 				for(int currentBorder=0; currentBorder<6; currentBorder++) {// this is one whole iteration
 					needToThinAgain = skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),

@@ -66,8 +66,7 @@ public class Skeletonize3D_ implements PlugInFilter
 
     /** number of iterations thinning took */
 	private int iterations;
-	private long [] regionOfInterestStart;
-	private long [] regionOfInterestEnd;
+	private int padding;
 	
 	private int currentBorder;
 	
@@ -79,13 +78,12 @@ public class Skeletonize3D_ implements PlugInFilter
 	private int[] eulerLUT;
 	private int[] pointsLUT;
 	
-	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, long [] paddedOffset, long [] originalDimension, int currentBorder ) {
+	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, int padding, int currentBorder ) {
 		this.inputImage = inputImage;
 		this.width = (int) this.inputImage.dimension(0);
 		this.height = (int) this.inputImage.dimension(1);
 		this.depth = (int) this.inputImage.dimension(2);
-		this.regionOfInterestStart = new long[] {-paddedOffset[0], -paddedOffset[1], -paddedOffset[2]};
-		this.regionOfInterestEnd = new long[] {regionOfInterestStart[0]+originalDimension[0], regionOfInterestStart[1]+originalDimension[1], regionOfInterestStart[2]+originalDimension[2]} ;
+		this.padding = padding;
 		this.currentBorder = currentBorder;
 		
 		// Prepare Euler LUT [Lee94]
@@ -186,9 +184,11 @@ public class Skeletonize3D_ implements PlugInFilter
 					index[1] = y;
 					index[2] = z;
 					simpleBorderPoints.add(index);
-					if(index[0]==1 || index[0]==width-2 || index[1]==1 || index[1]==height-2 || index[2]==1 || index[2]==depth-2) {
-						simpleBorderPointsOnEdge.add(index);
+					
+					if(x==1 || x==width-2 || y==1 || y==height-2 || z==1 || z==depth-2) {
+						simpleBorderPointsOnEdge.add(new int[] {x,y,z});
 					}
+					
 				}
 			}					
 		}							
@@ -199,7 +199,7 @@ public class Skeletonize3D_ implements PlugInFilter
 
 		for (int[] simpleBorderPoint : simpleBorderPoints) {
 			index = simpleBorderPoint;
-			if((index[0]>=2 && index[0]<=width-3) && (index[1]>=2 && index[1]<=height-3) && (index[2]>=3 && index[2]<=depth-3)){//then it is at least two from border
+			if((index[0]>=2 && index[0]<=width-3) && (index[1]>=2 && index[1]<=height-3) && (index[2]>=2 && index[2]<=depth-3)){//then it is at least two from border
 				// Check if border points is simple
 				byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
 				boolean canRemoveThisPointIfIndependentOfBoundary = isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT );
@@ -217,7 +217,11 @@ public class Skeletonize3D_ implements PlugInFilter
 				}
 				if (canRemoveThisPointIfIndependentOfBoundary){
 					setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
-					needToThinAgain = true; //if thinned, then need to check all again
+					if(index[0]>=padding && index[0]<width-padding 
+						&& index[1]>=padding && index[1]<height-padding
+						&& index[2]>=padding && index[2]<depth-padding) {
+							needToThinAgain = true; //if thinned, then need to check all again
+					}
 				}
 			}
 		
