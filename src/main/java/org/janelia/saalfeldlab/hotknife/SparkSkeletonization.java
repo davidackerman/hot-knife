@@ -141,13 +141,13 @@ public class SparkSkeletonization {
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 			
-			int padding = 1;
+			int padding = 2; //2 because need to know if surrounding voxels are removable
 			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			
-			System.out.println("offset "+ Arrays.toString(offset));
+			//System.out.println("offset "+ Arrays.toString(offset));
 
 			
 			IntervalView<UnsignedByteType> outputImage = null;
@@ -165,6 +165,7 @@ public class SparkSkeletonization {
 					
 					final Cursor<UnsignedLongType> sourceCroppedCursor = sourceCropped.cursor();
 					final Cursor<UnsignedByteType> outputImageCursor = outputImage.cursor();
+
 					while(sourceCroppedCursor.hasNext()) {
 						UnsignedLongType v1 = sourceCroppedCursor.next();
 						UnsignedByteType v2 = outputImageCursor.next();
@@ -179,23 +180,22 @@ public class SparkSkeletonization {
 						Views.extendValue(source, new UnsignedByteType(0)),
 						paddedOffset, paddedDimension);
 				}
-				
+
 				Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, paddedOffset, dimension, currentBorder);
-				int[] expandBy = skeletonize3D.needToExpand(); 
-				if(!Arrays.equals(expandBy, new int[] {0,0,0,0,0,0})){
-					System.out.println("expand by:"+ Arrays.toString(expandBy));
-					System.out.println("paddedDimensions:"+ Arrays.toString(paddedDimension));
-					paddedOffset = new long[] {paddedOffset[0] - expandBy[0], paddedOffset[1] - expandBy[1], paddedOffset[2] - expandBy[2]};
-					paddedDimension = new long[] {paddedDimension[0] + expandBy[3], paddedDimension[1] + expandBy[4], paddedDimension[2] + expandBy[5]};	
+				int skeletonizationResult = skeletonize3D.thinPaddedImageOneIteration();
+				if(skeletonizationResult ==1) { //need to expand
+					padding+=1;
+					paddedOffset = new long[] {offset[0]-padding, offset[1]-padding, offset[2]-padding};
+					paddedDimension = new long[] {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 					needToExpand = true;
+					//System.out.println(Arrays.toString(paddedDimension));
 					continue expand;
 				}
 				needToExpand = false;
-				needToThinAgain = false;
+				needToThinAgain = skeletonizationResult==2;
 	
 				if(show)
 					ImageJFunctions.show(outputImage);
-				needToThinAgain = skeletonize3D.thinPaddedImageOneIteration();
 				outputImage = Views.offsetInterval(outputImage,new long[]{padding,padding,padding}, dimension);
 			
 				if(show)

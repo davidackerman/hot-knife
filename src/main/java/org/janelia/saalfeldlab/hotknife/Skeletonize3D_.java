@@ -62,6 +62,8 @@ public class Skeletonize3D_ implements PlugInFilter
 	private int depth = 0;
 	/** working image stack*/
 	private IntervalView<UnsignedByteType> inputImage = null;
+	private IntervalView<UnsignedByteType> testImage = null;
+
     /** number of iterations thinning took */
 	private int iterations;
 	private long [] regionOfInterestStart;
@@ -101,18 +103,19 @@ public class Skeletonize3D_ implements PlugInFilter
 	 * 
 	 * @param outputImage output image stack
 	 */
-	public boolean thinPaddedImageOneIteration() 
-	{						
+	public int thinPaddedImageOneIteration() 
+	{	
 		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();
-		
+
 		// Following Lee[94], save versions (Q) of input image S, while 
 		// deleting each type of border points (R)
 		ArrayList <int[]> simpleBorderPoints = new ArrayList<int[]>();				
-		
+		ArrayList <int[]> simpleBorderPointsOnEdge = new ArrayList<int[]>();				
+
 		iterations = 0;
 		// Loop through the image several times until there is no change.
 		iterations++;
-		boolean needToThinAgain = true;				
+		boolean needToThinAgain = false;				
 		
 		// Loop through the image.				 
 		for (int z = 1; z < depth-1; z++)
@@ -183,10 +186,12 @@ public class Skeletonize3D_ implements PlugInFilter
 					index[1] = y;
 					index[2] = z;
 					simpleBorderPoints.add(index);
+					if(index[0]==1 || index[0]==width-2 || index[1]==1 || index[1]==height-2 || index[2]==1 || index[2]==depth-2) {
+						simpleBorderPointsOnEdge.add(index);
+					}
 				}
 			}					
 		}							
-
 
 		// sequential re-checking to preserve connectivity when
 		// deleting in a parallel way
@@ -194,24 +199,38 @@ public class Skeletonize3D_ implements PlugInFilter
 
 		for (int[] simpleBorderPoint : simpleBorderPoints) {
 			index = simpleBorderPoint;
-
-			// Check if border points is simple
-			byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
-			if (isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT )) {
-				// we can delete the current point
-				if((index[0]>=regionOfInterestStart[0] && index[0]<regionOfInterestEnd[0]) 
-						&& (index[1]>=regionOfInterestStart[1] && index[1]<regionOfInterestEnd[1]) 
-						&& (index[2]>=regionOfInterestStart[2] && index[2]<regionOfInterestEnd[2])) //Don't care about changes to padded part
+			if((index[0]>=2 && index[0]<=width-3) && (index[1]>=2 && index[1]<=height-3) && (index[2]>=3 && index[2]<=depth-3)){//then it is at least two from border
+				// Check if border points is simple
+				byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
+				boolean canRemoveThisPointIfIndependentOfBoundary = isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT );
+				
+				ArrayList<Integer> neighborhoodIndicesForSimpleBorderPointsOnEdge = getNeighborhoodIndicesForSimpleBorderPointsOnEdge(outputImageRandomAccess, index[0], index[1], index[2], simpleBorderPointsOnEdge);
+				for(int i=0; i< Math.pow(2,neighborhoodIndicesForSimpleBorderPointsOnEdge.size()); i++) {
+					for(int j=0; j<neighborhoodIndicesForSimpleBorderPointsOnEdge.size(); j++) {
+						if( i % Math.pow(2,j)==0) {
+							neighborhood[neighborhoodIndicesForSimpleBorderPointsOnEdge.get(j)] = (byte) (1-neighborhood[neighborhoodIndicesForSimpleBorderPointsOnEdge.get(j)]);
+							if (canRemoveThisPointIfIndependentOfBoundary != (isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT ))) {
+								return 1;
+							}		
+						}
+					}
+				}
+				if (canRemoveThisPointIfIndependentOfBoundary){
 					setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
 					needToThinAgain = true; //if thinned, then need to check all again
+				}
 			}
-
-
+		
 		}
 
 		simpleBorderPoints.clear();
-
-		return needToThinAgain;
+		simpleBorderPointsOnEdge.clear();
+		if (needToThinAgain) {
+			return 2;
+		}
+		else {
+			return 0;
+		}
 	} 	
 	
 	
@@ -587,6 +606,32 @@ public class Skeletonize3D_ implements PlugInFilter
 		
 		return neighborhood;
 	} /* end getNeighborhood */
+	
+	public ArrayList<Integer> getNeighborhoodIndicesForSimpleBorderPointsOnEdge(RandomAccess<UnsignedByteType> ra, int x, int y, int z, ArrayList<int[]> simpleBorderPointsOnEdge)
+		{
+			ArrayList <Integer> indicesForSimpleBorderPointsOnEdge = new ArrayList<Integer>();
+			int index=0;
+			for(int zPlus=-1; zPlus<=1; zPlus++) {
+				for(int yPlus=-1; yPlus<=1; yPlus++) {
+					for(int xPlus=-1; xPlus<=1; xPlus++) {
+						if (isIndexInSimpleBorderPointsOnEdge(simpleBorderPointsOnEdge, x+xPlus, y+yPlus, z+zPlus)) {
+							indicesForSimpleBorderPointsOnEdge.add(index);
+						}
+						index++;
+					}
+				}
+			}	
+			return indicesForSimpleBorderPointsOnEdge;
+	}
+	
+	public boolean isIndexInSimpleBorderPointsOnEdge(ArrayList<int[]> simpleBorderPointsOnEdge, int x, int y, int z){
+		for( int[] index : simpleBorderPointsOnEdge) {
+			if(index[0]==x && index[1]==y && index[2]==z) {
+				return true;
+			}
+		}
+		return false;
+	}
 	
 	/* -----------------------------------------------------------------------*/
 	/**
