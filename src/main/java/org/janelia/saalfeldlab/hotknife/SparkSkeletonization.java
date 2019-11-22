@@ -42,6 +42,8 @@ import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
+import com.google.common.io.Files;
+
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.img.array.ArrayImgs;
@@ -69,7 +71,7 @@ public class SparkSkeletonization {
 		private String inputN5DatasetName = null;
 
 		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
-		private String outputN5DatasetSuffix = "_cc";
+		private String outputN5DatasetSuffix = "_skeleton";
 
 		public Options(final String[] args) {
 
@@ -232,14 +234,13 @@ public class SparkSkeletonization {
 	
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
-		System.setProperty("plugins.dir", "/groups/scicompsoft/home/ackermand/Fiji.app/plugins/");
 
 		final Options options = new Options(args);
 
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkConnectedComponents");
+		final SparkConf conf = new SparkConf().setAppName("SparkSkeletonization");
 
 		// Get all organelles
 		String[] organelles = { "" };
@@ -270,15 +271,21 @@ public class SparkSkeletonization {
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			int iteration=0;
 			Boolean needToThinAgain = true;
+			int fullIterations = 0;
 			while(needToThinAgain) 
 			{
+				needToThinAgain = false;
 				for(int currentBorder=0; currentBorder<6; currentBorder++) {// this is one whole iteration
-					needToThinAgain = skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
-							"skeletonize_OneAtATime", blockInformationList, iteration);
+					needToThinAgain |= skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
+							tempOutputN5DatasetName, blockInformationList, iteration);
 					iteration++;
 				}
-				System.out.println(iteration/6);
+				fullIterations++;
+				System.out.println(iteration/6.0+" "+fullIterations);
 			}
+			String finalFileName = tempOutputN5DatasetName + '_'+ ((iteration-1)%2==0 ? "even" : "odd");
+			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName));
+			FileUtils.moveDirectory(new File(options.getOutputN5Path() + "/" + finalFileName), new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName));
 
 			sc.close();
 		}
@@ -286,7 +293,10 @@ public class SparkSkeletonization {
 		// Remove temporary files
 		for (String currentOrganelle : organelles) {
 			tempOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix()
-					+ "_blockwise_temp_to_delete";
+					+ "_blockwise_temp_to_delete_even";
+			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + tempOutputN5DatasetName));
+			tempOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix()
+			+ "_blockwise_temp_to_delete_odd";
 			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + tempOutputN5DatasetName));
 		}
 
