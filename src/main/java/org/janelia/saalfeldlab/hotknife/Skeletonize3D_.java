@@ -115,7 +115,7 @@ public class Skeletonize3D_ implements PlugInFilter
 		iterations++;
 		boolean needToThinAgain = false;				
 		
-		// Loop through the image.				 
+		// Loop through the image.
 		for (int z = 1; z < depth-1; z++)
 		{
 			for (int y = 1; y < height-1; y++)
@@ -128,7 +128,7 @@ public class Skeletonize3D_ implements PlugInFilter
 					{
 						continue;         // current point is already background 
 					}
-																		
+											
 					// check 6-neighbors if point is a border point of type currentBorder
 					boolean isBorderPoint = false;
 					// North
@@ -184,11 +184,9 @@ public class Skeletonize3D_ implements PlugInFilter
 					index[1] = y;
 					index[2] = z;
 					simpleBorderPoints.add(index);
-					
 					if(x==1 || x==width-2 || y==1 || y==height-2 || z==1 || z==depth-2) {
 						simpleBorderPointsOnEdge.add(new int[] {x,y,z});
 					}
-					
 				}
 			}					
 		}							

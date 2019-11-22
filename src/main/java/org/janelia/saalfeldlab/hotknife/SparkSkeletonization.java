@@ -17,12 +17,15 @@
 package org.janelia.saalfeldlab.hotknife;
 
 import java.io.File;
+
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.commons.io.FileUtils;
@@ -45,12 +48,24 @@ import org.kohsuke.args4j.Option;
 import com.google.common.io.Files;
 
 import net.imglib2.Cursor;
+import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
+import net.imglib2.converter.Converters;
+import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.basictypeaccess.array.LongArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.numeric.integer.*;
+import net.imglib2.util.Intervals;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
+
+import net.imglib2.algorithm.neighborhood.DiamondShape;
+import net.imglib2.algorithm.neighborhood.Neighborhood;
+import net.imglib2.algorithm.neighborhood.RectangleShape;
+import net.imglib2.algorithm.neighborhood.Shape;
 
 /**
  * Connected components for an entire n5 volume
@@ -179,7 +194,48 @@ public class SparkSkeletonization {
 						Views.extendValue(source, new UnsignedByteType(0)),
 						paddedOffset, paddedDimension);
 				}
-
+				
+				if(padding>2) {
+					final RandomAccessibleInterval<BoolType> booleanizedImage = Converters.convert((RandomAccessibleInterval<UnsignedByteType>)outputImage,
+							(a, b) -> b.set(a.getIntegerLong() > 0), new BoolType());
+					final IntervalView<UnsignedIntType> components = Views.offsetInterval(ArrayImgs.unsignedInts(paddedDimension),new long[]{0,0,0}, paddedDimension);
+					
+					ConnectedComponentAnalysis.connectedComponents(booleanizedImage, components, new RectangleShape(1,false));
+					RandomAccess<UnsignedIntType> componentsRandomAccess= components.randomAccess();
+					Set<Integer> componentsOnEdge= new HashSet<>();
+					for(int x=padding; x<paddedDimension[0]-padding; x++) {
+						for(int y=padding; y<paddedDimension[1]-padding; y++) {
+							for(int z=padding; z<paddedDimension[2]-padding; z++) {
+								if(x==padding || x==paddedDimension[0]-padding-1 || 
+								   y==padding || y==paddedDimension[1]-padding-1 ||
+								   z==padding || z==paddedDimension[2]-padding-1) {
+										componentsRandomAccess.setPosition(new int[] {x,y,z});	
+										if(componentsRandomAccess.get().get()>0) {
+											componentsOnEdge.add(new Integer(componentsRandomAccess.get().getInteger()));
+										}
+								}
+							}
+						}
+					}
+					
+					RandomAccess<UnsignedByteType> outputImageRandomAccess = outputImage.randomAccess();
+					for(int x=0; x<paddedDimension[0]; x++) {
+						for(int y=0; y<paddedDimension[1]; y++) {
+							for(int z=0; z<paddedDimension[2]; z++) {
+								if(x<padding || x>=paddedDimension[0]-padding || 
+										y<padding || y>=paddedDimension[1]-padding ||
+										z<padding || z>=paddedDimension[2]-padding)
+								{
+									componentsRandomAccess.setPosition(new int[] {x,y,z});
+									if(!componentsOnEdge.contains(new Integer(componentsRandomAccess.get().getInteger())) && componentsRandomAccess.get().getInteger()>0 ){
+										outputImageRandomAccess.setPosition(new int[] {x,y,z});
+										outputImageRandomAccess.get().set(0);
+									}
+								}
+							}
+						}
+					}
+				}
 				Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, padding, currentBorder);
 				int skeletonizationResult = skeletonize3D.thinPaddedImageOneIteration();
 				if(skeletonizationResult ==1) { //need to expand
