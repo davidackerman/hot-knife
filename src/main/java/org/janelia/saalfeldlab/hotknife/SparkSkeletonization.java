@@ -21,6 +21,7 @@ import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -57,6 +58,7 @@ import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.LongArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.logic.BoolType;
+import net.imglib2.type.logic.NativeBoolType;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.IntervalView;
@@ -155,13 +157,12 @@ public class SparkSkeletonization {
 
 		JavaRDD<Boolean> needToThinAgainSet = rdd.map(blockInformation -> {
 			final long[][] gridBlock = blockInformation.gridBlock;
-			long[] offset = gridBlock[0];
+			long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];//new long[] {5346, 0, 3762}; //
 			long[] dimension = gridBlock[1];
 			
 			int padding = 2; //2 because need to know if surrounding voxels are removable
 			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
-			
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			
 			IntervalView<UnsignedByteType> outputImage = null;
@@ -174,19 +175,23 @@ public class SparkSkeletonization {
 					final IntervalView<UnsignedLongType> sourceCropped = Views.offsetInterval(
 						Views.extendValue(source, new UnsignedLongType(0)),
 						paddedOffset, paddedDimension);
-					
 					outputImage = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
-					
-					final Cursor<UnsignedLongType> sourceCroppedCursor = sourceCropped.cursor();
-					final Cursor<UnsignedByteType> outputImageCursor = outputImage.cursor();
 
-					while(sourceCroppedCursor.hasNext()) {
-						UnsignedLongType v1 = sourceCroppedCursor.next();
-						UnsignedByteType v2 = outputImageCursor.next();
-						if(v1.get()>0) {
-							v2.set(1);
+
+					RandomAccess<UnsignedLongType> sourceCroppedRandomAccess = sourceCropped.randomAccess();
+					RandomAccess<UnsignedByteType> outputImageRandomAccess = outputImage.randomAccess();
+					for(int x=0; x<paddedDimension[0]; x++) {
+						for(int y=0; y<paddedDimension[1]; y++) {
+							for(int z=0; z<paddedDimension[2]; z++) {
+								int [] pos = new int[] {x,y,z};
+								sourceCroppedRandomAccess.setPosition(pos);
+								if (sourceCroppedRandomAccess.get().get()>0) {
+									outputImageRandomAccess.setPosition(pos);
+									outputImageRandomAccess.get().set(1);
+								}
+							}
 						}
-					}	
+					}
 				}
 				else {
 					final RandomAccessibleInterval<UnsignedByteType> source = (RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, inputDatasetName);
@@ -194,13 +199,36 @@ public class SparkSkeletonization {
 						Views.extendValue(source, new UnsignedByteType(0)),
 						paddedOffset, paddedDimension);
 				}
-				
-				if(padding>2) {
-					final RandomAccessibleInterval<BoolType> booleanizedImage = Converters.convert((RandomAccessibleInterval<UnsignedByteType>)outputImage,
-							(a, b) -> b.set(a.getIntegerLong() > 0), new BoolType());
-					final IntervalView<UnsignedIntType> components = Views.offsetInterval(ArrayImgs.unsignedInts(paddedDimension),new long[]{0,0,0}, paddedDimension);
+
+				if(padding<0) {
+				//	System.out.println("Offset: "+Arrays.toString(offset) + " Dimensions: " + Arrays.toString(paddedDimension));
+				//	System.out.println(LocalDateTime.now());
+					RandomAccess<UnsignedByteType> outputImageRandomAccess = outputImage.randomAccess();
+					final RandomAccessibleInterval<NativeBoolType> booleanizedImage = Views.offsetInterval(ArrayImgs.booleans(paddedDimension),new long[]{0,0,0}, paddedDimension);
+					RandomAccess<NativeBoolType> booleanizedRandomAccess = booleanizedImage.randomAccess();
+
+					for(int x=0; x<paddedDimension[0]; x++) {
+						for(int y=0; y<paddedDimension[1]; y++) {
+							for(int z=0; z<paddedDimension[2]; z++) {
+								if(x<=padding || x>=paddedDimension[0]-padding-1 || 
+										y<=padding || y>=paddedDimension[1]-padding-1 ||
+										z<=padding || z>=paddedDimension[2]-padding-1)
+								{
+									int [] pos = new int[] {x,y,z};
+									outputImageRandomAccess.setPosition(pos);
+									if(outputImageRandomAccess.get().get()>0) {
+										booleanizedRandomAccess.setPosition(pos);
+										booleanizedRandomAccess.get().set(true);
+									}																		
+								}
+							}
+						}
+					}
 					
+					final IntervalView<UnsignedIntType> components = Views.offsetInterval(ArrayImgs.unsignedInts(paddedDimension),new long[]{0,0,0}, paddedDimension);
+					//System.out.println("bc: " + LocalDateTime.now());
 					ConnectedComponentAnalysis.connectedComponents(booleanizedImage, components, new RectangleShape(1,false));
+					//System.out.println("ac: " + LocalDateTime.now());
 					RandomAccess<UnsignedIntType> componentsRandomAccess= components.randomAccess();
 					Set<Integer> componentsOnEdge= new HashSet<>();
 					for(int x=padding; x<paddedDimension[0]-padding; x++) {
@@ -217,8 +245,6 @@ public class SparkSkeletonization {
 							}
 						}
 					}
-					
-					RandomAccess<UnsignedByteType> outputImageRandomAccess = outputImage.randomAccess();
 					for(int x=0; x<paddedDimension[0]; x++) {
 						for(int y=0; y<paddedDimension[1]; y++) {
 							for(int z=0; z<paddedDimension[2]; z++) {
@@ -235,9 +261,14 @@ public class SparkSkeletonization {
 							}
 						}
 					}
+					/*new ij.ImageJ();
+					ImageJFunctions.show(components);
+					ImageJFunctions.show(outputImage);*/
 				}
+				//System.out.println("bs: "+LocalDateTime.now());
 				Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, padding, currentBorder);
 				int skeletonizationResult = skeletonize3D.thinPaddedImageOneIteration();
+				//System.out.println("as: "+LocalDateTime.now());
 				if(skeletonizationResult ==1) { //need to expand
 					padding+=1;
 					paddedOffset = new long[] {offset[0]-padding, offset[1]-padding, offset[2]-padding};
@@ -249,12 +280,12 @@ public class SparkSkeletonization {
 				needToExpand = false;
 				needToThinAgain = skeletonizationResult==2;
 	
-				if(show)
-					ImageJFunctions.show(outputImage);
+				//if(show)
+				//	ImageJFunctions.show(outputImage);
 				outputImage = Views.offsetInterval(outputImage,new long[]{padding,padding,padding}, dimension);
 			
-				if(show)
-					ImageJFunctions.show(outputImage);
+				//if(show)
+				//	ImageJFunctions.show(outputImage);
 				
 				final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 	
@@ -317,8 +348,6 @@ public class SparkSkeletonization {
 		String tempOutputN5DatasetName = null;
 		String finalOutputN5DatasetName = null;
 		for (String currentOrganelle : organelles) {
-			tempOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix()
-					+ "_blockwise_temp_to_delete";
 			finalOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix();
 
 			// Create block information list
@@ -328,18 +357,18 @@ public class SparkSkeletonization {
 			int iteration=0;
 			Boolean needToThinAgain = true;
 			int fullIterations = 0;
-			while(needToThinAgain) 
+			//while(needToThinAgain) 
 			{
 				needToThinAgain = false;
 				for(int currentBorder=0; currentBorder<6; currentBorder++) {// this is one whole iteration
 					needToThinAgain |= skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
-							tempOutputN5DatasetName, blockInformationList, iteration);
+							finalOutputN5DatasetName, blockInformationList, iteration);
 					iteration++;
 				}
 				fullIterations++;
 				System.out.println(iteration/6.0+" "+fullIterations);
 			}
-			String finalFileName = tempOutputN5DatasetName + '_'+ ((iteration-1)%2==0 ? "even" : "odd");
+			String finalFileName = finalOutputN5DatasetName + '_'+ ((fullIterations-1)%2==0 ? "even" : "odd");
 			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName));
 			FileUtils.moveDirectory(new File(options.getOutputN5Path() + "/" + finalFileName), new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName));
 
@@ -349,10 +378,10 @@ public class SparkSkeletonization {
 		// Remove temporary files
 		for (String currentOrganelle : organelles) {
 			tempOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix()
-					+ "_blockwise_temp_to_delete_even";
+					+ "_even";
 			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + tempOutputN5DatasetName));
 			tempOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix()
-			+ "_blockwise_temp_to_delete_odd";
+			+ "_odd";
 			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + tempOutputN5DatasetName));
 		}
 
