@@ -157,7 +157,7 @@ public class SparkSkeletonization {
 
 		JavaRDD<Boolean> needToThinAgainSet = rdd.map(blockInformation -> {
 			final long[][] gridBlock = blockInformation.gridBlock;
-			long[] offset = gridBlock[0];//new long[] {5346, 0, 3762}; //gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
+			long[] offset = new long[] {5346, 0, 3762}; //gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
 			long[] dimension = gridBlock[1];
 			
 			int padding = 2; //2 because need to know if surrounding voxels are removable
@@ -222,9 +222,9 @@ public class SparkSkeletonization {
 					}
 					
 					final IntervalView<UnsignedIntType> components = Views.offsetInterval(ArrayImgs.unsignedInts(paddedDimension),new long[]{0,0,0}, paddedDimension);
-					//System.out.println("bc: " + LocalDateTime.now());
+					System.out.println("bc: " + LocalDateTime.now());
 					ConnectedComponentAnalysis.connectedComponents(booleanizedImage, components, new RectangleShape(1,false));
-					//System.out.println("ac: " + LocalDateTime.now());
+					System.out.println("ac: " + LocalDateTime.now());
 					RandomAccess<UnsignedIntType> componentsRandomAccess= components.randomAccess();
 					Set<Integer> componentsOnEdge= new HashSet<>();
 					for(int x=padding; x<paddedDimension[0]-padding; x++) {
@@ -261,10 +261,10 @@ public class SparkSkeletonization {
 					ImageJFunctions.show(components);
 					ImageJFunctions.show(outputImage);*/
 				}
-				//System.out.println("bs: "+LocalDateTime.now());
+				System.out.println("bs: "+LocalDateTime.now());
 				Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, padding, currentBorder);
 				int skeletonizationResult = skeletonize3D.thinPaddedImageOneIteration();
-				//System.out.println("as: "+LocalDateTime.now());
+				System.out.println("as: "+LocalDateTime.now());
 				if(skeletonizationResult ==1) { //need to expand
 					padding+=1;
 					paddedOffset = new long[] {offset[0]-padding, offset[1]-padding, offset[2]-padding};
