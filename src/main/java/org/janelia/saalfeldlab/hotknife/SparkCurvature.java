@@ -24,10 +24,13 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
@@ -61,6 +64,7 @@ import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.logic.NativeBoolType;
 import net.imglib2.type.numeric.integer.*;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.IntervalView;
@@ -159,77 +163,95 @@ public class SparkCurvature {
 			long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
 			//System.out.println(Arrays.toString(offset));
 			long[] dimension = gridBlock[1];
-			int sigma = 5; //2 because need to know if surrounding voxels are removablel
-			int padding = 4*sigma;
+			int sigma = 2; //2 because need to know if surrounding voxels are removablel
+			int padding = sigma+1;//Since need extra of 1 around each voxel for curvature
 			long[] paddedOffset = new long[]{offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long[] paddedDimension = new long []{dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			
 
 			RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName);
-			final IntervalView<UnsignedLongType> sourceCropped = Views.offsetInterval(Views.extendZero(source),paddedOffset, paddedDimension);
-			IntervalView<FloatType> outputImage = Views.offsetInterval(ArrayImgs.floats(paddedDimension),new long[]{0,0,0}, paddedDimension);
-			IntervalView<FloatType> curvatureImage = null; 
+			final RandomAccessibleInterval<FloatType> sourceConverted =
+					Converters.convert(
+							source,
+							(a, b) -> { 
+								if(a.getLong()>0) {
+									b.set(1);
+								}
+								else {
+									b.set(0);
+									}},
+							new FloatType());
 			
-			
-	        HashSet<Long> objectIDs = new HashSet<Long>();
-	        
-	        RandomAccess<UnsignedLongType> sourceRandomAccess = sourceCropped.randomAccess();
-	        RandomAccess<FloatType> outputImageRandomAccess = outputImage.randomAccess();
-	        for(int x=padding; x<padding+dimension[0]; x++) {
-	        	for(int y=padding; y<padding+dimension[1]; y++) {
-	        		for(int z=padding; z<padding+dimension[2]; z++) {
-	        			int currentPos[] = new int []{x,y,z};
-	        			sourceRandomAccess.setPosition(currentPos);
-	        			long currentObjectID = sourceRandomAccess.get().get();
-	        			if(currentObjectID>0) {
-	        				objectIDs.add(currentObjectID);
-	        				if(isBoundaryVoxel(sourceRandomAccess,currentPos)){
-		        				outputImageRandomAccess.setPosition(currentPos);
-		        				outputImageRandomAccess.get().set(1);
-	        				}
-	        			}
-	        		}
-	        	}
-	        }
+			final IntervalView<FloatType> sourceCropped = Views.offsetInterval(Views.extendZero(sourceConverted),paddedOffset, paddedDimension);
 
 			
-			for(long currentObjectID : objectIDs) {
-				curvatureImage = Views.offsetInterval(Views.extendZero(ArrayImgs.floats(paddedDimension)),new long[]{0,0,0}, paddedDimension);
-				RandomAccess<FloatType> curvatureImageRandomAccess = curvatureImage.randomAccess();
-				for(int x=0; x<paddedDimension[0]; x++) {
-		        	for(int y=0; y<paddedDimension[1]; y++) {
-		        		for(int z=0; z<paddedDimension[2]; z++) {
-		        			int currentPos[] = new int []{x,y,z};
-		        			sourceRandomAccess.setPosition(currentPos);
-		        			if(sourceRandomAccess.get().get()==currentObjectID) {
-		        				curvatureImageRandomAccess.setPosition(currentPos);
-		        				curvatureImageRandomAccess.get().set(1);
-		        			}
-		        		}
-		        	}
+			//IntervalView<FloatType> curvatureImage = Views.offsetInterval(ArrayImgs.floats(paddedDimension),new long[]{0,0,0}, paddedDimension);
+				        
+	        RandomAccess<FloatType> sourceRandomAccess = sourceCropped.randomAccess();
+	        //RandomAccess<FloatType> curvatureImageRandomAccess = curvatureImage.randomAccess();
+	        Map<List<Integer>, Float> curvaturesForBoundaryVoxels = new HashMap<>();
+			IntervalView<FloatType> outputImage = Views.offsetInterval(ArrayImgs.floats(paddedDimension),new long[]{0,0,0}, paddedDimension);
+	        RandomAccess<FloatType> outputImageRandomAccess = outputImage.randomAccess();
+	        
+			for(int x=0; x<paddedDimension[0]; x++) {
+				for(int y=0; y<paddedDimension[1]; y++) {
+					for(int z=0; z<paddedDimension[2]; z++) {
+						int currentPos[] = new int []{x,y,z};
+						sourceRandomAccess.setPosition(currentPos);
+						boolean isObject =  sourceRandomAccess.get().get()==1.0;
+
+						if(isObject && isBoundaryVoxel(sourceRandomAccess,currentPos)){
+		    				float curvature = computeHessianDeterminant(sourceRandomAccess, currentPos);
+		    				curvaturesForBoundaryVoxels.put(Arrays.stream(currentPos).boxed().collect(Collectors.toList()),
+		    						curvature);
+						}
+					}
 				}
+			}
+			for(Map.Entry<List<Integer>,Float> entries : curvaturesForBoundaryVoxels.entrySet()) {
+				List<Integer> voxelOfInterestPosition = entries.getKey();
+				float voxelOfInterestCurvature = entries.getValue();
+				
+		        Map<List<Integer>, Float> allNeighborhoodCurvatures = new HashMap<>();
+		        Set<List<Integer>> currentVoxelsBeingChecked = new HashSet<>();
+
+		        allNeighborhoodCurvatures.put(voxelOfInterestPosition, voxelOfInterestCurvature);
+		        currentVoxelsBeingChecked.add(voxelOfInterestPosition);
+				for(int i=0; i<sigma;i++) {
+			        Set<List<Integer>> nextVoxelsToCheck = new HashSet<>();
+					for(List<Integer> currentCenterVoxelPosition : currentVoxelsBeingChecked) {
+						for(int dx=-1; dx<=1; dx++) {
+							for(int dy=-1; dy<=1; dy++) {
+								for(int dz=-1; dz<=1; dz++) {
+									if(!(dx==0 && dy==0 && dz==0)) {
+										List<Integer> neighboringVoxelPosition = Arrays.asList(currentCenterVoxelPosition.get(0)+dx, currentCenterVoxelPosition.get(1)+dy, currentCenterVoxelPosition.get(2)+dz);
+										if(curvaturesForBoundaryVoxels.containsKey(neighboringVoxelPosition)) {
+											allNeighborhoodCurvatures.put(neighboringVoxelPosition, curvaturesForBoundaryVoxels.get(neighboringVoxelPosition));
+											nextVoxelsToCheck.add(neighboringVoxelPosition);
+										}
+									}
+								}
+							}
+						}
+					}
+					currentVoxelsBeingChecked = nextVoxelsToCheck;
+				}
+				
+				float averageCurvature = 0;
+				for(float currentCurvature : allNeighborhoodCurvatures.values()) {
+					averageCurvature+=currentCurvature/allNeighborhoodCurvatures.size();
+				}
+				int [] voxelOfInterestPositionAsArray = new int[] { voxelOfInterestPosition.get(0), voxelOfInterestPosition.get(1), voxelOfInterestPosition.get(2)};
+				outputImageRandomAccess.setPosition(voxelOfInterestPositionAsArray);
+				outputImageRandomAccess.get().set(averageCurvature);
+				
+			}
 			
-				Gauss3.gauss(sigma, curvatureImage, curvatureImage);
-				for(int x=0; x<paddedDimension[0]; x++) {
-		        	for(int y=0; y<paddedDimension[1]; y++) {
-		        		for(int z=0; z<paddedDimension[2]; z++) {
-		        			int currentPos[] = new int []{x,y,z};
-		        			sourceRandomAccess.setPosition(currentPos);
-		        			outputImageRandomAccess.setPosition(currentPos);
-		        			if(sourceRandomAccess.get().get()==currentObjectID && outputImageRandomAccess.get().get()==1) {//then it is correct object and border
-		        				float curvature = computeHessianDeterminant(curvatureImageRandomAccess, currentPos);
-		        				outputImageRandomAccess.get().set(curvature );
-		        			}
-		        			
-		        		}
-		        	}
-				}
-				if(show) {
-					ImageJFunctions.show(sourceCropped);
-					ImageJFunctions.show(curvatureImage);
-					ImageJFunctions.show(outputImage);
-				}
+			
+			if(show) {
+				ImageJFunctions.show(sourceCropped);
+				ImageJFunctions.show(outputImage);
 			}
 				
 
@@ -245,7 +267,7 @@ public class SparkCurvature {
 		});
 
 	}
-public static boolean isBoundaryVoxel(RandomAccess<UnsignedLongType> ra, int[] pos){
+public static boolean isBoundaryVoxel(RandomAccess<FloatType> ra, int[] pos){
 	for(int dx=-1; dx<=1; dx++) {
 		for(int dy=-1; dy<=1; dy++) {
 			for(int dz=-1; dz<=1; dz++) {

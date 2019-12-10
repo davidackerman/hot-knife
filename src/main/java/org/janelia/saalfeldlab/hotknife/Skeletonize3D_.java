@@ -26,6 +26,8 @@ import ij.plugin.filter.PlugInFilter;
 import ij.process.ImageProcessor;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import net.imglib2.RandomAccess;
 import net.imglib2.type.numeric.integer.*;
@@ -474,6 +476,151 @@ public class Skeletonize3D_ implements PlugInFilter
 		return unchangedBorders;
 	} /* end computeThinImage */	
 	
+	/* -----------------------------------------------------------------------*/
+	/**
+	 * Post processing for computing thinning.
+	 * 
+	 * @param outputImage output image stack
+	 */
+	public int computeMedialSurface(ImageStack outputImage) 
+	{
+		IJ.showStatus("Computing thin image ...");
+						
+		// Prepare Euler LUT [Lee94]
+		int eulerLUT[] = new int[256]; 
+		fillEulerLUT( eulerLUT );
+		
+		// Prepare number of points LUT
+		int pointsLUT[] = new int[ 256 ];
+		fillnumOfPointsLUT(pointsLUT);
+		
+		// Following Lee[94], save versions (Q) of input image S, while 
+		// deleting each type of border points (R)
+		ArrayList <int[]> simpleBorderPoints = new ArrayList<int[]>();				
+		
+		iterations = 0;
+		// Loop through the image several times until there is no change.
+		int unchangedBorders = 0;
+		while( unchangedBorders < 6 )  // loop until no change for all the six border types
+		{						
+			unchangedBorders = 0;
+			iterations++;
+			for( int currentBorder = 1; currentBorder <= 6; currentBorder++)
+			{
+				IJ.showStatus("Thinning iteration " + iterations + " (" + currentBorder +"/6 borders) ...");
+
+				boolean noChange = true;				
+				
+				// Loop through the image.				 
+				for (int z = 0; z < depth; z++)
+				{
+					for (int y = 0; y < height; y++)
+					{
+						for (int x = 0; x < width; x++)						
+						{
+
+							// check if point is foreground
+							if ( getPixelNoCheck(outputImage, x, y, z) != 1 )
+							{
+								continue;         // current point is already background 
+							}
+																				
+							// check 6-neighbors if point is a border point of type currentBorder
+							boolean isBorderPoint = false;
+							// North
+							if( currentBorder == 1 && N(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							// South
+							if( currentBorder == 2 && S(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							// East
+							if( currentBorder == 3 && E(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							// West
+							if( currentBorder == 4 && W(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							if(outputImage.getSize() > 1)
+							{
+								// Up							
+								if( currentBorder == 5 && U(outputImage, x, y, z) <= 0 )
+									isBorderPoint = true;
+								// Bottom
+								if( currentBorder == 6 && B(outputImage, x, y, z) <= 0 )
+									isBorderPoint = true;
+							}
+							if( !isBorderPoint )
+							{
+								continue;         // current point is not deletable
+							}
+
+							if( isEndPoint( outputImage, x, y, z))
+							{
+								continue;
+							}
+
+							final byte[] neighborhood = getNeighborhood(outputImage, x, y, z);
+							
+							// Check if point is Euler invariant (condition 1 in Lee[94])
+							if( !isEulerInvariant( neighborhood, eulerLUT ) )
+							{
+								continue;         // current point is not deletable
+							}
+
+							// Check if point is simple (deletion does not change connectivity in the 3x3x3 neighborhood)
+							// (conditions 2 and 3 in Lee[94])
+							if( !isSimplePoint( neighborhood ) )
+							{
+								continue;         // current point is not deletable
+							}
+
+							//condition 4 for surfaces in Lee[94]
+							if( isSurfaceEndPoint(neighborhood)) {
+								continue;
+							}
+
+							// add all simple border points to a list for sequential re-checking
+							int[] index = new int[3];
+							index[0] = x;
+							index[1] = y;
+							index[2] = z;
+							simpleBorderPoints.add(index);
+						}
+					}					
+					IJ.showProgress(z, this.depth);				
+				}							
+
+
+				// sequential re-checking to preserve connectivity when
+				// deleting in a parallel way
+				int[] index;
+
+				for (int[] simpleBorderPoint : simpleBorderPoints) {
+					index = simpleBorderPoint;
+					final byte[] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
+					
+					// Check if border points is simple			        
+					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
+							(!isSurfaceEndPoint(neighborhood) || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
+							) {
+						// we can delete the current point
+						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
+						noChange = false;
+					}
+
+
+				}
+
+				if( noChange )
+					unchangedBorders++;
+
+				simpleBorderPoints.clear();
+			} // end currentBorder for loop
+		}
+
+		IJ.showStatus("Computed thin image.");
+		return unchangedBorders;
+	} /* end computeThinImage */	
+	
 	void bitwiseOrPixel(RandomAccess<UnsignedByteType> ra, int x, int y, int z, byte b){
 		byte newValue = (byte) (getPixelByte(ra, x, y, z) | b);
 		setPixel(ra, x, y, z, newValue);
@@ -498,6 +645,16 @@ public class Skeletonize3D_ implements PlugInFilter
         }
 
         return  numberOfNeighbors == 1;        
+	}
+	
+	int numberOfNeighbors(byte[] neighborhood) {
+		int numberOfNeighbors = -1;
+		for( int i = 0; i < 27; i++ ) // i =  0..26
+	      {					        	
+	        if( neighborhood[i] == 1 )
+	          numberOfNeighbors++;
+	      }
+		return numberOfNeighbors;
 	}
 	
 	boolean isEndPoint(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
@@ -633,6 +790,40 @@ public class Skeletonize3D_ implements PlugInFilter
 			}
 		}
 		return false;
+	}
+	
+	/**
+	 * Check if a point is Surface Point
+	 * 
+	 * @param neighbors neighbor pixels of the point
+	 * @param LUT Euler LUT
+	 * @return true or false if the point is Euler invariant or not
+	 */
+	boolean isSurfaceEndPoint(byte[] neighbors)
+	{ //Definition 1 in paper
+		
+		List<Character> allowedIndexValues = Arrays.asList((char)240, (char)165, (char)170, (char)204);
+		// Octant SWU
+		char indices [] = new char[8];
+		indices[0] = indexOctantSWU(neighbors);
+		indices[1] = indexOctantSEU(neighbors);
+		indices[2] = indexOctantNWU(neighbors);
+		indices[3] = indexOctantNEU(neighbors);
+		indices[4] = indexOctantSWB(neighbors);
+		indices[5] = indexOctantSEB(neighbors);
+		indices[6] = indexOctantNWB(neighbors);
+		indices[7] = indexOctantNEB(neighbors);
+		for(int octant=0; octant<8; octant++) {
+			boolean conditionA = allowedIndexValues.contains(indices[octant]);
+			int numberOfPointsInOctant = Integer.bitCount((int) indices[octant])-1;
+			boolean conditionB = numberOfPointsInOctant<3;
+			System.out.println(conditionA+" "+conditionB);
+			if (! (conditionA || conditionB) ) {
+				return false;
+			}
+		}
+		
+		return true;
 	}
 	
 	/* -----------------------------------------------------------------------*/
@@ -1029,7 +1220,7 @@ public class Skeletonize3D_ implements PlugInFilter
 		eulerChar += LUT[n];
 		
 		// Octant SEB
-		n = indextOctantSEB(neighbors);
+		n = indexOctantSEB(neighbors);
 		eulerChar += LUT[n];
 		
 		// Octant NWB
@@ -1083,7 +1274,7 @@ public class Skeletonize3D_ implements PlugInFilter
 		return n;
 	}
 
-	public char indextOctantSEB(byte[] neighbors) {
+	public char indexOctantSEB(byte[] neighbors) {
 		char n;
 		n = 1;
 		if( neighbors[8]==1 )

@@ -173,7 +173,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		prepareData(this.inputImage);
 		
 		// Compute Thinning	
-		computeThinImage(this.inputImage);
+		computeMedialSurface(this.inputImage);
 		
 		// Convert image to binary 0-255
 		for(int i = 1; i <= this.inputImage.getSize(); i++)
@@ -184,8 +184,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
 		new ij.ImageJ();
-		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
-		//ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/custom_nsewud.tif");
+		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
+		ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
 		imp.show();
 		TempSkeletonize3D_ skeletonize3D = new TempSkeletonize3D_();
 		String arg = "";
@@ -516,6 +516,179 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		return unchangedBorders;
 	} /* end computeThinImage */	
 	
+	public int computeMedialSurface(ImageStack outputImage) 
+	{
+		IJ.showStatus("Computing thin image ...");
+						
+		// Prepare Euler LUT [Lee94]
+		int eulerLUT[] = new int[256]; 
+		fillEulerLUT( eulerLUT );
+		
+		// Prepare number of points LUT
+		int pointsLUT[] = new int[ 256 ];
+		fillnumOfPointsLUT(pointsLUT);
+		
+		// Following Lee[94], save versions (Q) of input image S, while 
+		// deleting each type of border points (R)
+		ArrayList <int[]> simpleBorderPoints = new ArrayList<int[]>();				
+		
+		iterations = 0;
+		// Loop through the image several times until there is no change.
+		int unchangedBorders = 0;
+		while( unchangedBorders < 6 )  // loop until no change for all the six border types
+		{						
+			unchangedBorders = 0;
+			iterations++;
+			for( int currentBorder = 1; currentBorder <= 6; currentBorder++)
+			{
+				IJ.showStatus("Thinning iteration " + iterations + " (" + currentBorder +"/6 borders) ...");
+
+				boolean noChange = true;				
+				
+				// Loop through the image.				 
+				for (int z = 0; z < depth; z++)
+				{
+					for (int y = 0; y < height; y++)
+					{
+						for (int x = 0; x < width; x++)						
+						{
+
+							// check if point is foreground
+							if ( getPixelNoCheck(outputImage, x, y, z) != 1 )
+							{
+								continue;         // current point is already background 
+							}
+																				
+							// check 6-neighbors if point is a border point of type currentBorder
+							boolean isBorderPoint = false;
+							// North
+							if( currentBorder == 3 && N(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							// South
+							if( currentBorder == 4 && S(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							// East
+							if( currentBorder == 5 && E(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							// West
+							if( currentBorder == 6 && W(outputImage, x, y, z) <= 0 )
+								isBorderPoint = true;
+							if(outputImage.getSize() > 1)
+							{
+								// Up							
+								if( currentBorder == 1 && U(outputImage, x, y, z) <= 0 )
+									isBorderPoint = true;
+								// Bottom
+								if( currentBorder == 2 && B(outputImage, x, y, z) <= 0 )
+									isBorderPoint = true;
+							}
+							if( !isBorderPoint )
+							{
+								continue;         // current point is not deletable
+							}
+							
+							final byte[] neighborhood = getNeighborhood(outputImage, x, y, z);
+
+							if( isEndPoint( outputImage, x, y, z)  || isSurfaceEndPoint(neighborhood))
+							{ //check it again anyway but just saves some time
+								continue;
+							}
+
+							
+							// Check if point is Euler invariant (condition 1 in Lee[94])
+							if( !isEulerInvariant( neighborhood, eulerLUT ) )
+							{
+								continue;         // current point is not deletable
+							}
+
+							// Check if point is simple (deletion does not change connectivity in the 3x3x3 neighborhood)
+							// (conditions 2 and 3 in Lee[94])
+							if( !isSimplePoint( neighborhood ) )
+							{
+								continue;         // current point is not deletable
+							}
+
+							//condition 4 for surfaces in Lee[94]
+							//if( isSurfaceEndPoint(neighborhood) ) {//|| numberOfNeighbors(neighborhood)<2) {
+							//	continue;
+							//}
+
+							// add all simple border points to a list for sequential re-checking
+							int[] index = new int[3];
+							index[0] = x;
+							index[1] = y;
+							index[2] = z;
+							simpleBorderPoints.add(index);
+						}
+					}					
+					IJ.showProgress(z, this.depth);				
+				}							
+
+
+				// sequential re-checking to preserve connectivity when
+				// deleting in a parallel way
+				int[] index;
+				for (int[] simpleBorderPoint : simpleBorderPoints) {
+					index = simpleBorderPoint;
+					final byte[] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
+					// Check if border points is simple			        
+					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) 
+						//&& !(isEndPoint( outputImage, index[0], index[1], index[2]) )//|| isSurfaceEndPoint(neighborhood))){	
+						&& ( numberOfNeighbors(neighborhood)>=2)) {//condition 4 in paper
+						// we can delete the current point
+						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
+						noChange = false;
+					}
+					if(isSurfaceEndPoint(neighborhood)) {
+						System.out.println("heyyy");
+					}
+				}
+
+				if( noChange )
+					unchangedBorders++;
+
+				simpleBorderPoints.clear();
+			} // end currentBorder for loop
+		}
+
+		IJ.showStatus("Computed thin image.");
+		return unchangedBorders;
+	} /* end computeThinImage */	
+	
+	int numberOfNeighbors(byte[] neighborhood) {
+		int numberOfNeighbors = -1;
+		for( int i = 0; i < 27; i++ ) // i =  0..26
+	      {					        	
+	        if( neighborhood[i] == 1 )
+	          numberOfNeighbors++;
+	      }
+		return numberOfNeighbors;
+	}
+	boolean isSurfaceEndPoint(byte[] neighbors)
+	{ //Definition 1 in paper
+		
+		List<Character> allowedIndexValues = Arrays.asList((char)(255-240), (char)(255-165), (char)(255-170), (char)(255-204));
+		
+		// Octant SWU
+		char indices [] = new char[8];
+		indices[0] = indexOctantSWU(neighbors);
+		indices[1] = indexOctantSEU(neighbors);
+		indices[2] = indexOctantNWU(neighbors);
+		indices[3] = indexOctantNEU(neighbors);
+		indices[4] = indexOctantSWB(neighbors);
+		indices[5] = indexOctantSEB(neighbors);
+		indices[6] = indexOctantNWB(neighbors);
+		indices[7] = indexOctantNEB(neighbors);
+		for(int octant=0; octant<8; octant++) {
+			boolean conditionA = allowedIndexValues.contains(indices[octant]);
+			int numberOfPointsInOctant = Integer.bitCount((int) indices[octant])-1;//-1 to exclude v?
+			boolean conditionB = numberOfPointsInOctant<3;
+			if (! (conditionA || conditionB) ) {
+				return false;
+			}
+		}
+		return true;
+	}
 	
 	/**
 	 * Check if a point in the given stack is at the end of an arc
@@ -919,7 +1092,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		eulerChar += LUT[n];
 		
 		// Octant SEB
-		n = indextOctantSEB(neighbors);
+		n = indexOctantSEB(neighbors);
 		eulerChar += LUT[n];
 		
 		// Octant NWB
@@ -973,7 +1146,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		return n;
 	}
 
-	public char indextOctantSEB(byte[] neighbors) {
+	public char indexOctantSEB(byte[] neighbors) {
 		char n;
 		n = 1;
 		if( neighbors[8]==1 )
