@@ -80,12 +80,11 @@ public class Skeletonize3D_ implements PlugInFilter
 	private int[] eulerLUT;
 	private int[] pointsLUT;
 	
-	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, int padding, int currentBorder ) {
+	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, int currentBorder) {
 		this.inputImage = inputImage;
 		this.width = (int) this.inputImage.dimension(0);
 		this.height = (int) this.inputImage.dimension(1);
 		this.depth = (int) this.inputImage.dimension(2);
-		this.padding = padding;
 		this.currentBorder = currentBorder;
 		
 		// Prepare Euler LUT [Lee94]
@@ -127,7 +126,6 @@ public class Skeletonize3D_ implements PlugInFilter
 			{
 				for (int x = 1; x < width-1; x++)						
 				{
-
 					// check if point is foreground
 					if ( getPixelNoCheck(outputImageRandomAccess, x, y, z) == 0 )
 					{
@@ -593,16 +591,17 @@ public class Skeletonize3D_ implements PlugInFilter
 		return unchangedBorders;
 	} /* end computeThinImage */	
 	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * Post processing for computing thinning.
-	 * 
-	 * @param outputImage output image stack
-	 */
-	public int computeMedialSurface(ImageStack outputImage) 
+	public boolean computeMedialSurface(ImageStack outputImage) 
 	{
-		IJ.showStatus("Computing thin image ...");
-						
+		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();
+
+		// Following Lee[94], save versions (Q) of input image S, while 
+		// deleting each type of border points (R)
+		ArrayList<ArrayList<int[]>> simpleBorderPoints = new ArrayList<ArrayList<int[]>>();
+		for(int i=0; i<8; i++) {
+			simpleBorderPoints.add(new ArrayList<int[]>());
+		}		
+		
 		// Prepare Euler LUT [Lee94]
 		int eulerLUT[] = new int[256]; 
 		fillEulerLUT( eulerLUT );
@@ -611,33 +610,18 @@ public class Skeletonize3D_ implements PlugInFilter
 		int pointsLUT[] = new int[ 256 ];
 		fillnumOfPointsLUT(pointsLUT);
 		
-		// Following Lee[94], save versions (Q) of input image S, while 
-		// deleting each type of border points (R)
-		ArrayList <int[]> simpleBorderPoints = new ArrayList<int[]>();				
-		
-		iterations = 0;
-		// Loop through the image several times until there is no change.
-		int unchangedBorders = 0;
-		while( unchangedBorders < 6 )  // loop until no change for all the six border types
-		{						
-			unchangedBorders = 0;
-			iterations++;
-			for( int currentBorder = 1; currentBorder <= 6; currentBorder++)
-			{
-				IJ.showStatus("Thinning iteration " + iterations + " (" + currentBorder +"/6 borders) ...");
-
-				boolean noChange = true;				
+		boolean needToThinAgain = false;
 				
 				// Loop through the image.				 
-				for (int z = 0; z < depth; z++)
+				for (int z = 1; z < depth-1; z++)
 				{
-					for (int y = 0; y < height; y++)
+					for (int y = 1; y < height-1; y++)
 					{
-						for (int x = 0; x < width; x++)						
+						for (int x = 1; x < width-1; x++)						
 						{
 
 							// check if point is foreground
-							if ( getPixelNoCheck(outputImage, x, y, z) != 1 )
+							if ( getPixelNoCheck(outputImageRandomAccess, x, y, z) != 1 )
 							{
 								continue;         // current point is already background 
 							}
@@ -645,37 +629,38 @@ public class Skeletonize3D_ implements PlugInFilter
 							// check 6-neighbors if point is a border point of type currentBorder
 							boolean isBorderPoint = false;
 							// North
-							if( currentBorder == 1 && N(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 0 && N(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// South
-							if( currentBorder == 2 && S(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 1 && S(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// East
-							if( currentBorder == 3 && E(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 2 && E(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// West
-							if( currentBorder == 4 && W(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 3 && W(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							if(outputImage.getSize() > 1)
 							{
 								// Up							
-								if( currentBorder == 5 && U(outputImage, x, y, z) <= 0 )
+								if( currentBorder == 4 && U(outputImageRandomAccess, x, y, z) <= 0 )
 									isBorderPoint = true;
 								// Bottom
-								if( currentBorder == 6 && B(outputImage, x, y, z) <= 0 )
+								if( currentBorder == 5 && B(outputImageRandomAccess, x, y, z) <= 0 )
 									isBorderPoint = true;
 							}
 							if( !isBorderPoint )
 							{
 								continue;         // current point is not deletable
 							}
+							
+							final byte[] neighborhood = getNeighborhood(outputImage, x, y, z);
 
-							if( isEndPoint( outputImage, x, y, z))
-							{
+							if( isEndPoint( outputImageRandomAccess, x, y, z)  || isSurfaceEndPoint(neighborhood))
+							{ //check it again anyway but just saves some time
 								continue;
 							}
 
-							final byte[] neighborhood = getNeighborhood(outputImage, x, y, z);
 							
 							// Check if point is Euler invariant (condition 1 in Lee[94])
 							if( !isEulerInvariant( neighborhood, eulerLUT ) )
@@ -690,53 +675,69 @@ public class Skeletonize3D_ implements PlugInFilter
 								continue;         // current point is not deletable
 							}
 
-							//condition 4 for surfaces in Lee[94]
-							if( isSurfaceEndPoint(neighborhood)) {
-								continue;
-							}
-
 							// add all simple border points to a list for sequential re-checking
 							int[] index = new int[3];
 							index[0] = x;
 							index[1] = y;
 							index[2] = z;
-							simpleBorderPoints.add(index);
+							simpleBorderPoints.get((x%2)+(y%2)*2+(z%2)*4).add(index);
 						}
 					}					
-					IJ.showProgress(z, this.depth);				
 				}							
 
 
 				// sequential re-checking to preserve connectivity when
 				// deleting in a parallel way
-				int[] index;
-
-				for (int[] simpleBorderPoint : simpleBorderPoints) {
-					index = simpleBorderPoint;
+				for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
+					for (int[] index : subvolumeSimpleBorderPoints) {			
 					final byte[] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
-					
 					// Check if border points is simple			        
 					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
 							(!isSurfaceEndPoint(neighborhood) || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
-							) {
-						// we can delete the current point
-						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
-						noChange = false;
+							) {						// we can delete the current point
+						setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
+						needToThinAgain = true;
 					}
-
-
 				}
-
-				if( noChange )
-					unchangedBorders++;
-
-				simpleBorderPoints.clear();
-			} // end currentBorder for loop
-		}
-
-		IJ.showStatus("Computed thin image.");
-		return unchangedBorders;
+			}
+		return needToThinAgain;
 	} /* end computeThinImage */	
+	
+	int numberOfNeighbors(byte[] neighborhood) {
+		int numberOfNeighbors = -1;
+		for( int i = 0; i < 27; i++ ) // i =  0..26
+	      {					        	
+	        if( neighborhood[i] == 1 )
+	          numberOfNeighbors++;
+	      }
+		return numberOfNeighbors;
+	}
+	
+	boolean isSurfaceEndPoint(byte[] neighbors)
+	{ //Definition 1 in paper
+		
+		List<Character> allowedIndexValues = Arrays.asList((char)(255-240), (char)(255-165), (char)(255-170), (char)(255-204));
+		
+		// Octant SWU
+		char indices [] = new char[8];
+		indices[0] = indexOctantSWU(neighbors);
+		indices[1] = indexOctantSEU(neighbors);
+		indices[2] = indexOctantNWU(neighbors);
+		indices[3] = indexOctantNEU(neighbors);
+		indices[4] = indexOctantSWB(neighbors);
+		indices[5] = indexOctantSEB(neighbors);
+		indices[6] = indexOctantNWB(neighbors);
+		indices[7] = indexOctantNEB(neighbors);
+		for(int octant=0; octant<8; octant++) {
+			boolean conditionA = allowedIndexValues.contains(indices[octant]);
+			int numberOfPointsInOctant = Integer.bitCount((int) indices[octant])-1;//-1 to exclude v?
+			boolean conditionB = numberOfPointsInOctant<3;
+			if (! (conditionA || conditionB) ) {
+				return false;
+			}
+		}
+		return true;
+	}
 	
 	void bitwiseOrPixel(RandomAccess<UnsignedByteType> ra, int x, int y, int z, byte b){
 		byte newValue = (byte) (getPixelByte(ra, x, y, z) | b);
@@ -762,16 +763,6 @@ public class Skeletonize3D_ implements PlugInFilter
         }
 
         return  numberOfNeighbors == 1;        
-	}
-	
-	int numberOfNeighbors(byte[] neighborhood) {
-		int numberOfNeighbors = -1;
-		for( int i = 0; i < 27; i++ ) // i =  0..26
-	      {					        	
-	        if( neighborhood[i] == 1 )
-	          numberOfNeighbors++;
-	      }
-		return numberOfNeighbors;
 	}
 	
 	boolean isEndPoint(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
@@ -907,40 +898,6 @@ public class Skeletonize3D_ implements PlugInFilter
 			}
 		}
 		return false;
-	}
-	
-	/**
-	 * Check if a point is Surface Point
-	 * 
-	 * @param neighbors neighbor pixels of the point
-	 * @param LUT Euler LUT
-	 * @return true or false if the point is Euler invariant or not
-	 */
-	boolean isSurfaceEndPoint(byte[] neighbors)
-	{ //Definition 1 in paper
-		
-		List<Character> allowedIndexValues = Arrays.asList((char)240, (char)165, (char)170, (char)204);
-		// Octant SWU
-		char indices [] = new char[8];
-		indices[0] = indexOctantSWU(neighbors);
-		indices[1] = indexOctantSEU(neighbors);
-		indices[2] = indexOctantNWU(neighbors);
-		indices[3] = indexOctantNEU(neighbors);
-		indices[4] = indexOctantSWB(neighbors);
-		indices[5] = indexOctantSEB(neighbors);
-		indices[6] = indexOctantNWB(neighbors);
-		indices[7] = indexOctantNEB(neighbors);
-		for(int octant=0; octant<8; octant++) {
-			boolean conditionA = allowedIndexValues.contains(indices[octant]);
-			int numberOfPointsInOctant = Integer.bitCount((int) indices[octant])-1;
-			boolean conditionB = numberOfPointsInOctant<3;
-			System.out.println(conditionA+" "+conditionB);
-			if (! (conditionA || conditionB) ) {
-				return false;
-			}
-		}
-		
-		return true;
 	}
 	
 	/* -----------------------------------------------------------------------*/
