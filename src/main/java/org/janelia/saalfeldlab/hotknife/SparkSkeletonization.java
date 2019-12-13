@@ -123,10 +123,95 @@ public class SparkSkeletonization {
 		}
 
 	}
+	
+	public static final Boolean skeletonizationIteration(final JavaSparkContext sc, final String n5Path,
+			final String originalInputDatasetName, final String n5OutputPath, String originalOutputDatasetName,
+			final List<BlockInformation> blockInformationList, final int iteration) throws IOException {
+
+		final N5Reader n5Reader = new N5FSReader(n5Path);
+
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(originalInputDatasetName);
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		final int n = dimensions.length;
+
+		/*
+		 * grid block size for parallelization to minimize double loading of blocks
+		 */
+		boolean show = false;
+		if (show)
+			new ij.ImageJ();
+
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		final String inputDatasetName = originalOutputDatasetName+(iteration%2==0 ? "_odd" : "_even");
+		final String outputDatasetName = originalOutputDatasetName+(iteration%2==0 ? "_even" : "_odd");
+		
+		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT8, new GzipCompression());
+
+		
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		
+		final int currentBorder = iteration%6;
+
+		JavaRDD<Boolean> needToThinAgainSet = rdd.map(blockInformation -> {
+			final long[][] gridBlock = blockInformation.gridBlock;
+			long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
+			long[] dimension = gridBlock[1];
+			
+			int padding = 8; //2 because need to know if surrounding voxels are removable
+			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
+			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
+			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			
+			IntervalView<UnsignedByteType> outputImage = null;
+			if(iteration==0 ) {
+				RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, originalInputDatasetName);
+				final IntervalView<UnsignedLongType> sourceCropped = Views.offsetInterval(
+					Views.extendValue(source, new UnsignedLongType(0)),
+					paddedOffset, paddedDimension);
+				outputImage = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
+
+
+				final Cursor<UnsignedLongType> sourceCroppedCursor = sourceCropped.cursor();
+				final Cursor<UnsignedByteType> outputImageCursor = outputImage.cursor();
+
+				while(sourceCroppedCursor.hasNext()) {
+					UnsignedLongType v1 = sourceCroppedCursor.next();
+					UnsignedByteType v2 = outputImageCursor.next();
+					if(v1.get()>0) {
+						v2.set(1);
+					}
+				}	
+			}
+			else {
+				final RandomAccessibleInterval<UnsignedByteType> source = (RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, inputDatasetName);
+				outputImage = Views.offsetInterval(
+					Views.extendValue(source, new UnsignedByteType(0)),
+					paddedOffset, paddedDimension);
+			}
+
+			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, padding, currentBorder);
+			boolean needToThinAgain = skeletonize3D.thinPaddedImageOneIterationIndependentSubvolumes();
+			outputImage = Views.offsetInterval(outputImage,new long[]{padding,padding,padding}, dimension);
+		
+			//if(show)
+			//	ImageJFunctions.show(outputImage);
+			
+			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
+
+			N5Utils.saveBlock(outputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
+			return needToThinAgain;
+			
+		});
+		
+		Boolean needToThinAgain = needToThinAgainSet.reduce((a,b) -> {return a || b; });
+		return needToThinAgain;
+	}
+
 
 	
 
-	public static final Boolean skeletonizationIteration(final JavaSparkContext sc, final String n5Path,
+	public static final Boolean adaptiveSkeletonizationIteration(final JavaSparkContext sc, final String n5Path,
 			final String originalInputDatasetName, final String n5OutputPath, String originalOutputDatasetName,
 			final List<BlockInformation> blockInformationList, final int iteration) throws IOException {
 
@@ -353,7 +438,7 @@ public class SparkSkeletonization {
 			int iteration=0;
 			Boolean needToThinAgain = true;
 			int fullIterations = 0;
-			//while(needToThinAgain) 
+			while(needToThinAgain) 
 			{
 				needToThinAgain = false;
 				for(int currentBorder=0; currentBorder<6; currentBorder++) {// this is one whole iteration

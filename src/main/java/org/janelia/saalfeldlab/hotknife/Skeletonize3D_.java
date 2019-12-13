@@ -97,6 +97,123 @@ public class Skeletonize3D_ implements PlugInFilter
 		fillnumOfPointsLUT(this.pointsLUT);
 	}
 	
+	
+	/* -----------------------------------------------------------------------*/
+	/**
+	 * Post processing for computing thinning.
+	 * 
+	 * @param outputImage output image stack
+	 */
+	public boolean thinPaddedImageOneIterationIndependentSubvolumes() 
+	{	
+		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();
+
+		// Following Lee[94], save versions (Q) of input image S, while 
+		// deleting each type of border points (R)
+		ArrayList<ArrayList<int[]>> simpleBorderPoints = new ArrayList<ArrayList<int[]>>();
+		for(int i=0; i<8; i++) {
+			simpleBorderPoints.add(new ArrayList<int[]>());
+		}
+
+		iterations = 0;
+		// Loop through the image several times until there is no change.
+		iterations++;
+		boolean needToThinAgain = false;				
+		
+		// Loop through the image.
+		for (int z = 1; z < depth-1; z++)
+		{
+			for (int y = 1; y < height-1; y++)
+			{
+				for (int x = 1; x < width-1; x++)						
+				{
+
+					// check if point is foreground
+					if ( getPixelNoCheck(outputImageRandomAccess, x, y, z) == 0 )
+					{
+						continue;         // current point is already background 
+					}
+											
+					// check 6-neighbors if point is a border point of type currentBorder
+					boolean isBorderPoint = false;
+					// North
+					if( currentBorder == 0 && N(outputImageRandomAccess, x, y, z) <= 0 )
+						isBorderPoint = true;
+					// South
+					if( currentBorder == 1 && S(outputImageRandomAccess, x, y, z) <= 0 )
+						isBorderPoint = true;
+					// East
+					if( currentBorder == 2 && E(outputImageRandomAccess, x, y, z) <= 0 )
+						isBorderPoint = true;
+					// West
+					if( currentBorder == 3 && W(outputImageRandomAccess, x, y, z) <= 0 )
+						isBorderPoint = true;
+					if(inputImage.dimension(2) > 1)
+					{
+						// Up							
+						if( currentBorder == 4 && U(outputImageRandomAccess, x, y, z) <= 0 )
+							isBorderPoint = true;
+						// Bottom
+						if( currentBorder == 5 && B(outputImageRandomAccess, x, y, z) <= 0 )
+							isBorderPoint = true;
+					}
+					if( !isBorderPoint )
+					{
+						continue;         // current point is not deletable
+					}
+					
+					if( isEndPoint( outputImageRandomAccess, x, y, z))
+					{	
+						continue;
+					}
+					
+					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
+					
+					// Check if point is Euler invariant (condition 1 in Lee[94])
+					if( !isEulerInvariant( neighborhood, eulerLUT ) )
+					{   
+						continue;         // current point is not deletable
+					}
+					
+					// Check if point is simple (deletion does not change connectivity in the 3x3x3 neighborhood)
+					// (conditions 2 and 3 in Lee[94])
+					if( !isSimplePoint( neighborhood ) )
+					{   
+						continue;         // current point is not deletable
+					}
+
+
+					// add all simple border points to a list for sequential re-checking
+					int[] index = new int[3];
+					index[0] = x;
+					index[1] = y;
+					index[2] = z;
+					//8 independent subvolumes https://www.mathworks.com/matlabcentral/fileexchange/43400-skeleton3d
+					//shouldn't necessarily matter order they are deleted
+					int subvolumeIndex = (x%2) + (y%2)*2 + (z%2)*4;
+					simpleBorderPoints.get(subvolumeIndex).add(index);
+				}
+			}					
+		}							
+
+		// sequential re-checking to preserve connectivity when
+		// deleting in a parallel way
+		for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
+			for ( int[] index : subvolumeSimpleBorderPoints) {
+					// Check if border points is simple
+					byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
+					if (isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT )) {
+						setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
+						needToThinAgain = true; //if thinned, then need to check all again
+					}
+			}
+		}
+		return needToThinAgain;
+	} 	
+	
+	
+	
+	
 	/* -----------------------------------------------------------------------*/
 	/**
 	 * Post processing for computing thinning.

@@ -173,7 +173,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		prepareData(this.inputImage);
 		
 		// Compute Thinning	
-		computeMedialSurface(this.inputImage);
+		//computeThinSurface(this.inputImage);
+		computeThinImage(this.inputImage);
 		
 		// Convert image to binary 0-255
 		for(int i = 1; i <= this.inputImage.getSize(); i++)
@@ -184,8 +185,9 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
 		new ij.ImageJ();
+		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
+		//ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
 		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
-		ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
 		imp.show();
 		TempSkeletonize3D_ skeletonize3D = new TempSkeletonize3D_();
 		String arg = "";
@@ -256,8 +258,12 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		
 		// Following Lee[94], save versions (Q) of input image S, while 
 		// deleting each type of border points (R)
-		ArrayList <int[]> simpleBorderPoints = new ArrayList<int[]>();				
-		
+
+		ArrayList<ArrayList<int[]>> simpleBorderPoints = new ArrayList<ArrayList<int[]>>();
+		for(int i=0; i<8; i++) {
+			simpleBorderPoints.add(new ArrayList<int[]>());
+		}
+
 		iterations = 0;
 		// Loop through the image several times until there is no change.
 		int unchangedBorders = 0;
@@ -339,7 +345,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							index[0] = x;
 							index[1] = y;
 							index[2] = z;
-							simpleBorderPoints.add(index);
+							simpleBorderPoints.get((x%2) + (y%2)*2 + (z%2)*4).add(index);
 						}
 					}					
 				}							
@@ -348,8 +354,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 				// sequential re-checking to preserve connectivity when
 				// deleting in a parallel way
 				int[] index;
-
-				for (int[] simpleBorderPoint : simpleBorderPoints) {
+				for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
+				for (int[] simpleBorderPoint : subvolumeSimpleBorderPoints) {
 					index = simpleBorderPoint;
 
 					// Check if border points is simple			        
@@ -362,7 +368,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 
 				}
-
+				}
 				if( noChange )
 					unchangedBorders++;
 
@@ -395,8 +401,10 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		
 		// Following Lee[94], save versions (Q) of input image S, while 
 		// deleting each type of border points (R)
-		ArrayList <int[]> simpleBorderPoints = new ArrayList<int[]>();				
-		
+		ArrayList<ArrayList<int[]>> simpleBorderPoints = new ArrayList<ArrayList<int[]>>();
+		for(int i=0; i<8; i++) {
+			simpleBorderPoints.add(new ArrayList<int[]>());
+		}		
 		iterations = 0;
 		// Loop through the image several times until there is no change.
 		int unchangedBorders = 0;
@@ -480,7 +488,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							index[0] = x;
 							index[1] = y;
 							index[2] = z;
-							simpleBorderPoints.add(index);
+							simpleBorderPoints.get((x%2)+(y%2)*2+(z%2)*4).add(index);
 						}
 					}					
 					IJ.showProgress(z, this.depth);				
@@ -491,7 +499,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 				// deleting in a parallel way
 				int[] index;
 
-				for (int[] simpleBorderPoint : simpleBorderPoints) {
+				for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
+					for (int[] simpleBorderPoint : subvolumeSimpleBorderPoints) {
 					index = simpleBorderPoint;
 
 					// Check if border points is simple		
@@ -504,12 +513,14 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 
 				}
-
+				}
 				if( noChange )
 					unchangedBorders++;
 
-				simpleBorderPoints.clear();
-			} // end currentBorder for loop
+				for(int i=0; i<8; i++) {
+					simpleBorderPoints.get(i).clear();
+				}					
+				} // end currentBorder for loop
 		}
 
 		IJ.showStatus("Computed thin image.");
@@ -632,15 +643,11 @@ public class TempSkeletonize3D_ implements PlugInFilter
 					index = simpleBorderPoint;
 					final byte[] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
 					// Check if border points is simple			        
-					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) 
-						//&& !(isEndPoint( outputImage, index[0], index[1], index[2]) )//|| isSurfaceEndPoint(neighborhood))){	
-						&& ( numberOfNeighbors(neighborhood)>=2)) {//condition 4 in paper
-						// we can delete the current point
+					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
+							(!isSurfaceEndPoint(neighborhood) || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
+							) {						// we can delete the current point
 						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
 						noChange = false;
-					}
-					if(isSurfaceEndPoint(neighborhood)) {
-						System.out.println("heyyy");
 					}
 				}
 
