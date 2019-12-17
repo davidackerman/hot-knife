@@ -107,18 +107,20 @@ public class Skeletonize3D_ implements PlugInFilter
 	{	
 		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();
 
-		// Following Lee[94], save versions (Q) of input image S, while 
-		// deleting each type of border points (R)
-		ArrayList<ArrayList<int[]>> simpleBorderPoints = new ArrayList<ArrayList<int[]>>();
-		for(int i=0; i<8; i++) {
-			simpleBorderPoints.add(new ArrayList<int[]>());
-		}
+
 
 		iterations = 0;
 		// Loop through the image several times until there is no change.
 		iterations++;
 		boolean needToThinAgain = false;				
-		
+		//for(int currentBorder = 0; currentBorder<6; currentBorder++) 
+		{
+			// Following Lee[94], save versions (Q) of input image S, while 
+			// deleting each type of border points (R)
+			ArrayList<ArrayList<int[]>> simpleBorderPoints = new ArrayList<ArrayList<int[]>>();
+			for(int i=0; i<8; i++) {
+				simpleBorderPoints.add(new ArrayList<int[]>());
+			}
 		// Loop through the image.
 		for (int z = 1; z < depth-1; z++)
 		{
@@ -205,6 +207,7 @@ public class Skeletonize3D_ implements PlugInFilter
 						needToThinAgain = true; //if thinned, then need to check all again
 					}
 			}
+		}
 		}
 		return needToThinAgain;
 	} 	
