@@ -176,7 +176,7 @@ public class SparkSkeletonization {
 			long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
 			long[] dimension = gridBlock[1];
 			
-			int padding=8;//int padding = 48; //2 because need to know if surrounding voxels are removable
+			int padding=48;//int padding = 48; //2 because need to know if surrounding voxels are removable
 			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
@@ -293,24 +293,24 @@ public class SparkSkeletonization {
 			Boolean needToThinAgain = true;
 			int fullIterations = 0;
 			DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
-			Date date = new Date();
 			while(needToThinAgain) 
 			{
 				needToThinAgain = false;
-				for(int currentBorder=0; currentBorder<6; currentBorder++) 
+				//for(int currentBorder=0; currentBorder<6; currentBorder++) 
 				{// this is one whole iteration
 					needToThinAgain |= skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
 							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList, iteration);
 					
 					iteration++;
 					
-					System.out.println(dateFormat.format(date)+" Border Complete: "+currentBorder);
+				//	System.out.println(dateFormat.format(date)+" Border Complete: "+currentBorder);
 
 				}
 				//final String outputDatasetName = finalOutputN5DatasetName+((iteration-1)%2==0 ? "_even" : "_odd");
 				//FileUtils.copyDirectory(new File(options.getOutputN5Path() + "/" + outputDatasetName), new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName+"_iteration_"+fullIterations));
 
 				fullIterations++;
+				Date date = new Date();
 				System.out.println(dateFormat.format(date)+" Full iteration complete: "+fullIterations);
 			}
 			String finalFileName = finalOutputN5DatasetName + '_'+ ((iteration-1)%2==0 ? "even" : "odd");

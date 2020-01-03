@@ -113,7 +113,7 @@ public class Skeletonize3D_ implements PlugInFilter
 		// Loop through the image several times until there is no change.
 		iterations++;
 		boolean needToThinAgain = false;				
-		//for(int currentBorder = 0; currentBorder<6; currentBorder++) 
+		for(int currentBorder = 0; currentBorder<6; currentBorder++) 
 		{
 			// Following Lee[94], save versions (Q) of input image S, while 
 			// deleting each type of border points (R)
@@ -204,7 +204,7 @@ public class Skeletonize3D_ implements PlugInFilter
 					byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
 					if (isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT )) {
 						setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
-						needToThinAgain = true; //if thinned, then need to check all again
+						needToThinAgain |= true; //if thinned, then need to check all again
 					}
 			}
 		}
@@ -600,21 +600,14 @@ public class Skeletonize3D_ implements PlugInFilter
 
 		// Following Lee[94], save versions (Q) of input image S, while 
 		// deleting each type of border points (R)
-		ArrayList<ArrayList<int[]>> simpleBorderPoints = new ArrayList<ArrayList<int[]>>();
-		for(int i=0; i<8; i++) {
-			simpleBorderPoints.add(new ArrayList<int[]>());
-		}		
 		
-		// Prepare Euler LUT [Lee94]
-		int eulerLUT[] = new int[256]; 
-		fillEulerLUT( eulerLUT );
-		
-		// Prepare number of points LUT
-		int pointsLUT[] = new int[ 256 ];
-		fillnumOfPointsLUT(pointsLUT);
 		
 		boolean needToThinAgain = false;
-				
+		for(currentBorder = 0; currentBorder<6; currentBorder++) {
+			ArrayList<ArrayList<int[]>> simpleBorderPoints = new ArrayList<ArrayList<int[]>>();
+			for(int i=0; i<8; i++) {
+				simpleBorderPoints.add(new ArrayList<int[]>());
+			}		
 				// Loop through the image.				 
 				for (int z = 1; z < depth-1; z++)
 				{
@@ -699,11 +692,14 @@ public class Skeletonize3D_ implements PlugInFilter
 							(!isSurfaceEndPoint(neighborhood) || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
 							) {						// we can delete the current point
 						setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
-						needToThinAgain = true;
+						needToThinAgain |= true;
 					}
 				}
 			}
+		}
 		return needToThinAgain;
+		
+		
 	} /* end computeThinImage */	
 	
 	int numberOfNeighbors(byte[] neighborhood) {
