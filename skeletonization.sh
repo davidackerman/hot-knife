@@ -9,9 +9,11 @@ CLASS=org.janelia.saalfeldlab.hotknife.SparkSkeletonization
 N_NODES=10
 
 INPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_connected_components_minVolumeCutoff.n5'
+OUTPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_skeletons.n5'
 
-ARGV="--inputN5DatasetName 'mito_cc' \
---inputN5Path '$INPUTN5PATH'"
+ARGV="--inputN5DatasetName 'er_cc' \
+--inputN5Path '$INPUTN5PATH' \
+--outputN5Path '$OUTPUTN5PATH'"
 
 export RUNTIME="48:00"
 TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV

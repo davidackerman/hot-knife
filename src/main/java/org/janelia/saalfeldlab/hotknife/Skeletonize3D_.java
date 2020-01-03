@@ -103,7 +103,7 @@ public class Skeletonize3D_ implements PlugInFilter
 	 * 
 	 * @param outputImage output image stack
 	 */
-	public boolean thinPaddedImageOneIterationIndependentSubvolumes() 
+	public boolean computeSkeletonIteration() 
 	{	
 		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();
 
@@ -148,7 +148,7 @@ public class Skeletonize3D_ implements PlugInFilter
 					// West
 					if( currentBorder == 3 && W(outputImageRandomAccess, x, y, z) <= 0 )
 						isBorderPoint = true;
-					if(inputImage.dimension(2) > 1)
+					if(inputImage.dimension(2) > 0)
 					{
 						// Up							
 						if( currentBorder == 4 && U(outputImageRandomAccess, x, y, z) <= 0 )
@@ -594,7 +594,7 @@ public class Skeletonize3D_ implements PlugInFilter
 		return unchangedBorders;
 	} /* end computeThinImage */	
 	
-	public boolean computeMedialSurface(ImageStack outputImage) 
+	public boolean computeMedialSurfaceIteration() 
 	{
 		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();
 
@@ -643,7 +643,7 @@ public class Skeletonize3D_ implements PlugInFilter
 							// West
 							if( currentBorder == 3 && W(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
-							if(outputImage.getSize() > 1)
+							if(inputImage.dimension(2) > 0)
 							{
 								// Up							
 								if( currentBorder == 4 && U(outputImageRandomAccess, x, y, z) <= 0 )
@@ -657,7 +657,7 @@ public class Skeletonize3D_ implements PlugInFilter
 								continue;         // current point is not deletable
 							}
 							
-							final byte[] neighborhood = getNeighborhood(outputImage, x, y, z);
+							final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
 
 							if( isEndPoint( outputImageRandomAccess, x, y, z)  || isSurfaceEndPoint(neighborhood))
 							{ //check it again anyway but just saves some time
@@ -693,7 +693,7 @@ public class Skeletonize3D_ implements PlugInFilter
 				// deleting in a parallel way
 				for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
 					for (int[] index : subvolumeSimpleBorderPoints) {			
-					final byte[] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
+					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
 					// Check if border points is simple			        
 					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
 							(!isSurfaceEndPoint(neighborhood) || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper

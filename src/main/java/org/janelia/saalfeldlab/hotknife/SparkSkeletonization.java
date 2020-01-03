@@ -21,9 +21,12 @@ import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -60,6 +63,7 @@ import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.logic.NativeBoolType;
 import net.imglib2.type.numeric.integer.*;
+import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
@@ -88,7 +92,10 @@ public class SparkSkeletonization {
 		private String inputN5DatasetName = null;
 
 		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
-		private String outputN5DatasetSuffix = "_skeleton";
+		private String outputN5DatasetSuffix = "";
+		
+		@Option(name = "--doMedialSurface", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
+		private Boolean doMedialSurface = false;
 
 		public Options(final String[] args) {
 
@@ -121,19 +128,18 @@ public class SparkSkeletonization {
 		public String getOutputN5Path() {
 			return outputN5Path;
 		}
+		
+		public Boolean getDoMedialSurface() {
+			return doMedialSurface;
+		}
 
 	}
 	
 	public static final Boolean skeletonizationIteration(final JavaSparkContext sc, final String n5Path,
-			final String originalInputDatasetName, final String n5OutputPath, String originalOutputDatasetName,
+			final String originalInputDatasetName, final String n5OutputPath, String originalOutputDatasetName, boolean doMedialSurface,
 			final List<BlockInformation> blockInformationList, final int iteration) throws IOException {
+		
 
-		final N5Reader n5Reader = new N5FSReader(n5Path);
-
-		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(originalInputDatasetName);
-		final long[] dimensions = attributes.getDimensions();
-		final int[] blockSize = attributes.getBlockSize();
-		final int n = dimensions.length;
 
 		/*
 		 * grid block size for parallelization to minimize double loading of blocks
@@ -142,10 +148,24 @@ public class SparkSkeletonization {
 		if (show)
 			new ij.ImageJ();
 
-		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		final String inputDatasetName = originalOutputDatasetName+(iteration%2==0 ? "_odd" : "_even");
 		final String outputDatasetName = originalOutputDatasetName+(iteration%2==0 ? "_even" : "_odd");
 		
+		N5Reader n5Reader = null;
+		DatasetAttributes attributes = null;
+		if(iteration == 0) {
+			n5Reader = new N5FSReader(n5Path);
+			attributes = n5Reader.getDatasetAttributes(originalInputDatasetName);
+		}
+		else {
+			n5Reader = new N5FSReader(n5OutputPath);
+			attributes = n5Reader.getDatasetAttributes(inputDatasetName);
+		}
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		final int n = dimensions.length;
+		
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT8, new GzipCompression());
 
 		int currentBorder = iteration%6;
@@ -163,6 +183,7 @@ public class SparkSkeletonization {
 			
 			IntervalView<UnsignedByteType> outputImage = null;
 			if(iteration==0 ) {
+				
 				RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, originalInputDatasetName);
 				final IntervalView<UnsignedLongType> sourceCropped = Views.offsetInterval(
 					Views.extendValue(source, new UnsignedLongType(0)),
@@ -189,7 +210,13 @@ public class SparkSkeletonization {
 			}
 
 			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, currentBorder);
-			boolean needToThinAgain = skeletonize3D.thinPaddedImageOneIterationIndependentSubvolumes();
+			boolean needToThinAgain = true;
+			if (doMedialSurface) {
+				needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
+			}
+			else {
+				needToThinAgain = skeletonize3D.computeSkeletonIteration();
+			}
 			outputImage = Views.offsetInterval(outputImage,new long[]{padding,padding,padding}, dimension);
 		
 			//if(show)
@@ -265,23 +292,26 @@ public class SparkSkeletonization {
 			int iteration=0;
 			Boolean needToThinAgain = true;
 			int fullIterations = 0;
+			DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
+			Date date = new Date();
 			while(needToThinAgain) 
 			{
 				needToThinAgain = false;
 				for(int currentBorder=0; currentBorder<6; currentBorder++) 
 				{// this is one whole iteration
 					needToThinAgain |= skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
-							finalOutputN5DatasetName, blockInformationList, iteration);
+							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList, iteration);
 					
 					iteration++;
 					
-					
+					System.out.println(dateFormat.format(date)+" Border Complete: "+currentBorder);
+
 				}
-				final String outputDatasetName = finalOutputN5DatasetName+((iteration-1)%2==0 ? "_even" : "_odd");
-				FileUtils.copyDirectory(new File(options.getOutputN5Path() + "/" + outputDatasetName), new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName+"_iteration_"+fullIterations));
+				//final String outputDatasetName = finalOutputN5DatasetName+((iteration-1)%2==0 ? "_even" : "_odd");
+				//FileUtils.copyDirectory(new File(options.getOutputN5Path() + "/" + outputDatasetName), new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName+"_iteration_"+fullIterations));
 
 				fullIterations++;
-				System.out.println(iteration/6.0+" "+fullIterations);
+				System.out.println(dateFormat.format(date)+" Full iteration complete: "+fullIterations);
 			}
 			String finalFileName = finalOutputN5DatasetName + '_'+ ((iteration-1)%2==0 ? "even" : "odd");
 			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName));
