@@ -26,8 +26,10 @@ import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -137,7 +139,7 @@ public class SparkSkeletonization {
 	
 	public static final Boolean skeletonizationIteration(final JavaSparkContext sc, final String n5Path,
 			final String originalInputDatasetName, final String n5OutputPath, String originalOutputDatasetName, boolean doMedialSurface,
-			final List<BlockInformation> blockInformationList, final int iteration) throws IOException {
+			final List<BlockInformation> blockInformationList, List<Boolean> needToThinAgainPrevious, final int iteration) throws IOException {
 		
 
 
@@ -171,7 +173,7 @@ public class SparkSkeletonization {
 		int currentBorder = iteration%6;
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		
-		JavaRDD<Boolean> needToThinAgainSet = rdd.map(blockInformation -> {
+		JavaRDD<List<Boolean>> needToThinAgainSet = rdd.map(blockInformation -> {
 			final long[][] gridBlock = blockInformation.gridBlock;
 			long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
 			long[] dimension = gridBlock[1];
@@ -179,11 +181,11 @@ public class SparkSkeletonization {
 			int padding=48;//int padding = 48; //2 because need to know if surrounding voxels are removable
 			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
-			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			N5Reader n5BlockReader = null;
 			
 			IntervalView<UnsignedByteType> outputImage = null;
 			if(iteration==0 ) {
-				
+				n5BlockReader = new N5FSReader(n5Path);
 				RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, originalInputDatasetName);
 				final IntervalView<UnsignedLongType> sourceCropped = Views.offsetInterval(
 					Views.extendValue(source, new UnsignedLongType(0)),
@@ -203,6 +205,7 @@ public class SparkSkeletonization {
 				}	
 			}
 			else {
+				n5BlockReader = new N5FSReader(n5OutputPath);
 				final RandomAccessibleInterval<UnsignedByteType> source = (RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, inputDatasetName);
 				outputImage = Views.offsetInterval(
 					Views.extendValue(source, new UnsignedByteType(0)),
@@ -218,22 +221,80 @@ public class SparkSkeletonization {
 				needToThinAgain = skeletonize3D.computeSkeletonIteration();
 			}
 			outputImage = Views.offsetInterval(outputImage,new long[]{padding,padding,padding}, dimension);
-		
+
+			boolean blockIsIndependent = isBlockIndependent(outputImage, dimension);
+			
+			
+			//check if has any on boundary
+			
+			
 			//if(show)
 			//	ImageJFunctions.show(outputImage);
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 
 			N5Utils.saveBlock(outputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
-			return needToThinAgain;
+			return Arrays.asList(needToThinAgain, blockIsIndependent);
 			
 		});
 		
-		Boolean needToThinAgain = needToThinAgainSet.reduce((a,b) -> {return a || b; });
+		boolean needToThinAgain = false;
+		List<List<Boolean>> needToThinAgainCurrent = new LinkedList<>(needToThinAgainSet.collect());
+		for(int i=blockInformationList.size()-1; i>=0; i--) {
+			boolean needToThinBlockAgainPrevious = needToThinAgainPrevious.get(i);
+			boolean needToThinBlockAgainCurrent = needToThinAgainCurrent.get(i).get(0);
+			boolean blockIsIndependent = needToThinAgainCurrent.get(i).get(1);
+			if(blockIsIndependent && (!needToThinBlockAgainPrevious && !needToThinBlockAgainCurrent)) {// if current block is independent and had no need to thin over two iterations, then can stop processing it since it will be identical in even/odd outputs
+				needToThinAgainCurrent.remove(i);
+				needToThinAgainPrevious.remove(i);
+				blockInformationList.remove(i);
+			}
+			else {
+				needToThinAgainPrevious.set(i, needToThinBlockAgainCurrent);
+			}
+			needToThinAgain |= needToThinBlockAgainCurrent;
+		}
 		return needToThinAgain;
 	}
 
 
+	public static boolean isBlockIndependent(IntervalView<UnsignedByteType> block, long[] dimension) {
+		RandomAccess<UnsignedByteType> blockRandomAccess = block.randomAccess();
+		List<Long> xEdges = Arrays.asList(0L, dimension[0]-1);
+		List<Long> yEdges = Arrays.asList(0L, dimension[1]-1);
+		List<Long> zEdges = Arrays.asList(0L, dimension[2]-1);
+		for(long x : xEdges) {
+			for(long y=0; y<dimension[1]; y++) {
+				for(long z=0; z<dimension[2]; z++) {
+					blockRandomAccess.setPosition(new long[] {x, y, z});
+					if(blockRandomAccess.get().get()>0) {
+						
+					}
+				}
+			}
+		}
+		for(long x=0; x<dimension[0]; x++) {
+			for(long y : yEdges) {
+				for(long z=0; z<dimension[2]; z++) {
+					blockRandomAccess.setPosition(new long[] {x, y, z});
+					if(blockRandomAccess.get().get()>0) {
+						return false;
+					}
+				}
+			}
+		}
+		for(long x=0; x<dimension[0]; x++) {
+			for(long y=0; y<dimension[1]; y++) {
+				for(long z : zEdges) {
+					blockRandomAccess.setPosition(new long[] {x, y, z});
+					if(blockRandomAccess.get().get()>0) {
+						return false;
+					}
+				}
+			}
+		}
+		return true;
+	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
 			final String inputN5DatasetName) throws IOException {
@@ -293,13 +354,17 @@ public class SparkSkeletonization {
 			Boolean needToThinAgain = true;
 			int fullIterations = 0;
 			DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
+			
+			List<Boolean> needToThinAgainPrevious=new ArrayList<Boolean>(Arrays.asList(new Boolean[blockInformationList.size()]));
+			Collections.fill(needToThinAgainPrevious, Boolean.TRUE);
+			
 			while(needToThinAgain) 
 			{
 				needToThinAgain = false;
 				//for(int currentBorder=0; currentBorder<6; currentBorder++) 
 				{// this is one whole iteration
 					needToThinAgain |= skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
-							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList, iteration);
+							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList, needToThinAgainPrevious, iteration);
 					
 					iteration++;
 					
@@ -311,7 +376,7 @@ public class SparkSkeletonization {
 
 				fullIterations++;
 				Date date = new Date();
-				System.out.println(dateFormat.format(date)+" Full iteration complete: "+fullIterations);
+				System.out.println(dateFormat.format(date)+" Number of Remaining Blocks: "+blockInformationList.size()+", Full iteration complete: "+fullIterations);
 			}
 			String finalFileName = finalOutputN5DatasetName + '_'+ ((iteration-1)%2==0 ? "even" : "odd");
 			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName));
