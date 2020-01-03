@@ -21,6 +21,12 @@ public class BlockInformation implements Serializable {
 	 */
 	private static final long serialVersionUID = 1L;
 	public long[][] gridBlock;
+	public long[][] paddedGridBlock;
+	public long[] padding;
+	public boolean needToThinAgainPrevious;
+	public boolean needToThinAgainCurrent;
+	public boolean isIndependent;
+	
 	public Map<Long,Long> edgeComponentIDtoVolumeMap;
 	public Map<Long, Long> edgeComponentIDtoRootIDmap;
 	
@@ -29,6 +35,18 @@ public class BlockInformation implements Serializable {
 		this.edgeComponentIDtoVolumeMap = edgeComponentIDs;
 		this.edgeComponentIDtoRootIDmap = edgeComponentIDtoRootIDmap;
 		this.gridBlock = gridBlock;
+	}
+	
+	public BlockInformation(long[][] gridBlock, long[][] paddedGridBlock, long[] padding, Map<Long,Long> edgeComponentIDs,
+			Map<Long, Long> edgeComponentIDtoRootIDmap) {
+		this.edgeComponentIDtoVolumeMap = edgeComponentIDs;
+		this.edgeComponentIDtoRootIDmap = edgeComponentIDtoRootIDmap;
+		this.gridBlock = gridBlock;
+		this.padding = padding;
+		this.paddedGridBlock = paddedGridBlock;
+		this.needToThinAgainPrevious = true;
+		this.needToThinAgainCurrent = true;
+		this.isIndependent = false;
 	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,

@@ -137,9 +137,9 @@ public class SparkSkeletonization {
 
 	}
 	
-	public static final Boolean skeletonizationIteration(final JavaSparkContext sc, final String n5Path,
+	public static List<BlockInformation> skeletonizationIteration(final JavaSparkContext sc, final String n5Path,
 			final String originalInputDatasetName, final String n5OutputPath, String originalOutputDatasetName, boolean doMedialSurface,
-			final List<BlockInformation> blockInformationList, List<Boolean> needToThinAgainPrevious, final int iteration) throws IOException {
+			List<BlockInformation> blockInformationList, final int iteration) throws IOException {
 		
 
 
@@ -173,14 +173,21 @@ public class SparkSkeletonization {
 		int currentBorder = iteration%6;
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		
-		JavaRDD<List<Boolean>> needToThinAgainSet = rdd.map(blockInformation -> {
+		JavaRDD<BlockInformation> updatedBlockInformation = rdd.map(blockInformation -> {
 			final long[][] gridBlock = blockInformation.gridBlock;
 			long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
 			long[] dimension = gridBlock[1];
 			
-			int padding=48;//int padding = 48; //2 because need to know if surrounding voxels are removable
+			/*int padding=48;//int padding = 48; //2 because need to know if surrounding voxels are removable
 			long [] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long [] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
+			*/
+			long [] paddedOffset = blockInformation.paddedGridBlock[0];
+			long [] paddedDimension = blockInformation.paddedGridBlock[1];
+			long [] padding = blockInformation.padding;
+			
+		//	System.out.println((int)padding[0] +" "+ (int)padding[1] + " " + (int)padding[2] + " " + (int)(paddedDimension[0]-padding[0]-dimension[0]) + " " + (int)(paddedDimension[1]-padding[1]-dimension[1]) + " " + (int)(paddedDimension[2]-padding[2]-dimension[2]));
+			
 			N5Reader n5BlockReader = null;
 			
 			IntervalView<UnsignedByteType> outputImage = null;
@@ -220,9 +227,11 @@ public class SparkSkeletonization {
 			else {
 				needToThinAgain = skeletonize3D.computeSkeletonIteration();
 			}
-			outputImage = Views.offsetInterval(outputImage,new long[]{padding,padding,padding}, dimension);
 
-			boolean blockIsIndependent = isBlockIndependent(outputImage, dimension);
+			blockInformation.needToThinAgainCurrent = needToThinAgain;
+			
+			outputImage = Views.offsetInterval(outputImage, padding, dimension);
+			blockInformation.isIndependent = isBlockIndependent(outputImage, blockInformation);
 			
 			
 			//check if has any on boundary
@@ -234,66 +243,113 @@ public class SparkSkeletonization {
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 
 			N5Utils.saveBlock(outputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
-			return Arrays.asList(needToThinAgain, blockIsIndependent);
+
+			return blockInformation;
 			
 		});
 		
 		boolean needToThinAgain = false;
-		List<List<Boolean>> needToThinAgainCurrent = new LinkedList<>(needToThinAgainSet.collect());
+		blockInformationList  = new LinkedList(updatedBlockInformation.collect());
 		for(int i=blockInformationList.size()-1; i>=0; i--) {
-			boolean needToThinBlockAgainPrevious = needToThinAgainPrevious.get(i);
-			boolean needToThinBlockAgainCurrent = needToThinAgainCurrent.get(i).get(0);
-			boolean blockIsIndependent = needToThinAgainCurrent.get(i).get(1);
-			if(blockIsIndependent && (!needToThinBlockAgainPrevious && !needToThinBlockAgainCurrent)) {// if current block is independent and had no need to thin over two iterations, then can stop processing it since it will be identical in even/odd outputs
-				needToThinAgainCurrent.remove(i);
-				needToThinAgainPrevious.remove(i);
+			BlockInformation currentBlockInformation = blockInformationList.get(i);
+			
+			if(currentBlockInformation.isIndependent && (!currentBlockInformation.needToThinAgainPrevious && !currentBlockInformation.needToThinAgainCurrent)) {// if current block is independent and had no need to thin over two iterations, then can stop processing it since it will be identical in even/odd outputs
 				blockInformationList.remove(i);
 			}
 			else {
-				needToThinAgainPrevious.set(i, needToThinBlockAgainCurrent);
+				needToThinAgain |= currentBlockInformation.needToThinAgainCurrent;
+				currentBlockInformation.needToThinAgainPrevious = currentBlockInformation.needToThinAgainCurrent;
+				blockInformationList.set(i,currentBlockInformation);
 			}
-			needToThinAgain |= needToThinBlockAgainCurrent;
+			
 		}
-		return needToThinAgain;
+		
+		if(!needToThinAgain)
+			blockInformationList = new LinkedList();
+		
+		return blockInformationList;
 	}
 
 
-	public static boolean isBlockIndependent(IntervalView<UnsignedByteType> block, long[] dimension) {
+	public static boolean isBlockIndependent(IntervalView<UnsignedByteType> block, BlockInformation blockInformation) {
+		boolean isIndependent = true;
+		
+		final long[][] gridBlock = blockInformation.gridBlock;
+		
+		long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
+		long[] dimension = gridBlock[1];
+		
+		long[] paddedOffset = gridBlock[0].clone();
+		long[] paddedDimension = gridBlock[1].clone();
+		
+		long[] padding = {0,0,0};
+
 		RandomAccess<UnsignedByteType> blockRandomAccess = block.randomAccess();
 		List<Long> xEdges = Arrays.asList(0L, dimension[0]-1);
 		List<Long> yEdges = Arrays.asList(0L, dimension[1]-1);
 		List<Long> zEdges = Arrays.asList(0L, dimension[2]-1);
 		for(long x : xEdges) {
+			nextEdge:
 			for(long y=0; y<dimension[1]; y++) {
 				for(long z=0; z<dimension[2]; z++) {
 					blockRandomAccess.setPosition(new long[] {x, y, z});
 					if(blockRandomAccess.get().get()>0) {
-						
+						isIndependent = false;
+						if(x==0) {
+							padding[0] = 48;
+							paddedOffset[0]=offset[0]-48;
+						}
+						paddedDimension[0]+=48;
+						break nextEdge;
 					}
 				}
 			}
 		}
-		for(long x=0; x<dimension[0]; x++) {
-			for(long y : yEdges) {
+		
+		for(long y : yEdges) {
+			nextEdge:
+			for(long x=0; x<dimension[0]; x++) {
 				for(long z=0; z<dimension[2]; z++) {
 					blockRandomAccess.setPosition(new long[] {x, y, z});
 					if(blockRandomAccess.get().get()>0) {
-						return false;
+						isIndependent = false;
+						if(y==0) {
+							padding[1] = 48;
+							paddedOffset[1]=offset[1]-48;
+						}
+						paddedDimension[1]+=48;
+						break nextEdge;
 					}
 				}
 			}
 		}
-		for(long x=0; x<dimension[0]; x++) {
-			for(long y=0; y<dimension[1]; y++) {
-				for(long z : zEdges) {
+		
+		for(long z : zEdges) {
+			nextEdge:
+			for(long x=0; x<dimension[0]; x++) {
+				for(long y=0; y<dimension[1]; y++) {
 					blockRandomAccess.setPosition(new long[] {x, y, z});
+					
 					if(blockRandomAccess.get().get()>0) {
-						return false;
+						isIndependent = false;
+						if(z==0) {
+							padding[2] = 48;
+							paddedOffset[2]=offset[2]-48;
+						}
+						paddedDimension[2]+=48;
+						break nextEdge;
 					}
 				}
 			}
 		}
-		return true;
+		/*
+		blockInformation.paddedGridBlock[0] = paddedOffset;
+		blockInformation.paddedGridBlock[1] = paddedDimension;
+		blockInformation.padding = padding;
+		 */
+		isIndependent = false;
+		
+		return isIndependent;
 	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
@@ -306,10 +362,13 @@ public class SparkSkeletonization {
 
 		// Build list
 		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
-		List<BlockInformation> blockInformationList = new ArrayList<BlockInformation>();
+		List<BlockInformation> blockInformationList = new LinkedList<BlockInformation>();
 		for (int i = 0; i < gridBlockList.size(); i++) {
 			long[][] currentGridBlock = gridBlockList.get(i);
-			blockInformationList.add(new BlockInformation(currentGridBlock, null, null));
+			long[][] paddedGridBlock = { {currentGridBlock[0][0]-48, currentGridBlock[0][1]-48, currentGridBlock[0][2]-48}, //initialize padding
+										{currentGridBlock[1][0]+96, currentGridBlock[1][1]+96, currentGridBlock[1][2]+96}};
+			long [] padding = {48, 48, 48};
+			blockInformationList.add(new BlockInformation(currentGridBlock, paddedGridBlock, padding, null, null));
 		}
 		return blockInformationList;
 	}
@@ -354,17 +413,13 @@ public class SparkSkeletonization {
 			Boolean needToThinAgain = true;
 			int fullIterations = 0;
 			DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
-			
-			List<Boolean> needToThinAgainPrevious=new ArrayList<Boolean>(Arrays.asList(new Boolean[blockInformationList.size()]));
-			Collections.fill(needToThinAgainPrevious, Boolean.TRUE);
-			
-			while(needToThinAgain) 
+						
+			while(blockInformationList.size()>0) 
 			{
-				needToThinAgain = false;
 				//for(int currentBorder=0; currentBorder<6; currentBorder++) 
 				{// this is one whole iteration
-					needToThinAgain |= skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
-							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList, needToThinAgainPrevious, iteration);
+					blockInformationList = skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
+							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList,iteration);
 					
 					iteration++;
 					
