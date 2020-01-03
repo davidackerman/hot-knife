@@ -26,7 +26,6 @@ import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -136,9 +135,9 @@ public class SparkSkeletonization {
 
 	}
 	
-	public static final List<Boolean> skeletonizationIteration(final JavaSparkContext sc, final String n5Path,
+	public static final Boolean skeletonizationIteration(final JavaSparkContext sc, final String n5Path,
 			final String originalInputDatasetName, final String n5OutputPath, String originalOutputDatasetName, boolean doMedialSurface,
-			final List<BlockInformation> blockInformationList, List<Boolean> blockwiseNeedToThinAgainPrevious, final int iteration) throws IOException {
+			final List<BlockInformation> blockInformationList, final int iteration) throws IOException {
 		
 
 
@@ -230,19 +229,8 @@ public class SparkSkeletonization {
 			
 		});
 		
-		
-		List<Boolean> blockwiseNeedToThinAgainCurrent = needToThinAgainSet.collect();
-		
-		//If it hasn't been thinned in two consecutive iterations then it it's final form is stored in both even and odd so can be removed from future processing
-		int numCurrentBlocks = blockInformationList.size();
-		for(int i=numCurrentBlocks-1; i>=0; i--) {
-			if(blockwiseNeedToThinAgainCurrent.get(i)==false && blockwiseNeedToThinAgainPrevious.get(i)==false) {
-				blockwiseNeedToThinAgainPrevious.remove(i);
-				blockwiseNeedToThinAgainCurrent.remove(i);
-				blockInformationList.remove(i);
-			}
-		}
-		return blockwiseNeedToThinAgainCurrent;
+		Boolean needToThinAgain = needToThinAgainSet.reduce((a,b) -> {return a || b; });
+		return needToThinAgain;
 	}
 
 
@@ -304,17 +292,14 @@ public class SparkSkeletonization {
 			int iteration=0;
 			Boolean needToThinAgain = true;
 			int fullIterations = 0;
-			
-			List<Boolean> blockwiseNeedToThinAgainPrevious=new ArrayList<Boolean>(Arrays.asList(new Boolean[blockInformationList.size()]));
-			Collections.fill(blockwiseNeedToThinAgainPrevious, Boolean.TRUE);
-			
 			DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
-			while(blockInformationList.size()>0) 
+			while(needToThinAgain) 
 			{
+				needToThinAgain = false;
 				//for(int currentBorder=0; currentBorder<6; currentBorder++) 
 				{// this is one whole iteration
-					blockwiseNeedToThinAgainPrevious = skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
-							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList, blockwiseNeedToThinAgainPrevious, iteration);
+					needToThinAgain |= skeletonizationIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
+							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList, iteration);
 					
 					iteration++;
 					
@@ -326,7 +311,7 @@ public class SparkSkeletonization {
 
 				fullIterations++;
 				Date date = new Date();
-				System.out.println(dateFormat.format(date)+" Num Remaining Blocks: "+blockInformationList.size()+", Full iteration complete: "+fullIterations);
+				System.out.println(dateFormat.format(date)+" Full iteration complete: "+fullIterations);
 			}
 			String finalFileName = finalOutputN5DatasetName + '_'+ ((iteration-1)%2==0 ? "even" : "odd");
 			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName));
