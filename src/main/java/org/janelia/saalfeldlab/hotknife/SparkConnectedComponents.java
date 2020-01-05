@@ -470,17 +470,11 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		for (BlockInformation currentBlockInformation : blockInformationList) {
 			Map<Long, Long> currentGlobalIDtoRootIDMap = new HashMap<Long, Long>();
 			for (Long currentEdgeComponentID : currentBlockInformation.edgeComponentIDtoVolumeMap.keySet()) {
-				Long key, value;
-				key = currentEdgeComponentID;
-				if (unionFind.globalIDtoRootID.containsKey(key)) {// Need this check since not all edge objects will be
-																	// connected to neighboring blocks
-					value = unionFind.globalIDtoRootID.get(currentEdgeComponentID);
-					currentGlobalIDtoRootIDMap.put(key, value);
-					rootIDtoVolumeMap.put(value, rootIDtoVolumeMap.getOrDefault(value, 0L) + currentBlockInformation.edgeComponentIDtoVolumeMap.get(key));
-				}
-				else {
-					currentGlobalIDtoRootIDMap.put(key, key);
-				}
+				Long rootID;
+				rootID = unionFind.globalIDtoRootID.getOrDefault(currentEdgeComponentID, currentEdgeComponentID); // Need this check since not all edge objects will be connected to neighboring blocks
+				currentGlobalIDtoRootIDMap.put(currentEdgeComponentID, rootID);
+				rootIDtoVolumeMap.put(rootID, rootIDtoVolumeMap.getOrDefault(rootID, 0L) + currentBlockInformation.edgeComponentIDtoVolumeMap.get(currentEdgeComponentID));
+				
 			}
 			currentBlockInformation.edgeComponentIDtoRootIDmap = currentGlobalIDtoRootIDMap;
 		}
@@ -490,7 +484,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 				Long key = e.getKey();
 				Long value = e.getValue();
 				currentBlockInformation.edgeComponentIDtoRootIDmap.put(key, 
-						currentBlockInformation.edgeComponentIDtoVolumeMap.get(key) <= minimumVolumeCutoff ? 0L : value);
+						rootIDtoVolumeMap.get(value) <= minimumVolumeCutoff ? 0L : value);
 			}
 		}
 		
