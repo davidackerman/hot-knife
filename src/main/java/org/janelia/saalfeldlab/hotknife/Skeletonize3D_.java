@@ -30,8 +30,11 @@ import java.util.Arrays;
 import java.util.List;
 
 import net.imglib2.RandomAccess;
+import net.imglib2.RandomAccessible;
+import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.view.IntervalView;
+import net.imglib2.view.Views;
 
 
 /**
@@ -80,12 +83,11 @@ public class Skeletonize3D_ implements PlugInFilter
 	private int[] eulerLUT;
 	private int[] pointsLUT;
 	
-	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, int currentBorder) {
+	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage) {
 		this.inputImage = inputImage;
 		this.width = (int) this.inputImage.dimension(0);
 		this.height = (int) this.inputImage.dimension(1);
 		this.depth = (int) this.inputImage.dimension(2);
-		this.currentBorder = currentBorder;
 		
 		// Prepare Euler LUT [Lee94]
 		this.eulerLUT = new int[256]; 
@@ -95,7 +97,7 @@ public class Skeletonize3D_ implements PlugInFilter
 		this.pointsLUT = new int[ 256 ];
 		fillnumOfPointsLUT(this.pointsLUT);
 	}
-	
+
 	
 	/* -----------------------------------------------------------------------*/
 	/**
@@ -617,7 +619,7 @@ public class Skeletonize3D_ implements PlugInFilter
 						{
 
 							// check if point is foreground
-							if ( getPixelNoCheck(outputImageRandomAccess, x, y, z) != 1 )
+							if ( getPixelNoCheck(outputImageRandomAccess, x, y, z) == 0 )
 							{
 								continue;         // current point is already background 
 							}

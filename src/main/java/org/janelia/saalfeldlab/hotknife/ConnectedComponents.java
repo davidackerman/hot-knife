@@ -38,7 +38,7 @@ import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedLongType;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.Views;
-
+import net.imglib2.algorithm.neighborhood.*;
 /**
  *
  *
@@ -52,24 +52,27 @@ public class ConnectedComponents {
 	 */
 	public static void main(final String[] args) throws IOException {
 		Set<long[][]> temp = new HashSet<>();
-		final N5FSReader n5 = new N5FSReader("/nrs/saalfeld/FAFB00/v14_align_tps_20170818_dmg.n5");
-		final RandomAccessibleInterval<UnsignedByteType> img = N5Utils.open(n5, "/volumes/predictions/synapses_dt_reblocked/s0");
+		//final N5FSReader n5 = new N5FSReader("/nrs/saalfeld/FAFB00/v14_align_tps_20170818_dmg.n5");
+		//final RandomAccessibleInterval<UnsignedByteType> img = N5Utils.open(n5, "/volumes/predictions/synapses_dt_reblocked/s0");
 
-		final RandomAccessibleInterval<UnsignedByteType> crop = Views.offsetInterval(img, new long[] {100000,65000,3500}, new long[] {64,64,64});
+		final N5FSReader n5 = new N5FSReader("/groups/cosem/cosem/ackermand/hela_cell3_314000_crop_correctBlockSize_analysis.n5/");
+		final RandomAccessibleInterval<UnsignedByteType> crop = N5Utils.open(n5, "mito_minVolume_medialSurface");
+
+		//final RandomAccessibleInterval<UnsignedByteType> crop = Views.offsetInterval(img, new long[] {100000,65000,3500}, new long[] {64,64,64});
 		long t0 = System.currentTimeMillis();
 
-		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(crop, (a, b) -> b.set(a.getInteger() > 100), new BoolType());
+		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(crop, (a, b) -> b.set(a.getInteger() > 0), new BoolType());
 
 		final ArrayImg<UnsignedLongType, LongArray> components = ArrayImgs.unsignedLongs(Intervals.dimensionsAsLongArray(thresholded));
 
-		ConnectedComponentAnalysis.connectedComponents(thresholded, components);
+		ConnectedComponentAnalysis.connectedComponents(thresholded, components,new RectangleShape(1,false));
 		long t1 = System.currentTimeMillis();
 		System.out.println(t1-t0);
 		new ImageJ();
 
 		ImageJFunctions.show(components);
 
-		System.out.println(Arrays.toString(Intervals.dimensionsAsLongArray(img)));
+		//System.out.println(Arrays.toString(Intervals.dimensionsAsLongArray(img)));
 	}
 
 }

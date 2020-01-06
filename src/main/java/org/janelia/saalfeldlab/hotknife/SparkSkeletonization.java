@@ -170,7 +170,6 @@ public class SparkSkeletonization {
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT8, new GzipCompression());
 
-		int currentBorder = iteration%6;
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		
 		JavaRDD<BlockInformation> updatedBlockInformation = rdd.map(blockInformation -> {
@@ -219,7 +218,7 @@ public class SparkSkeletonization {
 					paddedOffset, paddedDimension);
 			}
 
-			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, currentBorder);
+			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage);
 			boolean needToThinAgain = true;
 			if (doMedialSurface) {
 				needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
@@ -231,8 +230,9 @@ public class SparkSkeletonization {
 			blockInformation.needToThinAgainCurrent = needToThinAgain;
 			
 			outputImage = Views.offsetInterval(outputImage, padding, dimension);
-			blockInformation.isIndependent = isBlockIndependent(outputImage, blockInformation);
-			
+			if(!blockInformation.isIndependent) {//if independent, can't become dependent
+				blockInformation.isIndependent = isBlockIndependent(outputImage, blockInformation);
+			}
 			
 			//check if has any on boundary
 			
@@ -272,84 +272,54 @@ public class SparkSkeletonization {
 
 
 	public static boolean isBlockIndependent(IntervalView<UnsignedByteType> block, BlockInformation blockInformation) {
-		boolean isIndependent = true;
 		
 		final long[][] gridBlock = blockInformation.gridBlock;
 		
-		long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
 		long[] dimension = gridBlock[1];
 		
-		long[] paddedOffset = gridBlock[0].clone();
-		long[] paddedDimension = gridBlock[1].clone();
-		
-		long[] padding = {0,0,0};
-
 		RandomAccess<UnsignedByteType> blockRandomAccess = block.randomAccess();
 		List<Long> xEdges = Arrays.asList(0L, dimension[0]-1);
 		List<Long> yEdges = Arrays.asList(0L, dimension[1]-1);
 		List<Long> zEdges = Arrays.asList(0L, dimension[2]-1);
 		for(long x : xEdges) {
-			nextEdge:
 			for(long y=0; y<dimension[1]; y++) {
 				for(long z=0; z<dimension[2]; z++) {
 					blockRandomAccess.setPosition(new long[] {x, y, z});
 					if(blockRandomAccess.get().get()>0) {
-						isIndependent = false;
-						if(x==0) {
-							padding[0] = 48;
-							paddedOffset[0]=offset[0]-48;
-						}
-						paddedDimension[0]+=48;
-						break nextEdge;
+						return false;
 					}
 				}
 			}
 		}
 		
 		for(long y : yEdges) {
-			nextEdge:
 			for(long x=0; x<dimension[0]; x++) {
 				for(long z=0; z<dimension[2]; z++) {
 					blockRandomAccess.setPosition(new long[] {x, y, z});
 					if(blockRandomAccess.get().get()>0) {
-						isIndependent = false;
-						if(y==0) {
-							padding[1] = 48;
-							paddedOffset[1]=offset[1]-48;
-						}
-						paddedDimension[1]+=48;
-						break nextEdge;
+						return false;
 					}
 				}
 			}
 		}
 		
 		for(long z : zEdges) {
-			nextEdge:
 			for(long x=0; x<dimension[0]; x++) {
 				for(long y=0; y<dimension[1]; y++) {
-					blockRandomAccess.setPosition(new long[] {x, y, z});
-					
+					blockRandomAccess.setPosition(new long[] {x, y, z});	
 					if(blockRandomAccess.get().get()>0) {
-						isIndependent = false;
-						if(z==0) {
-							padding[2] = 48;
-							paddedOffset[2]=offset[2]-48;
-						}
-						paddedDimension[2]+=48;
-						break nextEdge;
+						return false;
 					}
 				}
 			}
 		}
-		/*
-		blockInformation.paddedGridBlock[0] = paddedOffset;
-		blockInformation.paddedGridBlock[1] = paddedDimension;
-		blockInformation.padding = padding;
-		 */
-		isIndependent = false;
 		
-		return isIndependent;
+		//If independent, reset padding
+		blockInformation.paddedGridBlock = blockInformation.gridBlock;
+		blockInformation.padding = new long[]{0,0,0};
+		 
+		
+		return true;
 	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
@@ -365,9 +335,9 @@ public class SparkSkeletonization {
 		List<BlockInformation> blockInformationList = new LinkedList<BlockInformation>();
 		for (int i = 0; i < gridBlockList.size(); i++) {
 			long[][] currentGridBlock = gridBlockList.get(i);
-			long[][] paddedGridBlock = { {currentGridBlock[0][0]-48, currentGridBlock[0][1]-48, currentGridBlock[0][2]-48}, //initialize padding
-										{currentGridBlock[1][0]+96, currentGridBlock[1][1]+96, currentGridBlock[1][2]+96}};
-			long [] padding = {48, 48, 48};
+			long[][] paddedGridBlock = { {currentGridBlock[0][0]-49, currentGridBlock[0][1]-49, currentGridBlock[0][2]-49}, //initialize padding
+										{currentGridBlock[1][0]+98, currentGridBlock[1][1]+98, currentGridBlock[1][2]+98}};
+			long [] padding = {49, 49, 49};
 			blockInformationList.add(new BlockInformation(currentGridBlock, paddedGridBlock, padding, null, null));
 		}
 		return blockInformationList;
