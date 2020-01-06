@@ -334,10 +334,11 @@ public class SparkSkeletonization {
 		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
 		List<BlockInformation> blockInformationList = new LinkedList<BlockInformation>();
 		for (int i = 0; i < gridBlockList.size(); i++) {
+			long pad = 50;//I think for doing 6 borders (N,S,E,W,U,B) where we do the 8 indpendent iterations, the furthest a voxel in a block can be affected is from something 48 away, so add 2 more just as extra border
 			long[][] currentGridBlock = gridBlockList.get(i);
-			long[][] paddedGridBlock = { {currentGridBlock[0][0]-49, currentGridBlock[0][1]-49, currentGridBlock[0][2]-49}, //initialize padding
-										{currentGridBlock[1][0]+98, currentGridBlock[1][1]+98, currentGridBlock[1][2]+98}};
-			long [] padding = {49, 49, 49};
+			long[][] paddedGridBlock = { {currentGridBlock[0][0]-pad, currentGridBlock[0][1]-pad, currentGridBlock[0][2]-pad}, //initialize padding
+										{currentGridBlock[1][0]+2*pad, currentGridBlock[1][1]+2*pad, currentGridBlock[1][2]+2*pad}};
+			long [] padding = {pad, pad, pad};
 			blockInformationList.add(new BlockInformation(currentGridBlock, paddedGridBlock, padding, null, null));
 		}
 		return blockInformationList;

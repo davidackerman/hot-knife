@@ -174,7 +174,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		
 		// Compute Thinning	
 		//computeThinSurface(this.inputImage);
-		computeThinImage(this.inputImage);
+		computeMedialSurface(this.inputImage);
 		
 		// Convert image to binary 0-255
 		for(int i = 1; i <= this.inputImage.getSize(); i++)
@@ -185,7 +185,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
 		new ij.ImageJ();
-		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
+		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/thin_ring.tif");
 		//ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
 		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
 		imp.show();
@@ -646,6 +646,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
 							(!isSurfaceEndPoint(neighborhood) || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
 							) {						// we can delete the current point
+						System.out.println(!isSurfaceEndPoint(neighborhood)+" "+(numberOfNeighbors(neighborhood)>=2));
 						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
 						noChange = false;
 					}
