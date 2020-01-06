@@ -717,8 +717,9 @@ public class Skeletonize3D_ implements PlugInFilter
 	boolean isSurfaceEndPoint(byte[] neighbors)
 	{ //Definition 1 in paper
 		
-		List<Character> allowedIndexValues = Arrays.asList((char)(255-240), (char)(255-165), (char)(255-170), (char)(255-204));
-		
+		//List<Character> allowedIndexValues = Arrays.asList((char)(255-240), (char)(255-165), (char)(255-170), (char)(255-204));
+		List<Character> allowedIndexValues = Arrays.asList((char)(51), (char)(15), (char)(85), //non-diagonals
+				(char)(195), (char)(165), (char)(153)); //diagonals; I think the paper is wrong here in which values it says are allowed
 		// Octant SWU
 		char indices [] = new char[8];
 		indices[0] = indexOctantSWU(neighbors);

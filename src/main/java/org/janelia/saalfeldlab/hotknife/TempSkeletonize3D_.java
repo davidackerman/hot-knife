@@ -185,8 +185,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
 		new ij.ImageJ();
-		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/thin_ring.tif");
-		//ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
+		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/thin_ring.tif");
+		ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
 		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
 		imp.show();
 		TempSkeletonize3D_ skeletonize3D = new TempSkeletonize3D_();
@@ -675,8 +675,10 @@ public class TempSkeletonize3D_ implements PlugInFilter
 	boolean isSurfaceEndPoint(byte[] neighbors)
 	{ //Definition 1 in paper
 		
-		List<Character> allowedIndexValues = Arrays.asList((char)(255-240), (char)(255-165), (char)(255-170), (char)(255-204));
+		//List<Character> allowedIndexValues = Arrays.asList((char)(255-240), (char)(255-165), (char)(255-170), (char)(255-204));
 		
+		List<Character> allowedIndexValues = Arrays.asList((char)(51), (char)(15), (char)(85), //non-diagonals
+				(char)(195), (char)(165), (char)(153)); //diagonals
 		// Octant SWU
 		char indices [] = new char[8];
 		indices[0] = indexOctantSWU(neighbors);
