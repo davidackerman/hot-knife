@@ -178,7 +178,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		
 		// Convert image to binary 0-255
 		for(int i = 1; i <= this.inputImage.getSize(); i++)
-			this.inputImage.getProcessor(i).multiply(255);
+		//	this.inputImage.getProcessor(i).multiply(255);
 		
 		this.inputImage.update(ip);
 	} /* end run */
@@ -186,8 +186,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
 		new ij.ImageJ();
 		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/thin_ring.tif");
-		ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
-		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
+		//ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
+		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
 		imp.show();
 		TempSkeletonize3D_ skeletonize3D = new TempSkeletonize3D_();
 		String arg = "";
@@ -646,7 +646,6 @@ public class TempSkeletonize3D_ implements PlugInFilter
 					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
 							(!isSurfaceEndPoint(neighborhood) || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
 							) {						// we can delete the current point
-						System.out.println(!isSurfaceEndPoint(neighborhood)+" "+(numberOfNeighbors(neighborhood)>=2));
 						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
 						noChange = false;
 					}
@@ -659,6 +658,27 @@ public class TempSkeletonize3D_ implements PlugInFilter
 			} // end currentBorder for loop
 		}
 
+		ArrayList <int[]> surfacePoints = new ArrayList<int[]>();
+		for (int z = 0; z < depth; z++)
+		{
+			for (int y = 0; y < height; y++)
+			{
+				for (int x = 0; x < width; x++)						
+				{
+					if ( getPixelNoCheck(outputImage, x, y, z) ==0 )
+					{	
+						continue;         // current point is already background 
+					}
+					final byte[] neighborhood = getNeighborhood(outputImage, x, y, z);
+					if(isSheet(neighborhood)) {
+						surfacePoints.add(new int[] {x,y,z});
+					}
+				}
+			}
+		}
+		for(int[] index : surfacePoints) {
+			setPixel(outputImage, index[0], index[1], index[2], (byte) 2);
+		}
 		IJ.showStatus("Computed thin image.");
 		return unchangedBorders;
 	} /* end computeThinImage */	
@@ -672,6 +692,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 	      }
 		return numberOfNeighbors;
 	}
+	
 	boolean isSurfaceEndPoint(byte[] neighbors)
 	{ //Definition 1 in paper
 		
@@ -698,6 +719,30 @@ public class TempSkeletonize3D_ implements PlugInFilter
 			}
 		}
 		return true;
+	}
+	
+	boolean isSheet(byte[] neighbors)
+	{ //Definition 1 in paper
+		
+		//List<Character> allowedIndexValues = Arrays.asList((char)(255-240), (char)(255-165), (char)(255-170), (char)(255-204));
+		
+		List<Character> allowedIndexValues = Arrays.asList((char)(51), (char)(15), (char)(85), //non-diagonals
+				(char)(195), (char)(165), (char)(153)); //diagonals
+		// Octant SWU
+		char indices [] = new char[8];
+		indices[0] = indexOctantSWU(neighbors);
+		indices[1] = indexOctantSEU(neighbors);
+		indices[2] = indexOctantNWU(neighbors);
+		indices[3] = indexOctantNEU(neighbors);
+		indices[4] = indexOctantSWB(neighbors);
+		indices[5] = indexOctantSEB(neighbors);
+		indices[6] = indexOctantNWB(neighbors);
+		indices[7] = indexOctantNEB(neighbors);
+		for(int octant=0; octant<8; octant++) {
+			if(allowedIndexValues.contains(indices[octant])) //if any of the octants has this pattern, then we consider it a sheet
+				return true;
+		}
+		return false;
 	}
 	
 	/**
