@@ -3,6 +3,7 @@
  */
 package org.janelia.saalfeldlab.hotknife;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 
@@ -12,6 +13,8 @@ import org.janelia.saalfeldlab.hotknife.ops.Multiply;
 import org.janelia.saalfeldlab.hotknife.ops.SimpleGaussRA;
 import org.janelia.saalfeldlab.hotknife.ops.TubenessCenter;
 import org.janelia.saalfeldlab.hotknife.util.Lazy;
+import org.janelia.saalfeldlab.n5.N5FSReader;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
 import bdv.util.BdvFunctions;
 import bdv.util.BdvOptions;
@@ -28,6 +31,7 @@ import net.imglib2.img.basictypeaccess.AccessFlags;
 import net.imglib2.img.imageplus.ImagePlusImgs;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
+import net.imglib2.type.numeric.integer.UnsignedLongType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.view.ExtendedRandomAccessibleInterval;
 import net.imglib2.view.Views;
@@ -70,14 +74,15 @@ public class LazyBehavior {
 
 	/**
 	 * @param args
+	 * @throws IOException 
 	 */
-	public static void main(final String[] args) {
+	public static void main(final String[] args) throws IOException {
 
 		new ImageJ();
 
 		final int scaleSteps = 8;
 		final int octaveSteps = 2;
-		final double[] resolution = new double[]{150,  150,  1000};
+		final double[] resolution = new double[]{1,  1,  1};
 
 		final double[][][] sigmaSeries = sigmaSeries(resolution, octaveSteps, scaleSteps);
 
@@ -90,16 +95,19 @@ public class LazyBehavior {
 					Arrays.toString(sigmaSeries[2][i]));
 		}
 
-//		final ImagePlus imp = IJ.openImage("https://imagej.nih.gov/ij/images/bridge.gif");
-		final ImagePlus imp = IJ.openImage("/home/saalfeld/projects/clay-white-matter/sect18b-s02-clahe.gif");
-		imp.show();
+		final N5FSReader n5 = new N5FSReader("/groups/cosem/cosem/ackermand/hela_cell3_314000_crop_correctBlockSize.n5/");
+		final RandomAccessibleInterval<UnsignedLongType> img = N5Utils.open(n5, "er_cc");
+//		final ImagePlus imp = IJ.openImage("/home/saalfeld/projects/clay-white-matter/sect18b-s02-clahe.gif");
+//		imp.show();
 
-		final RandomAccessibleInterval<UnsignedByteType> img = ImagePlusImgs.from(imp);
+//		final RandomAccessibleInterval<UnsignedByteType> img = ImagePlusImgs.from(imp);
 		final RandomAccessibleInterval<DoubleType> converted =
 				Converters.convert(
 						img,
-						(a, b) -> { b.set(a.getRealDouble()); },
+						(a, b) -> { 
+							b.set(a.getRealDouble()>0 ? 1 : 0); },
 						new DoubleType());
+
 
 		ExtendedRandomAccessibleInterval<DoubleType, RandomAccessibleInterval<DoubleType>> source =
 				Views.extendMirrorSingle(converted);

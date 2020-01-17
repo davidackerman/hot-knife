@@ -77,7 +77,7 @@ public class TubenessCenter<T extends RealType<T> & NativeType<T>> implements Co
 		norms = new double[n];
 
 		for (int d = 0; d < n; ++d) {
-			norms[d] = sigmas[d] / 2.0;
+			norms[d] = 2.0 / sigmas[d];//sigmas[d] / 2.0;
 			final long[] offset = new long[n];
 			offset[d] = -1;
 			for (int e = d; e < n; ++e) {

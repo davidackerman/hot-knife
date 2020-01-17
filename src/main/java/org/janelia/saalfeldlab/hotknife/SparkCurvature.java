@@ -36,6 +36,9 @@ import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.janelia.saalfeldlab.hotknife.ops.CurvatureDGA;
+import org.janelia.saalfeldlab.hotknife.ops.GradientCenter;
+import org.janelia.saalfeldlab.hotknife.ops.SimpleGaussRA;
 import org.janelia.saalfeldlab.hotknife.util.Grid;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
@@ -51,15 +54,21 @@ import org.kohsuke.args4j.Option;
 
 import com.google.common.io.Files;
 
+import ij.IJ;
+import ij.ImageJ;
+import ij.ImagePlus;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
+import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
 import net.imglib2.converter.Converters;
+import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.LongArray;
+import net.imglib2.img.cell.CellImgFactory;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.logic.NativeBoolType;
@@ -67,6 +76,7 @@ import net.imglib2.type.numeric.integer.*;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
+import net.imglib2.view.ExtendedRandomAccessibleInterval;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 
@@ -74,6 +84,7 @@ import net.imglib2.algorithm.neighborhood.DiamondShape;
 import net.imglib2.algorithm.neighborhood.Neighborhood;
 import net.imglib2.algorithm.neighborhood.RectangleShape;
 import net.imglib2.algorithm.neighborhood.Shape;
+
 
 /**
  * Connected components for an entire n5 volume
@@ -94,7 +105,7 @@ public class SparkCurvature {
 		private String inputN5DatasetName = null;
 
 		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
-		private String outputN5DatasetSuffix = "_curvature";
+		private String outputN5DatasetSuffix = "_curvatureTesting";
 
 		public Options(final String[] args) {
 
@@ -152,7 +163,7 @@ public class SparkCurvature {
 
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		
-		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.FLOAT32, new GzipCompression());
+		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
 
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
@@ -163,7 +174,7 @@ public class SparkCurvature {
 			long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
 			//System.out.println(Arrays.toString(offset));
 			long[] dimension = gridBlock[1];
-			int sigma = 2; //2 because need to know if surrounding voxels are removablel
+			int sigma = 50; //2 because need to know if surrounding voxels are removablel
 			int padding = sigma+1;//Since need extra of 1 around each voxel for curvature
 			long[] paddedOffset = new long[]{offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long[] paddedDimension = new long []{dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
@@ -171,190 +182,146 @@ public class SparkCurvature {
 			
 
 			RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName);
-			final RandomAccessibleInterval<FloatType> sourceConverted =
+			
+			final RandomAccessibleInterval<DoubleType> sourceConverted =
 					Converters.convert(
 							source,
-							(a, b) -> { 
-								if(a.getLong()>0) {
-									b.set(1);
-								}
-								else {
-									b.set(0);
-									}},
-							new FloatType());
+							(a, b) -> { b.set(a.getRealDouble()>0 ? 1 : 0);},
+							new DoubleType());
 			
-			final IntervalView<FloatType> sourceCropped = Views.offsetInterval(Views.extendZero(sourceConverted),paddedOffset, paddedDimension);
+			final IntervalView<DoubleType> sourceCropped = Views.offsetInterval(Views.extendZero(sourceConverted),paddedOffset, paddedDimension);
 
-			
-			//IntervalView<FloatType> curvatureImage = Views.offsetInterval(ArrayImgs.floats(paddedDimension),new long[]{0,0,0}, paddedDimension);
-				        
-	        RandomAccess<FloatType> sourceRandomAccess = sourceCropped.randomAccess();
-	        //RandomAccess<FloatType> curvatureImageRandomAccess = curvatureImage.randomAccess();
-	        Map<List<Integer>, Float> curvaturesForBoundaryVoxels = new HashMap<>();
-			IntervalView<FloatType> outputImage = Views.offsetInterval(ArrayImgs.floats(paddedDimension),new long[]{0,0,0}, paddedDimension);
-	        RandomAccess<FloatType> outputImageRandomAccess = outputImage.randomAccess();
-	        
-			for(int x=0; x<paddedDimension[0]; x++) {
-				for(int y=0; y<paddedDimension[1]; y++) {
-					for(int z=0; z<paddedDimension[2]; z++) {
-						int currentPos[] = new int []{x,y,z};
-						sourceRandomAccess.setPosition(currentPos);
-						boolean isObject =  sourceRandomAccess.get().get()==1.0;
+			RandomAccessibleInterval<UnsignedByteType> medialSurface = (RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, inputDatasetName+"_medialSurface");
+			final IntervalView<UnsignedByteType> medialSurfaceCropped = Views.offsetInterval(Views.extendZero(medialSurface),paddedOffset, paddedDimension);
 
-						if(isObject && isBoundaryVoxel(sourceRandomAccess,currentPos)){
-		    				float curvature = computeHessianDeterminant(sourceRandomAccess, currentPos);
-		    				curvaturesForBoundaryVoxels.put(Arrays.stream(currentPos).boxed().collect(Collectors.toList()),
-		    						curvature);
-						}
-					}
-				}
-			}
-			for(Map.Entry<List<Integer>,Float> entries : curvaturesForBoundaryVoxels.entrySet()) {
-				List<Integer> voxelOfInterestPosition = entries.getKey();
-				float voxelOfInterestCurvature = entries.getValue();
-				
-		        Map<List<Integer>, Float> allNeighborhoodCurvatures = new HashMap<>();
-		        Set<List<Integer>> currentVoxelsBeingChecked = new HashSet<>();
-
-		        allNeighborhoodCurvatures.put(voxelOfInterestPosition, voxelOfInterestCurvature);
-		        currentVoxelsBeingChecked.add(voxelOfInterestPosition);
-				for(int i=0; i<sigma;i++) {
-			        Set<List<Integer>> nextVoxelsToCheck = new HashSet<>();
-					for(List<Integer> currentCenterVoxelPosition : currentVoxelsBeingChecked) {
-						for(int dx=-1; dx<=1; dx++) {
-							for(int dy=-1; dy<=1; dy++) {
-								for(int dz=-1; dz<=1; dz++) {
-									if(!(dx==0 && dy==0 && dz==0)) {
-										List<Integer> neighboringVoxelPosition = Arrays.asList(currentCenterVoxelPosition.get(0)+dx, currentCenterVoxelPosition.get(1)+dy, currentCenterVoxelPosition.get(2)+dz);
-										if(curvaturesForBoundaryVoxels.containsKey(neighboringVoxelPosition)) {
-											allNeighborhoodCurvatures.put(neighboringVoxelPosition, curvaturesForBoundaryVoxels.get(neighboringVoxelPosition));
-											nextVoxelsToCheck.add(neighboringVoxelPosition);
-										}
-									}
-								}
-							}
-						}
-					}
-					currentVoxelsBeingChecked = nextVoxelsToCheck;
-				}
-				
-				float averageCurvature = 0;
-				for(float currentCurvature : allNeighborhoodCurvatures.values()) {
-					averageCurvature+=currentCurvature/allNeighborhoodCurvatures.size();
-				}
-				int [] voxelOfInterestPositionAsArray = new int[] { voxelOfInterestPosition.get(0), voxelOfInterestPosition.get(1), voxelOfInterestPosition.get(2)};
-				outputImageRandomAccess.setPosition(voxelOfInterestPositionAsArray);
-				outputImageRandomAccess.get().set(averageCurvature);
-				
-			}
+			IntervalView<DoubleType> output = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+			curvatureAnalysis(sourceCropped, medialSurfaceCropped, output); 
 			
 			
-			if(show) {
-				ImageJFunctions.show(sourceCropped);
-				ImageJFunctions.show(outputImage);
-			}
-				
-
-	
-				
-
-			outputImage = Views.offsetInterval(outputImage,new long[]{padding,padding,padding}, dimension);
-
+			output = Views.offsetInterval(output,new long[]{padding,padding,padding}, dimension);
+			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 
-			N5Utils.saveBlock(outputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
+			N5Utils.saveBlock(output, n5BlockWriter, outputDatasetName, gridBlock[2]);
 			
 		});
 
 	}
-public static boolean isBoundaryVoxel(RandomAccess<FloatType> ra, int[] pos){
-	for(int dx=-1; dx<=1; dx++) {
-		for(int dy=-1; dy<=1; dy++) {
-			for(int dz=-1; dz<=1; dz++) {
-				int newPos [] = new int[]{pos[0]+dx, pos[1]+dy, pos[2]+dz};
-				ra.setPosition(newPos);
-				if(ra.get().get()==0) {
-					return true;
-				}
+	
+	private static double[][][] sigmaSeries(
+			final double[] resolution,
+			final int stepsPerOctave,
+			final int steps) {
+
+		final double factor = Math.pow(2, 1.0 / stepsPerOctave);
+
+		final int n = resolution.length;
+		final double[][][] series = new double[3][steps][n];
+		final double minRes = Arrays.stream(resolution).min().getAsDouble();
+
+		double targetSigma = 0.5;
+		for (int i = 0; i < steps; ++i) {
+			for (int d = 0; d < n; ++d) {
+				series[0][i][d] = targetSigma / resolution[d] * minRes;
+				series[1][i][d] = Math.max(0.5, series[0][i][d]);
+			}
+			targetSigma *= factor;
+		}
+		for (int i = 1; i < steps; ++i) {
+			for (int d = 0; d < n; ++d) {
+				series[2][i][d] = Math.sqrt(Math.max(0, series[1][i][d] * series[1][i][d] - series[1][i - 1][d] * series[1][i - 1][d]));
 			}
 		}
-	}
-	return false;
-}
 
-public static float computeHessianDeterminant(RandomAccess<FloatType> ra, int[] pos) {
-	float[][] hessianMatrix = computeHessianMatrix(ra, pos);
-	float a,b,c,d,e,f,g,h,i;
-	a=hessianMatrix[0][0]; b=hessianMatrix[0][1]; c=hessianMatrix[0][2];
-	d=hessianMatrix[1][0]; e=hessianMatrix[1][1]; f=hessianMatrix[2][2];
-	g=hessianMatrix[2][0]; h=hessianMatrix[2][1]; i=hessianMatrix[2][2];
-	float determinant = a*e*i + b*f*g + c*d*h - c*e*g - b*d*i - a*f*h;
-	return determinant;
-}
-
-public static float[][] computeHessianMatrix(RandomAccess<FloatType> ra, int[] pos){
-	//https://searchcode.com/file/113852753/src-plugins/VIB-lib/features/ComputeCurvatures.java
-	int x = pos[0];
-	int y = pos[1];
-	int z = pos[2];
-	float [][][]neighborhood = new float[3][3][3];
-	for(int dx = -1; dx<=1; dx++) {
-		for(int dy=-1; dy<=1; dy++) {
-			for(int dz=-1; dz<=1; dz++) {
-				ra.setPosition(new int[]{x+dx, y+dy, z+dz});
-				neighborhood[dx+1][dy+1][dz+1]=ra.get().get();
-			}
-		}
-	}
 		
-	float[][] hessianMatrix = new float[3][3]; // zeile, spalte
+		return series;
+	}
+
+	public static void curvatureAnalysis(RandomAccessibleInterval<DoubleType> converted, RandomAccessibleInterval<UnsignedByteType> medialSurface, RandomAccessibleInterval<DoubleType> output) {
+		final int scaleSteps = 11;
+		final int octaveSteps = 2;
+		final double[] resolution = new double[]{1,  1,  1};
+		
+		long[] paddedDimension = new long[] {converted.dimension(0), converted.dimension(1), converted.dimension(2)};
+		IntervalView<DoubleType> smoothed = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+
+		IntervalView<DoubleType> minimumLaplacian = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+		
+		IntervalView<DoubleType> e1 = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+		IntervalView<DoubleType> e2 = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+		IntervalView<DoubleType> e3 = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+
+		
+		final double[][][] sigmaSeries = sigmaSeries(resolution, octaveSteps, scaleSteps);
+	/*	
+		for (int i = 0; i < scaleSteps; ++i) {
+
+		
+			System.out.println(
+					i + ": " +
+					Arrays.toString(sigmaSeries[0][i]) + " : " +
+					Arrays.toString(sigmaSeries[1][i]) + " : " +
+					Arrays.toString(sigmaSeries[2][i]));
+		}
+		*/
+			
+		ExtendedRandomAccessibleInterval<DoubleType, RandomAccessibleInterval<DoubleType>> source =
+				Views.extendMirrorSingle(converted);
+		final RandomAccessible[] gradients = new RandomAccessible[converted.numDimensions()];
+		boolean show = false;
 	
-	x=1; y=1; z=1;//to center it for calculating hessian
-	float temp = 2 * neighborhood[x][y][z];
+		for (int i = 0; i < scaleSteps; ++i) {
+			final SimpleGaussRA<DoubleType> op = new SimpleGaussRA<>(sigmaSeries[2][i]);
+			op.setInput(source);
+			op.run(smoothed);
+			source = Views.extendMirrorSingle(smoothed);
+		
+			System.out.println(i);
+			/* gradients */
+			for (int d = 0; d < converted.numDimensions(); ++d) {
+				final GradientCenter<DoubleType> gradientOp =
+						new GradientCenter<>(
+								Views.extendBorder(smoothed),
+								d,
+								sigmaSeries[0][i][d]);
+				final IntervalView<DoubleType> gradient = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+				gradientOp.accept(gradient);
+				gradients[d] = Views.extendZero(gradient);
+			}
+			
+			/* tubeness */
+			CurvatureDGA<DoubleType> curvatureOp = new CurvatureDGA<>(gradients, medialSurface, minimumLaplacian, sigmaSeries[0][i]);
+			//curvatureOp.accept(output);
+			curvatureOp.getEigenvalues(output);//, e1, e2, e3);
+			if (show && i>12) {
+				ImageJ ij = new ImageJ();
+				ImagePlus imp = ImageJFunctions.show(smoothed);
+			//	imp.setDimensions(1, 300, 1);
+				imp = ImageJFunctions.show(e1);
+			//	imp.setDimensions(1, 300, 1);
+			//	imp.setDisplayRange(-1, 1);
+				imp = ImageJFunctions.show(e2);
+			//	imp.setDimensions(1, 300, 1);
+			//	imp.setDisplayRange(-1, 1);
+				imp = ImageJFunctions.show(e3);
+			//	imp.setDimensions(1, 300, 1);
+			//	imp.setDisplayRange(-1, 1);
+			//	IJ.run(imp, "Merge Channels...", "c1=Image 1 c2=Image 2 c3=Image 3 c4=Image 0 create keep");
+				ImageJFunctions.show(output);
+			}
+		}
+		
+	}
 	
-	// xx
-	hessianMatrix[0][0] = neighborhood[x + 1][ y][ z] - temp + neighborhood[x - 1][ y][ z];
-	
-	// yy
-	hessianMatrix[1][1] = neighborhood[x][ y + 1][ z] - temp + neighborhood[x][ y - 1][ z];
-	
-	// zz
-	hessianMatrix[2][2] = neighborhood[x][ y][ z + 1] - temp + neighborhood[x][ y][ z - 1];
-	
-	// xy
-	hessianMatrix[0][1] = hessianMatrix[1][0] =
-	    (
-	        (neighborhood[x + 1][ y + 1][ z] - neighborhood[x - 1][ y + 1][ z]) / 2
-	        -
-	        (neighborhood[x + 1][ y - 1][z] - neighborhood[x - 1][ y - 1][ z]) / 2
-	        ) / 2;
-	
-	// xz
-	hessianMatrix[0][2] = hessianMatrix[2][0] =
-	    (
-	        (neighborhood[x + 1][ y][ z + 1] - neighborhood[x - 1][ y][ z + 1]) / 2
-	        -
-	        (neighborhood[x + 1][ y][ z - 1] - neighborhood[x - 1][ y][ z - 1]) / 2
-	        ) / 2;
-	
-	// yz
-	hessianMatrix[1][2] = hessianMatrix[2][1] =
-	    (
-	        (neighborhood[x][ y + 1][ z + 1] - neighborhood[x][ y - 1][ z + 1]) / 2
-	        -
-	        (neighborhood[x][ y + 1][ z - 1] - neighborhood[x][ y - 1][ z - 1]) / 2
-	        ) / 2;
-	return hessianMatrix;
-}
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
 			final String inputN5DatasetName) throws IOException {
-		// Get block attributes
+		//Get block attributes
 		N5Reader n5Reader = new N5FSReader(inputN5Path);
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
 		final int[] blockSize = attributes.getBlockSize();
 		final long[] outputDimensions = attributes.getDimensions();
-
-		// Build list
+		
+		//Build list
 		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
 		List<BlockInformation> blockInformationList = new ArrayList<BlockInformation>();
 		for (int i = 0; i < gridBlockList.size(); i++) {
@@ -364,7 +331,6 @@ public static float[][] computeHessianMatrix(RandomAccess<FloatType> ra, int[] p
 		return blockInformationList;
 	}
 
-	
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 
