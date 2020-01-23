@@ -36,7 +36,8 @@ import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.hotknife.ops.CurvatureDGA;
+import org.ejml.data.DMatrixRMaj;
+import org.ejml.dense.row.decomposition.eig.SymmetricQRAlgorithmDecomposition_DDRM;
 import org.janelia.saalfeldlab.hotknife.ops.GradientCenter;
 import org.janelia.saalfeldlab.hotknife.ops.SimpleGaussRA;
 import org.janelia.saalfeldlab.hotknife.util.Grid;
@@ -57,7 +58,10 @@ import com.google.common.io.Files;
 import ij.IJ;
 import ij.ImageJ;
 import ij.ImagePlus;
+import it.unimi.dsi.fastutil.doubles.DoubleArrays;
+import it.unimi.dsi.fastutil.doubles.DoubleComparator;
 import net.imglib2.Cursor;
+import net.imglib2.IterableInterval;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
@@ -163,7 +167,9 @@ public class SparkCurvature {
 
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		
-		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.createDataset(outputDatasetName+"_sheetness", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.createDataset(outputDatasetName+"_meanCurvature", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.createDataset(outputDatasetName+"_gaussianCurvature", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
 
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
@@ -182,27 +188,40 @@ public class SparkCurvature {
 			
 
 			RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName);
-			
 			final RandomAccessibleInterval<DoubleType> sourceConverted =
 					Converters.convert(
 							source,
 							(a, b) -> { b.set(a.getRealDouble()>0 ? 1 : 0);},
 							new DoubleType());
 			
-			final IntervalView<DoubleType> sourceCropped = Views.offsetInterval(Views.extendZero(sourceConverted),paddedOffset, paddedDimension);
-
+			final IntervalView<DoubleType> sourceCropped = Views.offsetInterval(Views.extendZero(sourceConverted), paddedOffset, paddedDimension);
+			
+			RandomAccessibleInterval<UnsignedLongType> sourceUnchanging = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName);
+			final RandomAccessibleInterval<DoubleType> sourceConvertedUnchanging =
+					Converters.convert(
+							sourceUnchanging,
+							(a, b) -> { b.set(a.getRealDouble()>0 ? 1 : 0);},
+							new DoubleType());
+			final IntervalView<DoubleType> unchangingSourceCropped = Views.offsetInterval(Views.extendZero(sourceConvertedUnchanging), paddedOffset, paddedDimension);
+			
 			RandomAccessibleInterval<UnsignedByteType> medialSurface = (RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, inputDatasetName+"_medialSurface");
 			final IntervalView<UnsignedByteType> medialSurfaceCropped = Views.offsetInterval(Views.extendZero(medialSurface),paddedOffset, paddedDimension);
 
-			IntervalView<DoubleType> output = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
-			curvatureAnalysis(sourceCropped, medialSurfaceCropped, output); 
-			
-			
-			output = Views.offsetInterval(output,new long[]{padding,padding,padding}, dimension);
+			IntervalView<DoubleType> sheetness = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+			IntervalView<DoubleType> meanCurvature = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+			IntervalView<DoubleType> gaussianCurvature = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+
+			curvatureAnalysis(sourceCropped, unchangingSourceCropped, medialSurfaceCropped, sheetness, meanCurvature, gaussianCurvature, new long[]{padding,padding,padding}, dimension); 
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
-
-			N5Utils.saveBlock(output, n5BlockWriter, outputDatasetName, gridBlock[2]);
+			sheetness = Views.offsetInterval(sheetness,new long[]{padding,padding,padding}, dimension);			
+			N5Utils.saveBlock(sheetness, n5BlockWriter, outputDatasetName+"_sheetness", gridBlock[2]);
+			
+			meanCurvature = Views.offsetInterval(meanCurvature,new long[]{padding,padding,padding}, dimension);			
+			N5Utils.saveBlock(meanCurvature, n5BlockWriter, outputDatasetName+"_meanCurvature", gridBlock[2]);
+			
+			gaussianCurvature = Views.offsetInterval(gaussianCurvature,new long[]{padding,padding,padding}, dimension);			
+			N5Utils.saveBlock(gaussianCurvature, n5BlockWriter, outputDatasetName+"_gaussianCurvature", gridBlock[2]);
 			
 		});
 
@@ -237,7 +256,11 @@ public class SparkCurvature {
 		return series;
 	}
 
-	public static void curvatureAnalysis(RandomAccessibleInterval<DoubleType> converted, RandomAccessibleInterval<UnsignedByteType> medialSurface, RandomAccessibleInterval<DoubleType> output) {
+	public static void curvatureAnalysis(RandomAccessibleInterval<DoubleType> converted, 
+			RandomAccessibleInterval<DoubleType> unchangingSourceCropped, RandomAccessibleInterval<UnsignedByteType> medialSurface, 
+			RandomAccessibleInterval<DoubleType> sheetness,
+			RandomAccessibleInterval<DoubleType> meanCurvature, 
+			RandomAccessibleInterval<DoubleType> gaussianCurvature, long[] padding, long[] dimension) {
 		final int scaleSteps = 11;
 		final int octaveSteps = 2;
 		final double[] resolution = new double[]{1,  1,  1};
@@ -247,13 +270,8 @@ public class SparkCurvature {
 
 		IntervalView<DoubleType> minimumLaplacian = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
 		
-		IntervalView<DoubleType> e1 = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
-		IntervalView<DoubleType> e2 = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
-		IntervalView<DoubleType> e3 = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
-
-		
 		final double[][][] sigmaSeries = sigmaSeries(resolution, octaveSteps, scaleSteps);
-	/*	
+		
 		for (int i = 0; i < scaleSteps; ++i) {
 
 		
@@ -263,10 +281,9 @@ public class SparkCurvature {
 					Arrays.toString(sigmaSeries[1][i]) + " : " +
 					Arrays.toString(sigmaSeries[2][i]));
 		}
-		*/
-			
+		
 		ExtendedRandomAccessibleInterval<DoubleType, RandomAccessibleInterval<DoubleType>> source =
-				Views.extendMirrorSingle(converted);
+				Views.extendZero(converted);
 		final RandomAccessible[] gradients = new RandomAccessible[converted.numDimensions()];
 		boolean show = false;
 	
@@ -274,8 +291,8 @@ public class SparkCurvature {
 			final SimpleGaussRA<DoubleType> op = new SimpleGaussRA<>(sigmaSeries[2][i]);
 			op.setInput(source);
 			op.run(smoothed);
-			source = Views.extendMirrorSingle(smoothed);
-		
+			source = Views.extendZero(smoothed);
+
 			System.out.println(i);
 			/* gradients */
 			for (int d = 0; d < converted.numDimensions(); ++d) {
@@ -290,27 +307,237 @@ public class SparkCurvature {
 			}
 			
 			/* tubeness */
-			CurvatureDGA<DoubleType> curvatureOp = new CurvatureDGA<>(gradients, medialSurface, minimumLaplacian, sigmaSeries[0][i]);
-			//curvatureOp.accept(output);
-			curvatureOp.getEigenvalues(output);//, e1, e2, e3);
+			if(i!=6) {
+				getCurvatureInformation(converted,null, gradients, medialSurface, minimumLaplacian, 
+					sheetness, null, null,false, sigmaSeries[0][i],padding, dimension);
+			}
+			else {
+				//ImageJ ij = new ImageJ();
+				//ImageJFunctions.show(unchangingSourceCropped);
+				getCurvatureInformation(converted,unchangingSourceCropped, gradients, medialSurface, minimumLaplacian, 
+						sheetness, meanCurvature, gaussianCurvature,true, sigmaSeries[0][i],padding, dimension);
+			}
+			
 			if (show && i>12) {
 				ImageJ ij = new ImageJ();
 				ImagePlus imp = ImageJFunctions.show(smoothed);
 			//	imp.setDimensions(1, 300, 1);
-				imp = ImageJFunctions.show(e1);
-			//	imp.setDimensions(1, 300, 1);
-			//	imp.setDisplayRange(-1, 1);
-				imp = ImageJFunctions.show(e2);
-			//	imp.setDimensions(1, 300, 1);
-			//	imp.setDisplayRange(-1, 1);
-				imp = ImageJFunctions.show(e3);
-			//	imp.setDimensions(1, 300, 1);
 			//	imp.setDisplayRange(-1, 1);
 			//	IJ.run(imp, "Merge Channels...", "c1=Image 1 c2=Image 2 c3=Image 3 c4=Image 0 create keep");
-				ImageJFunctions.show(output);
+			//	ImageJFunctions.show(output);
 			}
 		}
 		
+	}
+	
+	public static <T> void getCurvatureInformation(final RandomAccessibleInterval<DoubleType> converted, 
+			final RandomAccessibleInterval<DoubleType> unchangingSourceCropped,
+			final RandomAccessible<DoubleType>[] gradients, 
+			final RandomAccessible<UnsignedByteType> medialSurface, 
+			final RandomAccessible<DoubleType> minimumLaplacian, 
+			final RandomAccessible <DoubleType> sheetness,
+			final RandomAccessibleInterval<DoubleType> meanCurvature, final RandomAccessibleInterval<DoubleType> gaussianCurvature, 
+			boolean getSurfaceCurvatures, 
+			final double[] sigmaSeries, long[] padding, long[] dimension) {
+
+		final int n = gradients[0].numDimensions();
+		final RandomAccessible<DoubleType>[][] gradientsA = new RandomAccessible[n][n];
+		final RandomAccessible<DoubleType>[][] gradientsB = new RandomAccessible[n][n];
+		
+		double[] norms = new double[n];
+
+		for (int d = 0; d < n; ++d) {
+			norms[d] = 2.0 / sigmaSeries[d];//sigmas[d] / 2.0;
+			final long[] offset = new long[n];
+			offset[d] = -1;
+			for (int e = d; e < n; ++e) {
+				gradientsA[d][e] = Views.offset(gradients[e], offset);
+				gradientsB[d][e] = Views.translate(gradients[e], offset);
+			}
+		}
+		
+		final Cursor<DoubleType>[][] a = new Cursor[n][n];
+		final Cursor<DoubleType>[][] b = new Cursor[n][n];
+		for (int d = 0; d < n; ++d) {
+			for (int e = d; e < n; ++e) {
+				a[d][e] = Views.flatIterable(Views.interval(gradientsA[d][e], converted)).cursor();
+				b[d][e] = Views.flatIterable(Views.interval(gradientsB[d][e], converted)).cursor();
+			}
+		}
+		
+		IterableInterval<DoubleType> temp = Views.flatIterable(converted);
+	
+		final Cursor<DoubleType> sourceCursor = Views.flatIterable(converted).cursor();
+		
+		final Cursor<DoubleType> sheetnessCursor = Views.flatIterable(Views.interval(sheetness, converted)).cursor();
+
+		final Cursor<UnsignedByteType> medialSurfaceCursor = Views.flatIterable(Views.interval(medialSurface, converted)).cursor();
+		final Cursor<DoubleType> minimumLaplacianCursor = Views.flatIterable(Views.interval(minimumLaplacian, converted)).cursor();
+
+		final DMatrixRMaj hessian = new DMatrixRMaj(n, n);
+		final SymmetricQRAlgorithmDecomposition_DDRM eigen = new SymmetricQRAlgorithmDecomposition_DDRM(false);//TODO: SWITCH TRUE TO FALSE IF WE DON'T NEED EIGENVECTORS!!!!!
+		final double[] eigenvalues = new double[n];
+
+		final int n1 = n - 1;
+		final double oneOverN1 = 1.0 / n1;
+		int newCount = 0;
+		int updatedCount = 0;
+A:		while (sourceCursor.hasNext()) {
+			/* TODO Is test if n == 1 and set to 1 meaningful? */
+
+			final DoubleType tsource = sourceCursor.next();
+			
+			final DoubleType tsheetnessCursor = sheetnessCursor.next();
+			
+			final UnsignedByteType tmedialSurface = medialSurfaceCursor.next();
+			final DoubleType tminimumLaplacian = minimumLaplacianCursor.next();
+
+			for (int d = 0; d < n; ++d) {
+				for (int e = d; e < n; ++e) {
+					final double hde = (b[d][e].next().getRealDouble() - a[d][e].next().getRealDouble()) * norms[e];
+//					final double hde = (b[d][e].next().getRealDouble() - a[d][e].next().getRealDouble());
+					hessian.set(d, e, hde);
+					hessian.set(e, d, hde);
+				}
+			}
+			
+			//final T Tsheetness = sheetnessCursor.next();
+			if(tmedialSurface.getRealDouble()>0 && isWithinOutputBlock(new long [] {sourceCursor.getLongPosition(0), sourceCursor.getLongPosition(1), sourceCursor.getLongPosition(2)}, padding, dimension)) {
+
+				eigen.decompose(hessian);
+				DMatrixRMaj largestEigenvector;
+				double largestEigenvalue=-1;
+				
+				for (int d = 0; d < n; ++d)
+					eigenvalues[d] = eigen.getEigenvalue(d).getReal();
+				
+				DoubleArrays.quickSort(eigenvalues, absDoubleComparator);
+				
+				double tubeness = 0;
+				
+				 
+				// http://www.cim.mcgill.ca/~shape/publications/miccai05b.pdf
+				if(eigenvalues[2]>0) {
+					continue A;
+				}
+				
+				double laplacian = hessian.get(0,0)+ hessian.get(1,1) + hessian.get(2,2);
+
+				if(laplacian<tminimumLaplacian.getRealDouble()) {
+					if(tminimumLaplacian.getRealDouble()==0) {
+						newCount++;
+					}
+					else {
+						updatedCount++;
+					}
+				//	System.out.println(tminimumLaplacian.getRealDouble()+" "+laplacian);
+					double Rsheet = Math.abs(eigenvalues[1]/eigenvalues[2]);
+					double alpha = 0.5;
+					double sheetEnhancementTerm = Math.exp(-Rsheet*Rsheet/(2*alpha*alpha));
+					double Rblob = Math.abs(2*Math.abs(eigenvalues[2])-Math.abs(eigenvalues[1])-Math.abs(eigenvalues[0]))/Math.abs(eigenvalues[2]);
+					double beta = 0.5;
+					double blobEliminationTerm = 1-Math.exp(-Rblob*Rblob/(2*beta*beta));
+					
+					double equation1 = sheetEnhancementTerm*blobEliminationTerm;
+					tminimumLaplacian.setReal( laplacian);
+					tsheetnessCursor.setReal(equation1);
+					
+				}
+			}		
+		}
+		
+		System.out.println("Num new: "+newCount + ", Num updated: "+updatedCount+", Total: "+(newCount+updatedCount));
+		
+		if (getSurfaceCurvatures) {
+			sourceCursor.reset();
+			final RandomAccess<DoubleType> sourceRandomAccess = unchangingSourceCropped.randomAccess();
+			final Cursor<DoubleType> meanCurvatureCursor = Views.flatIterable(Views.interval(meanCurvature, converted)).cursor();
+			final Cursor<DoubleType> gaussianCurvatureCursor = Views.flatIterable(Views.interval(gaussianCurvature, converted)).cursor();
+
+			while (sourceCursor.hasNext()) {
+				/* TODO Is test if n == 1 and set to 1 meaningful? */
+	
+				final DoubleType tsource = sourceCursor.next();
+				final DoubleType tmeanCurvature = meanCurvatureCursor.next();
+				final DoubleType tgaussianCurvature = gaussianCurvatureCursor.next();
+	
+				for (int d = 0; d < n; ++d) {
+					for (int e = d; e < n; ++e) {
+						final double hde = (b[d][e].next().getRealDouble() - a[d][e].next().getRealDouble()) * norms[e];
+						hessian.set(d, e, hde);
+						hessian.set(e, d, hde);
+					}
+				}
+				
+				if(isBoundaryVoxel(sourceRandomAccess, new long [] {sourceCursor.getIntPosition(0), sourceCursor.getIntPosition(1), sourceCursor.getIntPosition(2)}, padding, dimension)) {
+	
+					eigen.decompose(hessian);
+				
+					
+					for (int d = 0; d < n; ++d)
+						eigenvalues[d] = eigen.getEigenvalue(d).getReal();
+					
+					DoubleArrays.quickSort(eigenvalues, absDoubleComparator);
+
+					if (eigenvalues[2]<0) {
+						eigenvalues[0]*=-1;
+						eigenvalues[1]*=-1;
+						tmeanCurvature.setReal((eigenvalues[0]+eigenvalues[1])/2.0);
+						tgaussianCurvature.setReal(eigenvalues[0]*eigenvalues[1]);
+					}
+					/*if(eigenvalues[2]>0) {
+						System.out.println("greater than 0");
+						DoubleArrays.quickSort(eigenvalues, absDoubleComparator);
+					
+						tgaussianCurvature.setReal(1);//(eigenvalues[0]*eigenvalues[1]);
+					}
+					else {
+						tgaussianCurvature.setReal(-1);//(eigenvalues[0]*eigenvalues[1]);
+					}*/
+				}
+			}
+		}
+	}
+	
+	static DoubleComparator absDoubleComparator = new DoubleComparator() {
+
+		@Override
+		public int compare(final double k1, final double k2) {
+
+			final double absK1 = Math.abs(k1);
+			final double absK2 = Math.abs(k2);
+
+			return absK1 == absK2 ? 0 : absK1 < absK2 ? -1 : 1;
+		}
+	};
+	
+	public static boolean isWithinOutputBlock(long [] sourcePosition, long [] padding, long [] dimension) {
+		for(int i =0; i<3; i++) {
+			if( !(sourcePosition[i]>=padding[i] && sourcePosition[i]<padding[i]+dimension[i])) {
+				return false;
+			}
+		}
+		return true;		
+	}
+	
+	public static boolean isBoundaryVoxel(RandomAccess<DoubleType> ra, long[] sourcePosition, long [] padding, long[] dimension){
+		ra.setPosition(sourcePosition);
+		if(ra.get().getRealDouble()>0) {
+			for(int dx=-1; dx<=1; dx++) {
+				for(int dy=-1; dy<=1; dy++) {
+					for(int dz=-1; dz<=1; dz++) {
+						long newPos [] = new long[]{sourcePosition[0]+dx, sourcePosition[1]+dy, sourcePosition[2]+dz};
+						ra.setPosition(newPos);
+						if(ra.get().getRealDouble()==0) {
+							ra.setPosition(sourcePosition);
+							return true;
+						}
+					}
+				}
+			}
+			ra.setPosition(sourcePosition);
+		}
+		return false;
 	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
@@ -359,7 +586,7 @@ public class SparkCurvature {
 
 		String finalOutputN5DatasetName = null;
 		for (String currentOrganelle : organelles) {
-			finalOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix();
+			finalOutputN5DatasetName = currentOrganelle;// + options.getOutputN5DatasetSuffix();
 			
 			// Create block information list
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
