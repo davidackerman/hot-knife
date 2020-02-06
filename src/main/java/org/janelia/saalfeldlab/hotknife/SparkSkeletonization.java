@@ -223,36 +223,30 @@ public class SparkSkeletonization {
 			}
 
 			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]});
-		/*	if(skeletonize3D.isMedialSurfaceBlockIndependent()) {
-				System.out.println("yeahhhhhhhhhhhhhhhhhhhhhhhh");
-			}
-			*/
-			boolean needToThinAgain = true;
-			startClock = System.currentTimeMillis();
+	
+			boolean needToThinAgain = false;
+			IntervalView<UnsignedByteType> croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
 			if (doMedialSurface) {
-				needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
+				if(!blockInformation.isIndependent) {
+					needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
+					blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
+					if(blockInformation.isIndependent) {//then can finish it
+						croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
+						skeletonize3D = new Skeletonize3D_(croppedOutputImage, new int[]{0, 0, 0});
+						while(needToThinAgain) {
+							needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
+						}
+					}
+				}
 			}
 			else {
 				needToThinAgain = skeletonize3D.computeSkeletonIteration();
+				croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
 			}
-			endClock = System.currentTimeMillis();
-			//System.out.println(endClock-startClock);
+
 
 			blockInformation.needToThinAgainCurrent = needToThinAgain;
-			if(!blockInformation.isIndependent) {
-				blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
-				if(blockInformation.isIndependent) {
-					blockInformation.paddedGridBlock = blockInformation.gridBlock;
-					blockInformation.padding = new long[]{0,0,0};
-					System.out.println("yoooooooooooooooooooooooooo\nyooooooooooooooo\nyoooooooooooo");
-				}
-			}
-			
-			outputImage = Views.offsetInterval(outputImage, padding, dimension);
-	/*		if(!blockInformation.isIndependent) {//if independent, can't become dependent
-				blockInformation.isIndependent = isBlockIndependent(outputImage, blockInformation);
-			}
-		*/	
+
 			//check if has any on boundary
 			
 			
@@ -261,7 +255,7 @@ public class SparkSkeletonization {
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 
-			N5Utils.saveBlock(outputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
+			N5Utils.saveBlock(croppedOutputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
 
 			return blockInformation;
 			
