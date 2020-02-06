@@ -186,8 +186,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
 		new ij.ImageJ();
 		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/thin_ring.tif");
-		//ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
-		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
+		ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
+		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
 		imp.show();
 		TempSkeletonize3D_ skeletonize3D = new TempSkeletonize3D_();
 		String arg = "";
@@ -293,24 +293,24 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							// check 6-neighbors if point is a border point of type currentBorder
 							boolean isBorderPoint = false;
 							// North
-							if( currentBorder == 1 && N(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 3 && N(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// South
-							if( currentBorder == 2 && S(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 4 && S(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// East
-							if( currentBorder == 3 && E(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 6 && E(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// West
-							if( currentBorder == 4 && W(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 5 && W(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							if(outputImage.getSize() > 1)
 							{
 								// Up							
-								if( currentBorder == 5 && U(outputImage, x, y, z) <= 0 )
+								if( currentBorder == 1 && U(outputImage, x, y, z) <= 0 )
 									isBorderPoint = true;
 								// Bottom
-								if( currentBorder == 6 && B(outputImage, x, y, z) <= 0 )
+								if( currentBorder == 2 && B(outputImage, x, y, z) <= 0 )
 									isBorderPoint = true;
 							}
 							if( !isBorderPoint )
@@ -546,23 +546,26 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		iterations = 0;
 		// Loop through the image several times until there is no change.
 		int unchangedBorders = 0;
-		while( unchangedBorders < 6 )  // loop until no change for all the six border types
+		//while( unchangedBorders < 6 )  // loop until no change for all the six border types
+		for(int i=0;i<3;i++)
 		{						
 			unchangedBorders = 0;
 			iterations++;
 			for( int currentBorder = 1; currentBorder <= 6; currentBorder++)
-			{
+			{ if(i==3 && currentBorder==2) break;
 				IJ.showStatus("Thinning iteration " + iterations + " (" + currentBorder +"/6 borders) ...");
 
 				boolean noChange = true;				
 				
-				// Loop through the image.				 
+				// Loop through the image.		
 				for (int z = 0; z < depth; z++)
 				{
+
 					for (int y = 0; y < height; y++)
 					{
 						for (int x = 0; x < width; x++)						
 						{
+
 
 							// check if point is foreground
 							if ( getPixelNoCheck(outputImage, x, y, z) != 1 )
@@ -576,13 +579,13 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							if( currentBorder == 3 && N(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// South
-							if( currentBorder == 4 && S(outputImage, x, y, z) <= 0 )
+							if( currentBorder ==4 && S(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// East
-							if( currentBorder == 5 && E(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 6 && E(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// West
-							if( currentBorder == 6 && W(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 5 && W(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							if(outputImage.getSize() > 1)
 							{
@@ -600,7 +603,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							
 							final byte[] neighborhood = getNeighborhood(outputImage, x, y, z);
 
-							if( isEndPoint( outputImage, x, y, z)  || isSurfaceEndPoint(neighborhood))
+							if( isSurfaceEndPoint(neighborhood))
 							{ //check it again anyway but just saves some time
 								continue;
 							}
@@ -632,7 +635,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							simpleBorderPoints.add(index);
 						}
 					}					
-					IJ.showProgress(z, this.depth);				
+					//IJ.showProgress(y, this.depth);				
 				}							
 
 
@@ -643,11 +646,17 @@ public class TempSkeletonize3D_ implements PlugInFilter
 					index = simpleBorderPoint;
 					final byte[] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
 					// Check if border points is simple			        
+					if(index[0]==23 && index[1]==32 && index[2]==13) {
+						System.out.println("yooo");
+					}
+					if(index[0]==23 && index[1]==34 && index[2]==13) System.out.println("noooo");
 					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
-							(!isSurfaceEndPoint(neighborhood) || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
+							(!isSurfaceEndPoint(neighborhood))// || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
 							) {						// we can delete the current point
 						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
 						noChange = false;
+						if(index[0]==23 && index[1]==32 && index[2]==13) System.out.println("remove yooo");
+						if(index[0]==23 && index[1]==34 && index[2]==13) System.out.println("remove noooo");
 					}
 				}
 

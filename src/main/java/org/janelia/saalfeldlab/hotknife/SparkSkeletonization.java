@@ -190,6 +190,8 @@ public class SparkSkeletonization {
 			N5Reader n5BlockReader = null;
 			
 			IntervalView<UnsignedByteType> outputImage = null;
+			
+			long startClock, endClock;
 			if(iteration==0 ) {
 				n5BlockReader = new N5FSReader(n5Path);
 				RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, originalInputDatasetName);
@@ -201,14 +203,16 @@ public class SparkSkeletonization {
 
 				final Cursor<UnsignedLongType> sourceCroppedCursor = sourceCropped.cursor();
 				final Cursor<UnsignedByteType> outputImageCursor = outputImage.cursor();
-
+				startClock = System.currentTimeMillis();
 				while(sourceCroppedCursor.hasNext()) {
 					UnsignedLongType v1 = sourceCroppedCursor.next();
 					UnsignedByteType v2 = outputImageCursor.next();
 					if(v1.get()>0) {
 						v2.set(1);
 					}
-				}	
+				}
+				endClock = System.currentTimeMillis();
+				//System.out.println("loop "+(endClock-startClock));
 			}
 			else {
 				n5BlockReader = new N5FSReader(n5OutputPath);
@@ -218,22 +222,37 @@ public class SparkSkeletonization {
 					paddedOffset, paddedDimension);
 			}
 
-			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage);
+			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]});
+		/*	if(skeletonize3D.isMedialSurfaceBlockIndependent()) {
+				System.out.println("yeahhhhhhhhhhhhhhhhhhhhhhhh");
+			}
+			*/
 			boolean needToThinAgain = true;
+			startClock = System.currentTimeMillis();
 			if (doMedialSurface) {
 				needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
 			}
 			else {
 				needToThinAgain = skeletonize3D.computeSkeletonIteration();
 			}
+			endClock = System.currentTimeMillis();
+			//System.out.println(endClock-startClock);
 
 			blockInformation.needToThinAgainCurrent = needToThinAgain;
-			
-			outputImage = Views.offsetInterval(outputImage, padding, dimension);
-			if(!blockInformation.isIndependent) {//if independent, can't become dependent
-				blockInformation.isIndependent = isBlockIndependent(outputImage, blockInformation);
+			if(!blockInformation.isIndependent) {
+				blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
+				if(blockInformation.isIndependent) {
+					blockInformation.paddedGridBlock = blockInformation.gridBlock;
+					blockInformation.padding = new long[]{0,0,0};
+					System.out.println("yoooooooooooooooooooooooooo\nyooooooooooooooo\nyoooooooooooo");
+				}
 			}
 			
+			outputImage = Views.offsetInterval(outputImage, padding, dimension);
+	/*		if(!blockInformation.isIndependent) {//if independent, can't become dependent
+				blockInformation.isIndependent = isBlockIndependent(outputImage, blockInformation);
+			}
+		*/	
 			//check if has any on boundary
 			
 			

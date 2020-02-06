@@ -71,7 +71,7 @@ public class Skeletonize3D_ implements PlugInFilter
 
     /** number of iterations thinning took */
 	private int iterations;
-	private int padding;
+	private int[] padding;
 	
 	private int currentBorder;
 	
@@ -83,11 +83,12 @@ public class Skeletonize3D_ implements PlugInFilter
 	private int[] eulerLUT;
 	private int[] pointsLUT;
 	
-	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage) {
+	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, int[] padding) {
 		this.inputImage = inputImage;
 		this.width = (int) this.inputImage.dimension(0);
 		this.height = (int) this.inputImage.dimension(1);
 		this.depth = (int) this.inputImage.dimension(2);
+		this.padding = padding; 
 		
 		// Prepare Euler LUT [Lee94]
 		this.eulerLUT = new int[256]; 
@@ -139,24 +140,24 @@ public class Skeletonize3D_ implements PlugInFilter
 					// check 6-neighbors if point is a border point of type currentBorder
 					boolean isBorderPoint = false;
 					// North
-					if( currentBorder == 0 && N(outputImageRandomAccess, x, y, z) <= 0 )
+					if( currentBorder == 2 && N(outputImageRandomAccess, x, y, z) <= 0 )
 						isBorderPoint = true;
 					// South
-					if( currentBorder == 1 && S(outputImageRandomAccess, x, y, z) <= 0 )
+					if( currentBorder == 3 && S(outputImageRandomAccess, x, y, z) <= 0 )
 						isBorderPoint = true;
 					// East
-					if( currentBorder == 2 && E(outputImageRandomAccess, x, y, z) <= 0 )
+					if( currentBorder == 5 && E(outputImageRandomAccess, x, y, z) <= 0 )
 						isBorderPoint = true;
 					// West
-					if( currentBorder == 3 && W(outputImageRandomAccess, x, y, z) <= 0 )
+					if( currentBorder == 4 && W(outputImageRandomAccess, x, y, z) <= 0 )
 						isBorderPoint = true;
 					if(inputImage.dimension(2) > 0)
 					{
 						// Up							
-						if( currentBorder == 4 && U(outputImageRandomAccess, x, y, z) <= 0 )
+						if( currentBorder == 0 && U(outputImageRandomAccess, x, y, z) <= 0 )
 							isBorderPoint = true;
 						// Bottom
-						if( currentBorder == 5 && B(outputImageRandomAccess, x, y, z) <= 0 )
+						if( currentBorder == 1 && B(outputImageRandomAccess, x, y, z) <= 0 )
 							isBorderPoint = true;
 					}
 					if( !isBorderPoint )
@@ -204,7 +205,7 @@ public class Skeletonize3D_ implements PlugInFilter
 			for ( int[] index : subvolumeSimpleBorderPoints) {
 					// Check if border points is simple
 					byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
-					if (isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT )) {
+					if (isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT ) && isEndPoint( outputImageRandomAccess, index[0], index[1], index[2])) {
 						setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
 						needToThinAgain |= true; //if thinned, then need to check all again
 					}
@@ -254,16 +255,16 @@ public class Skeletonize3D_ implements PlugInFilter
 					// check 6-neighbors if point is a border point of type currentBorder
 					boolean isBorderPoint = false;
 					// North
-					if( currentBorder == 0 && N(outputImageRandomAccess, x, y, z) <= 0 )
+					if( currentBorder == 1 && N(outputImageRandomAccess, x, y, z) <= 0 )
 						isBorderPoint = true;
 					// South
-					if( currentBorder == 1 && S(outputImageRandomAccess, x, y, z) <= 0 )
+					if( currentBorder == 0 && S(outputImageRandomAccess, x, y, z) <= 0 )
 						isBorderPoint = true;
 					// East
-					if( currentBorder == 2 && E(outputImageRandomAccess, x, y, z) <= 0 )
+					if( currentBorder == 3 && E(outputImageRandomAccess, x, y, z) <= 0 )
 						isBorderPoint = true;
 					// West
-					if( currentBorder == 3 && W(outputImageRandomAccess, x, y, z) <= 0 )
+					if( currentBorder == 2 && W(outputImageRandomAccess, x, y, z) <= 0 )
 						isBorderPoint = true;
 					if(inputImage.dimension(2) > 1)
 					{
@@ -337,9 +338,9 @@ public class Skeletonize3D_ implements PlugInFilter
 				}
 				if (canRemoveThisPointIfIndependentOfBoundary){
 					setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
-					if(index[0]>=padding && index[0]<width-padding 
-						&& index[1]>=padding && index[1]<height-padding
-						&& index[2]>=padding && index[2]<depth-padding) {
+					if(index[0]>=padding[0] && index[0]<width-padding[0] 
+						&& index[1]>=padding[1] && index[1]<height-padding[1]
+						&& index[2]>=padding[2] && index[2]<depth-padding[2]) {
 							needToThinAgain = true; //if thinned, then need to check all again
 					}
 				}
@@ -627,24 +628,24 @@ public class Skeletonize3D_ implements PlugInFilter
 							// check 6-neighbors if point is a border point of type currentBorder
 							boolean isBorderPoint = false;
 							// North
-							if( currentBorder == 0 && N(outputImageRandomAccess, x, y, z) <= 0 )
+							if( currentBorder == 2 && N(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// South
-							if( currentBorder == 1 && S(outputImageRandomAccess, x, y, z) <= 0 )
+							if( currentBorder == 3 && S(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// East
-							if( currentBorder == 2 && E(outputImageRandomAccess, x, y, z) <= 0 )
+							if( currentBorder == 5 && E(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// West
-							if( currentBorder == 3 && W(outputImageRandomAccess, x, y, z) <= 0 )
+							if( currentBorder == 4 && W(outputImageRandomAccess, x, y, z) <= 0 )
 								isBorderPoint = true;
 							if(inputImage.dimension(2) > 0)
 							{
 								// Up							
-								if( currentBorder == 4 && U(outputImageRandomAccess, x, y, z) <= 0 )
+								if( currentBorder == 0 && U(outputImageRandomAccess, x, y, z) <= 0 )
 									isBorderPoint = true;
 								// Bottom
-								if( currentBorder == 5 && B(outputImageRandomAccess, x, y, z) <= 0 )
+								if( currentBorder == 1 && B(outputImageRandomAccess, x, y, z) <= 0 )
 									isBorderPoint = true;
 							}
 							if( !isBorderPoint )
@@ -654,7 +655,7 @@ public class Skeletonize3D_ implements PlugInFilter
 							
 							final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
 
-							if( isEndPoint( outputImageRandomAccess, x, y, z)  || isSurfaceEndPoint(neighborhood))
+							if(isSurfaceEndPoint(neighborhood))
 							{ //check it again anyway but just saves some time
 								continue;
 							}
@@ -678,7 +679,8 @@ public class Skeletonize3D_ implements PlugInFilter
 							index[0] = x;
 							index[1] = y;
 							index[2] = z;
-							simpleBorderPoints.get((x%2)+(y%2)*2+(z%2)*4).add(index);
+							//simpleBorderPoints.get((x%2)+(y%2)*2+(z%2)*4).add(index);
+							simpleBorderPoints.get(0).add(index);
 						}
 					}					
 				}							
@@ -689,9 +691,9 @@ public class Skeletonize3D_ implements PlugInFilter
 				for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
 					for (int[] index : subvolumeSimpleBorderPoints) {			
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
-					// Check if border points is simple			        
+					// Check if border points is simple
 					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
-							(!isSurfaceEndPoint(neighborhood) || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
+							(!isSurfaceEndPoint(neighborhood))//condition 4 in paper
 							) {						// we can delete the current point
 						setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
 						needToThinAgain |= true;
@@ -703,6 +705,51 @@ public class Skeletonize3D_ implements PlugInFilter
 		
 		
 	} /* end computeThinImage */	
+	
+	public boolean isAnyBorder(RandomAccess<UnsignedByteType> outputImageRandomAccess, int x, int y, int z) {
+		return (U(outputImageRandomAccess,x,y,z)<=0 || B(outputImageRandomAccess,x,y,z)<=0 || N(outputImageRandomAccess,x,y,z)<=0 || S(outputImageRandomAccess,x,y,z)<=0 || W(outputImageRandomAccess,x,y,z)<=0 || E(outputImageRandomAccess,x,y,z)<=0);
+	}
+	public boolean isMedialSurfaceBlockIndependent() {
+		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();		
+		List<Integer> xEdges = Arrays.asList(padding[0], width-padding[0]-1);
+		List<Integer> yEdges = Arrays.asList(padding[1], height-padding[1]-1);
+		List<Integer> zEdges = Arrays.asList(padding[2], depth-padding[2]-1);
+		for(int x : xEdges) {
+			for(int y=yEdges.get(0); y<=yEdges.get(1); y++) {
+				for(int z=zEdges.get(0); z<=zEdges.get(1); z++) {
+					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
+					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
+					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
+					if(isSimplePoint(neighborhood) && !isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+				}
+			}
+		}
+		
+		for(int y : yEdges) {
+			for(int x=xEdges.get(0); x<=xEdges.get(1); x++) {
+				for(int z=zEdges.get(0); z<=zEdges.get(1); z++) {
+					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
+					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
+					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
+					if(isSimplePoint(neighborhood) && !isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+				}
+			}
+		}
+		
+		for(int z : zEdges) {
+			for(int x=xEdges.get(0); x<=xEdges.get(1); x++) {
+				for(int y=yEdges.get(0); y<=yEdges.get(1); y++) {
+					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
+					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
+					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
+					if(isSimplePoint(neighborhood) && !isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+				}
+			}
+		}
+		 
+		//If it made it all the way through, then all points on edge of block are done being thinned so it is independent
+		return true;
+	}
 	
 	int numberOfNeighbors(byte[] neighborhood) {
 		int numberOfNeighbors = -1;
