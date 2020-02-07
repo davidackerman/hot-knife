@@ -72,6 +72,7 @@ public class Skeletonize3D_ implements PlugInFilter
     /** number of iterations thinning took */
 	private int iterations;
 	private int[] padding;
+	private int[] paddedOffset;
 	
 	private int currentBorder;
 	
@@ -83,12 +84,17 @@ public class Skeletonize3D_ implements PlugInFilter
 	private int[] eulerLUT;
 	private int[] pointsLUT;
 	
-	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, int[] padding) {
+	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, int[] padding, int[] paddedOffset) {
 		this.inputImage = inputImage;
 		this.width = (int) this.inputImage.dimension(0);
 		this.height = (int) this.inputImage.dimension(1);
 		this.depth = (int) this.inputImage.dimension(2);
 		this.padding = padding; 
+		//just in case it's negative padding
+		this.paddedOffset = paddedOffset;
+		this.paddedOffset[0]=Math.abs(this.paddedOffset[0]);
+		this.paddedOffset[1]=Math.abs(this.paddedOffset[1]);
+		this.paddedOffset[2]=Math.abs(this.paddedOffset[2]);
 		
 		// Prepare Euler LUT [Lee94]
 		this.eulerLUT = new int[256]; 
@@ -193,8 +199,22 @@ public class Skeletonize3D_ implements PlugInFilter
 					index[2] = z;
 					//8 independent subvolumes https://www.mathworks.com/matlabcentral/fileexchange/43400-skeleton3d
 					//shouldn't necessarily matter order they are deleted
-					int subvolumeIndex = (x%2) + (y%2)*2 + (z%2)*4;
-					simpleBorderPoints.get(subvolumeIndex).add(index);
+					//int subvolumeIndex = (x%2) + (y%2)*2 + (z%2)*4;
+					//simpleBorderPoints.get(subvolumeIndex).add(index);
+					int paddedX = x+paddedOffset[0];
+					int paddedY = y+paddedOffset[1];
+					int paddedZ = z+paddedOffset[2];
+					//simpleBorderPoints.get((x+paddedOffset[0])%2+((y+paddedOffset[1])%2)*2+((z+paddedOffset[2])%2)*4).add(index);
+					if(currentBorder==0 || currentBorder ==1) {
+						simpleBorderPoints.get((paddedX%2) + (paddedY%2)*2 + (paddedZ%2)*4).add(index);
+					}
+					else if(currentBorder==2 || currentBorder==3) {
+						simpleBorderPoints.get((paddedZ%2) + (paddedX%2)*2 + (paddedY%2)*4).add(index);
+
+					}
+					else {
+						simpleBorderPoints.get((paddedY%2) + (paddedZ%2)*2 + (paddedX%2)*4).add(index);
+					}
 				}
 			}					
 		}							
@@ -679,8 +699,22 @@ public class Skeletonize3D_ implements PlugInFilter
 							index[0] = x;
 							index[1] = y;
 							index[2] = z;
-							//simpleBorderPoints.get((x%2)+(y%2)*2+(z%2)*4).add(index);
-							simpleBorderPoints.get(0).add(index);
+							
+							int paddedX = x+paddedOffset[0];
+							int paddedY = y+paddedOffset[1];
+							int paddedZ = z+paddedOffset[2];
+							//simpleBorderPoints.get((x+paddedOffset[0])%2+((y+paddedOffset[1])%2)*2+((z+paddedOffset[2])%2)*4).add(index);
+							if(currentBorder==0 || currentBorder ==1) {
+								simpleBorderPoints.get((paddedX%2) + (paddedY%2)*2 + (paddedZ%2)*4).add(index);
+							}
+							else if(currentBorder==2 || currentBorder==3) {
+								simpleBorderPoints.get((paddedZ%2) + (paddedX%2)*2 + (paddedY%2)*4).add(index);
+
+							}
+							else {
+								simpleBorderPoints.get((paddedY%2) + (paddedZ%2)*2 + (paddedX%2)*4).add(index);
+							}
+							//simpleBorderPoints.get(0).add(index);
 						}
 					}					
 				}							
@@ -720,6 +754,10 @@ public class Skeletonize3D_ implements PlugInFilter
 					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
 					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
+					/*if(x==padding[0] && y==24+padding[1] && z==104+padding[2]) {
+						System.out.println(Arrays.toString(neighborhood));
+						System.out.println(" "+isSimplePoint(neighborhood)+" "+isEulerInvariant( neighborhood, eulerLUT )+" "+!isSurfaceEndPoint(neighborhood));
+					}*/
 					if(isSimplePoint(neighborhood) && !isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
@@ -742,7 +780,7 @@ public class Skeletonize3D_ implements PlugInFilter
 					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
 					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
-					if(isSimplePoint(neighborhood) && !isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					if(isSimplePoint(neighborhood)  && !isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
 		}

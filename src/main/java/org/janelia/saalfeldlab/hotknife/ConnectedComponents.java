@@ -55,8 +55,8 @@ public class ConnectedComponents {
 		//final N5FSReader n5 = new N5FSReader("/nrs/saalfeld/FAFB00/v14_align_tps_20170818_dmg.n5");
 		//final RandomAccessibleInterval<UnsignedByteType> img = N5Utils.open(n5, "/volumes/predictions/synapses_dt_reblocked/s0");
 
-		final N5FSReader n5 = new N5FSReader("/groups/cosem/cosem/ackermand/hela_cell3_314000_crop_correctBlockSize_analysis.n5/");
-		final RandomAccessibleInterval<UnsignedByteType> crop = N5Utils.open(n5, "mito_minVolume_medialSurface");
+		final N5FSReader n5 = new N5FSReader("/groups/cosem/cosem/ackermand/HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5");
+		final RandomAccessibleInterval<UnsignedLongType> crop = N5Utils.open(n5, "mito_cc");
 
 		//final RandomAccessibleInterval<UnsignedByteType> crop = Views.offsetInterval(img, new long[] {100000,65000,3500}, new long[] {64,64,64});
 		long t0 = System.currentTimeMillis();

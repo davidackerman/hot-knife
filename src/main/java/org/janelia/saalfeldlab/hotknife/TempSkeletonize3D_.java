@@ -34,6 +34,8 @@ import java.io.Serializable;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -185,8 +187,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
 		new ij.ImageJ();
-		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/thin_ring.tif");
-		ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
+		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_cc.tif");
+		//ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
 		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
 		imp.show();
 		TempSkeletonize3D_ skeletonize3D = new TempSkeletonize3D_();
@@ -529,6 +531,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 	
 	public int computeMedialSurface(ImageStack outputImage) 
 	{
+		
+		
 		IJ.showStatus("Computing thin image ...");
 						
 		// Prepare Euler LUT [Lee94]
@@ -539,24 +543,36 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		int pointsLUT[] = new int[ 256 ];
 		fillnumOfPointsLUT(pointsLUT);
 		
+		/*byte[] testNeighborhood = {0, 0, 1, 0, 1, 0, 1, 0, 0,
+				0,0,1,0,1,0,1,0,0,
+				0,0,0,1,1,1,0,0,0
+		};*/
+		byte  [] testNeighborhood = {0, 0, 0, 0, 0, 0, 0, 0, 0,
+				1,1,1,1,1,1,1,0,1,
+				0,0,0,0,0,0,0,0,0
+		};
+		
+		System.out.println(!isSurfaceEndPoint(testNeighborhood)+" "+isSimplePoint(testNeighborhood)+" "+isEulerInvariant(testNeighborhood, eulerLUT));
+		
 		// Following Lee[94], save versions (Q) of input image S, while 
 		// deleting each type of border points (R)
-		ArrayList <int[]> simpleBorderPoints = new ArrayList<int[]>();				
+		//ArrayList <int[]> simpleBorderPoints = new ArrayList<int[]>();				
 		
 		iterations = 0;
 		// Loop through the image several times until there is no change.
 		int unchangedBorders = 0;
-		//while( unchangedBorders < 6 )  // loop until no change for all the six border types
-		for(int i=0;i<3;i++)
+		while( unchangedBorders < 6 )  // loop until no change for all the six border types
 		{						
 			unchangedBorders = 0;
 			iterations++;
 			for( int currentBorder = 1; currentBorder <= 6; currentBorder++)
-			{ if(i==3 && currentBorder==2) break;
+			{ //if(i==3 && currentBorder==2) break;
 				IJ.showStatus("Thinning iteration " + iterations + " (" + currentBorder +"/6 borders) ...");
-
+				ArrayList<ArrayList<int[]>> simpleBorderPoints = new ArrayList<ArrayList<int[]>>();
+				for(int i=0; i<8; i++) {
+					simpleBorderPoints.add(new ArrayList<int[]>());
+				}
 				boolean noChange = true;				
-				
 				// Loop through the image.		
 				for (int z = 0; z < depth; z++)
 				{
@@ -632,7 +648,19 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							index[0] = x;
 							index[1] = y;
 							index[2] = z;
-							simpleBorderPoints.add(index);
+							//simpleBorderPoints.add(index);
+							//simpleBorderPoints.get((x%2)+(y%2)*2+(z%2)*4).add(index);
+							if(currentBorder==1 || currentBorder ==2) {
+								simpleBorderPoints.get((x%2) + (y%2)*2 + (z%2)*4).add(index);
+							}
+							else if(currentBorder==3 || currentBorder==4) {
+								simpleBorderPoints.get((z%2) + (x%2)*2 + (y%2)*4).add(index);
+
+							}
+							else {
+								simpleBorderPoints.get((y%2) + (z%2)*2 + (x%2)*4).add(index);
+							}
+
 						}
 					}					
 					//IJ.showProgress(y, this.depth);				
@@ -641,25 +669,41 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 				// sequential re-checking to preserve connectivity when
 				// deleting in a parallel way
-				int[] index;
-				for (int[] simpleBorderPoint : simpleBorderPoints) {
-					index = simpleBorderPoint;
+				//int[] index;
+				//for (int[] simpleBorderPoint : simpleBorderPoints) {
+				//	index = simpleBorderPoint;
+				for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
+				/*	int xyz = 3-(int)Math.ceil(currentBorder/2.0);
+					if(currentBorder%2 ==1) {
+						Collections.sort(subvolumeSimpleBorderPoints, new Comparator<int[]>() {
+						    public int compare(int[] a, int[] b) {
+						        return a[xyz]-b[xyz];
+						    }
+						});
+					}
+					else {
+						Collections.sort(subvolumeSimpleBorderPoints, new Comparator<int[]>() {
+						    public int compare(int[] a, int[] b) {
+						        return b[xyz]-a[xyz];
+						    }
+						});
+					}
+	
+					//System.out.println("heyyyyyyyyyyy");
+					 */
+					for (int[] index : subvolumeSimpleBorderPoints) {	
+						//System.out.println(Arrays.toString(index));
 					final byte[] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
 					// Check if border points is simple			        
-					if(index[0]==23 && index[1]==32 && index[2]==13) {
-						System.out.println("yooo");
-					}
-					if(index[0]==23 && index[1]==34 && index[2]==13) System.out.println("noooo");
+					
 					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
 							(!isSurfaceEndPoint(neighborhood))// || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
 							) {						// we can delete the current point
 						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
 						noChange = false;
-						if(index[0]==23 && index[1]==32 && index[2]==13) System.out.println("remove yooo");
-						if(index[0]==23 && index[1]==34 && index[2]==13) System.out.println("remove noooo");
 					}
 				}
-
+				}
 				if( noChange )
 					unchangedBorders++;
 
@@ -790,7 +834,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 	{
 		byte[] neighborhood = new byte[27];
 		
-		neighborhood[ 0] = getPixel(image, x-1, y-1, z-1);
+ 		neighborhood[ 0] = getPixel(image, x-1, y-1, z-1);
 		neighborhood[ 1] = getPixel(image, x  , y-1, z-1);
 		neighborhood[ 2] = getPixel(image, x+1, y-1, z-1);
 		

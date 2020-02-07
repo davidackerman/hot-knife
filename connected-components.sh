@@ -8,9 +8,9 @@ JAR=$PWD/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkConnectedComponents
 N_NODES=10
 
-INPUTN5PATH='/nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5'
-OUTPUTN5PATH='/groups/cosem/cosem/ackermand/hela_cell3_314000_connected_components_minVolumeCutoff.n5'
-MASKN5PATH='/groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5/'
+INPUTN5PATH='/nrs/cosem/cosem/training/v0003.2/setup27.1/HeLa_Cell2_4x4x4nm/HeLa_Cell2_4x4x4nm_it625000.n5/'
+OUTPUTN5PATH='/groups/cosem/cosem/ackermand/HeLa_Cell2_4x4x4nm_it625000_analysis.n5'
+MASKN5PATH='/groups/cosem/cosem/data/HeLa_Cell2_4x4x4nm/HeLa_Cell2_4x4x4nm.n5/'
 
 ARGV="\
 --inputN5Path '$INPUTN5PATH' \

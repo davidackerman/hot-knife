@@ -53,6 +53,7 @@ import org.kohsuke.args4j.Option;
 
 import com.google.common.io.Files;
 
+import ij.ImageJ;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
@@ -221,18 +222,25 @@ public class SparkSkeletonization {
 					Views.extendValue(source, new UnsignedByteType(0)),
 					paddedOffset, paddedDimension);
 			}
-
-			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]});
+			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
 	
 			boolean needToThinAgain = false;
 			IntervalView<UnsignedByteType> croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
 			if (doMedialSurface) {
 				if(!blockInformation.isIndependent) {
 					needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
-					blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
+				//	if(offset[0]==396  && offset[1]==0 && offset[2]==198) {
+
+						blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
+				//	}
 					if(blockInformation.isIndependent) {//then can finish it
+						//System.out.println("independent blocks: "+Arrays.toString(offset));
+						if(offset[0]==396  && offset[1]==0 && offset[2]==198) {
+							new ImageJ();
+							ImageJFunctions.show(outputImage);
+						}
 						croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
-						skeletonize3D = new Skeletonize3D_(croppedOutputImage, new int[]{0, 0, 0});
+						skeletonize3D = new Skeletonize3D_(croppedOutputImage, new int[]{0, 0, 0}, new int[] {(int) offset[0],(int) offset[1], (int)offset[2]});
 						while(needToThinAgain) {
 							needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
 						}
@@ -349,8 +357,10 @@ public class SparkSkeletonization {
 		for (int i = 0; i < gridBlockList.size(); i++) {
 			long pad = 50;//I think for doing 6 borders (N,S,E,W,U,B) where we do the 8 indpendent iterations, the furthest a voxel in a block can be affected is from something 48 away, so add 2 more just as extra border
 			long[][] currentGridBlock = gridBlockList.get(i);
+			//System.out.println("grid block "+currentGridBlock[0][0]+" "+currentGridBlock[0][1]+" "+currentGridBlock[0][2]+" "+currentGridBlock[1][0]+" "+currentGridBlock[1][1]+" "+currentGridBlock[1][2]);
 			long[][] paddedGridBlock = { {currentGridBlock[0][0]-pad, currentGridBlock[0][1]-pad, currentGridBlock[0][2]-pad}, //initialize padding
 										{currentGridBlock[1][0]+2*pad, currentGridBlock[1][1]+2*pad, currentGridBlock[1][2]+2*pad}};
+			//System.out.println("paddedness "+paddedGridBlock[0][0]+" "+paddedGridBlock[0][1]+" "+paddedGridBlock[0][2]+" "+paddedGridBlock[1][0]+" "+paddedGridBlock[1][1]+" "+paddedGridBlock[1][2]);
 			long [] padding = {pad, pad, pad};
 			blockInformationList.add(new BlockInformation(currentGridBlock, paddedGridBlock, padding, null, null));
 		}
