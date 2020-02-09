@@ -187,7 +187,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
 		new ij.ImageJ();
-		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_cc.tif");
+		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/er_cc.tif");
 		//ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
 		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
 		imp.show();
@@ -649,8 +649,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							index[1] = y;
 							index[2] = z;
 							//simpleBorderPoints.add(index);
-							//simpleBorderPoints.get((x%2)+(y%2)*2+(z%2)*4).add(index);
-							if(currentBorder==1 || currentBorder ==2) {
+							simpleBorderPoints.get((x%2)+(y%2)*2+(z%2)*4).add(index);
+							/*if(currentBorder==1 || currentBorder==2) {
 								simpleBorderPoints.get((x%2) + (y%2)*2 + (z%2)*4).add(index);
 							}
 							else if(currentBorder==3 || currentBorder==4) {
@@ -659,7 +659,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							}
 							else {
 								simpleBorderPoints.get((y%2) + (z%2)*2 + (x%2)*4).add(index);
-							}
+							}*/
 
 						}
 					}					
@@ -673,32 +673,16 @@ public class TempSkeletonize3D_ implements PlugInFilter
 				//for (int[] simpleBorderPoint : simpleBorderPoints) {
 				//	index = simpleBorderPoint;
 				for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
-				/*	int xyz = 3-(int)Math.ceil(currentBorder/2.0);
-					if(currentBorder%2 ==1) {
-						Collections.sort(subvolumeSimpleBorderPoints, new Comparator<int[]>() {
-						    public int compare(int[] a, int[] b) {
-						        return a[xyz]-b[xyz];
-						    }
-						});
-					}
-					else {
-						Collections.sort(subvolumeSimpleBorderPoints, new Comparator<int[]>() {
-						    public int compare(int[] a, int[] b) {
-						        return b[xyz]-a[xyz];
-						    }
-						});
-					}
-	
-					//System.out.println("heyyyyyyyyyyy");
-					 */
 					for (int[] index : subvolumeSimpleBorderPoints) {	
 						//System.out.println(Arrays.toString(index));
 					final byte[] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
+					final byte[] neighborhoodIfRemoved = neighborhood;
+					neighborhoodIfRemoved[13]=0;
 					// Check if border points is simple			        
 					
 					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
-							(!isSurfaceEndPoint(neighborhood))// || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
-							) {						// we can delete the current point
+							isSimplePoint(neighborhoodIfRemoved) && isEulerInvariant( neighborhoodIfRemoved, eulerLUT ))// || numberOfNeighbors(neighborhood)>=2)//condition 4 in paper
+							 {						// we can delete the current point
 						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
 						noChange = false;
 					}
@@ -710,7 +694,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 				simpleBorderPoints.clear();
 			} // end currentBorder for loop
 		}
-
+/*
 		ArrayList <int[]> surfacePoints = new ArrayList<int[]>();
 		for (int z = 0; z < depth; z++)
 		{
@@ -731,7 +715,7 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		}
 		for(int[] index : surfacePoints) {
 			setPixel(outputImage, index[0], index[1], index[2], (byte) 2);
-		}
+		}*/
 		IJ.showStatus("Computed thin image.");
 		return unchangedBorders;
 	} /* end computeThinImage */	

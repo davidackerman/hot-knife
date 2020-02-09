@@ -235,10 +235,10 @@ public class SparkSkeletonization {
 				//	}
 					if(blockInformation.isIndependent) {//then can finish it
 						//System.out.println("independent blocks: "+Arrays.toString(offset));
-						if(offset[0]==396  && offset[1]==0 && offset[2]==198) {
+						/*if(offset[0]==396  && offset[1]==0 && offset[2]==198) {
 							new ImageJ();
 							ImageJFunctions.show(outputImage);
-						}
+						}*/
 						croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
 						skeletonize3D = new Skeletonize3D_(croppedOutputImage, new int[]{0, 0, 0}, new int[] {(int) offset[0],(int) offset[1], (int)offset[2]});
 						while(needToThinAgain) {

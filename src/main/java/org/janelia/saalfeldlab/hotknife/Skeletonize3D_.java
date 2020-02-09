@@ -703,8 +703,8 @@ public class Skeletonize3D_ implements PlugInFilter
 							int paddedX = x+paddedOffset[0];
 							int paddedY = y+paddedOffset[1];
 							int paddedZ = z+paddedOffset[2];
-							//simpleBorderPoints.get((x+paddedOffset[0])%2+((y+paddedOffset[1])%2)*2+((z+paddedOffset[2])%2)*4).add(index);
-							if(currentBorder==0 || currentBorder ==1) {
+							simpleBorderPoints.get((x+paddedOffset[0])%2+((y+paddedOffset[1])%2)*2+((z+paddedOffset[2])%2)*4).add(index);
+							/*if(currentBorder==0 || currentBorder ==1) {
 								simpleBorderPoints.get((paddedX%2) + (paddedY%2)*2 + (paddedZ%2)*4).add(index);
 							}
 							else if(currentBorder==2 || currentBorder==3) {
@@ -713,7 +713,7 @@ public class Skeletonize3D_ implements PlugInFilter
 							}
 							else {
 								simpleBorderPoints.get((paddedY%2) + (paddedZ%2)*2 + (paddedX%2)*4).add(index);
-							}
+							}*/
 							//simpleBorderPoints.get(0).add(index);
 						}
 					}					
@@ -725,10 +725,12 @@ public class Skeletonize3D_ implements PlugInFilter
 				for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
 					for (int[] index : subvolumeSimpleBorderPoints) {			
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, index[0], index[1], index[2]);
+					final byte[] neighborhoodIfRemoved = neighborhood;
+					neighborhoodIfRemoved[13]=0;
 					// Check if border points is simple
 					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
-							(!isSurfaceEndPoint(neighborhood))//condition 4 in paper
-							) {						// we can delete the current point
+							isSimplePoint(neighborhoodIfRemoved) && isEulerInvariant( neighborhoodIfRemoved, eulerLUT ))//condition 4 in paper
+							{						// we can delete the current point
 						setPixel(outputImageRandomAccess, index[0], index[1], index[2], (byte) 0);
 						needToThinAgain |= true;
 					}
@@ -758,7 +760,7 @@ public class Skeletonize3D_ implements PlugInFilter
 						System.out.println(Arrays.toString(neighborhood));
 						System.out.println(" "+isSimplePoint(neighborhood)+" "+isEulerInvariant( neighborhood, eulerLUT )+" "+!isSurfaceEndPoint(neighborhood));
 					}*/
-					if(isSimplePoint(neighborhood) && !isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					if(!isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
 		}
@@ -769,7 +771,7 @@ public class Skeletonize3D_ implements PlugInFilter
 					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
 					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
-					if(isSimplePoint(neighborhood) && !isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					if(!isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
 		}
@@ -780,7 +782,7 @@ public class Skeletonize3D_ implements PlugInFilter
 					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
 					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
-					if(isSimplePoint(neighborhood)  && !isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					if(!isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
 		}
