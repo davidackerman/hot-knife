@@ -193,10 +193,11 @@ public class SparkSkeletonization {
 			IntervalView<UnsignedByteType> outputImage = null;
 			
 			long startClock, endClock;
+			IntervalView<UnsignedLongType> sourceCropped = null;
 			if(iteration==0 ) {
 				n5BlockReader = new N5FSReader(n5Path);
 				RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, originalInputDatasetName);
-				final IntervalView<UnsignedLongType> sourceCropped = Views.offsetInterval(
+				sourceCropped = Views.offsetInterval(
 					Views.extendValue(source, new UnsignedLongType(0)),
 					paddedOffset, paddedDimension);
 				outputImage = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
@@ -248,8 +249,22 @@ public class SparkSkeletonization {
 				}
 			}
 			else {
-				needToThinAgain = skeletonize3D.computeSkeletonIteration();
-				croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
+				if(!blockInformation.isIndependent) {
+					if(iteration==0)		//TODO: The below fix for touching objects by thinning them independently, therebey producing indpependent skeletons will fail in some extreme cases like if the objects are already thin/touching or still touching after an iteration because on the next iteration, they will be treated as one object
+						needToThinAgain = thinEachObjectIndependently(sourceCropped, outputImage, padding, paddedOffset, paddedDimension, needToThinAgain ); //to prevent one skeleton being created for two distinct objects
+					else 
+						needToThinAgain = skeletonize3D.computeSkeletonIteration(); //just do normal thinning
+					blockInformation.isIndependent = skeletonize3D.isSkeletonBlockIndependent();
+					if(blockInformation.isIndependent) {//then can finish it
+						croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
+						skeletonize3D = new Skeletonize3D_(croppedOutputImage, new int[]{0, 0, 0}, new int[] {(int) offset[0],(int) offset[1], (int)offset[2]});
+						while(needToThinAgain) {
+							needToThinAgain = skeletonize3D.computeSkeletonIteration();
+						}
+					}
+				}
+				//needToThinAgain = skeletonize3D.computeSkeletonIteration();
+				//croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
 			}
 
 
@@ -291,6 +306,51 @@ public class SparkSkeletonization {
 		return blockInformationList;
 	}
 
+	public static boolean thinEachObjectIndependently(IntervalView<UnsignedLongType> sourceCropped, IntervalView<UnsignedByteType> outputImage, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean needToThinAgain ){
+		Cursor<UnsignedLongType> sourceCroppedCursor = sourceCropped.cursor();
+		RandomAccess<UnsignedByteType> outputImageRandomAccess = outputImage.randomAccess();
+		
+		Set<Long> objectIDsInBlock = new HashSet();
+		while(sourceCroppedCursor.hasNext()) {
+			long objectID = sourceCroppedCursor.next().get();
+			int [] pos = new int [] {sourceCroppedCursor.getIntPosition(0), sourceCroppedCursor.getIntPosition(1), sourceCroppedCursor.getIntPosition(2)};
+			outputImageRandomAccess.setPosition(pos);
+			outputImageRandomAccess.get().set(0);
+			if (objectID >0)
+				objectIDsInBlock.add(objectID);
+		}
+		
+		IntervalView<UnsignedByteType> current = null;
+		Cursor<UnsignedByteType> currentCursor = null;
+		for(long objectID : objectIDsInBlock) {
+			sourceCroppedCursor.reset();
+			current = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
+			currentCursor = current.cursor();
+			while(sourceCroppedCursor.hasNext()) { //initialize to only look at current object
+				sourceCroppedCursor.next();
+				currentCursor.next();
+				if(sourceCroppedCursor.get().get() == objectID)
+					currentCursor.get().set(1);
+			}
+			
+			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(current, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
+			needToThinAgain |= skeletonize3D.computeSkeletonIteration();
+			
+			//update output
+			currentCursor.reset();
+			while(currentCursor.hasNext()) {
+				currentCursor.next();
+				if(currentCursor.get().get() >0) {
+					int [] pos = new int [] {currentCursor.getIntPosition(0), currentCursor.getIntPosition(1), currentCursor.getIntPosition(2)};
+					outputImageRandomAccess.setPosition(pos);
+					outputImageRandomAccess.get().set(1);
+				}
+			}
+		}
+		
+		return needToThinAgain;
+		
+	}
 
 	public static boolean isBlockIndependent(IntervalView<UnsignedByteType> block, BlockInformation blockInformation) {
 		

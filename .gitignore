@@ -1,3 +1,6 @@
 /target/
 /dconf/
 /hs_err*
+*.sh
+/er_cc_even/
+/cosem_poster/

@@ -293,11 +293,21 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 	 * @param blockInformationList
 	 * @throws IOException
 	 */
-	@SuppressWarnings("unchecked")
 	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
 			final double thresholdIntensityCutoff, int minimumVolumeCutoff, List<BlockInformation> blockInformationList) throws IOException {
+		return blockwiseConnectedComponents(
+				sc, inputN5Path, inputN5DatasetName,
+				outputN5Path,  outputN5DatasetName,maskN5PathName,
+				thresholdIntensityCutoff, minimumVolumeCutoff, blockInformationList, false);	
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
+			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
+			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
+			final double thresholdIntensityCutoff, int minimumVolumeCutoff, List<BlockInformation> blockInformationList, boolean findHoles) throws IOException {
 
 		// Get attributes of input data set
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
@@ -324,30 +334,43 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 			// Read in source block
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-			final RandomAccessibleInterval<UnsignedByteType> sourceInterval = Views.offsetInterval(Views.extendZero(
-					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
-					),offset, dimension);
+			final RandomAccessibleInterval<UnsignedByteType> sourceInterval;
+			if(findHoles) {
+				
+				RandomAccessibleInterval<UnsignedLongType> connectedComponents = Views.offsetInterval(Views.extendZero(
+						(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
+						),offset, dimension);
+				
+				sourceInterval = Converters.convert(connectedComponents,
+						(a, b) -> b.set(a.getLong()==0 ? 255 : 0 ), new UnsignedByteType());
+				
+			}
+			else {
+				sourceInterval = Views.offsetInterval(Views.extendZero(
+						(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
+						),offset, dimension);
 
-			// Read in mask block
-			final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5PathName);
-			final RandomAccessibleInterval<UnsignedByteType> mask = N5Utils.open(n5MaskReaderLocal,
-					"/volumes/masks/foreground");
-			final RandomAccessibleInterval<UnsignedByteType> maskInterval = Views.offsetInterval(Views.extendZero(mask),
-					new long[] { offset[0] / 2, offset[1] / 2, offset[2] / 2 },
-					new long[] { dimension[0] / 2, dimension[1] / 2, dimension[2] / 2 });
-
-			// Mask out appropriate region in source block; need to do it this way rather
-			// than converter since mask is half the size of source
-			Cursor<UnsignedByteType> sourceCursor = Views.flatIterable(sourceInterval).cursor();
-			RandomAccess<UnsignedByteType> maskRandomAccess = maskInterval.randomAccess();
-			while (sourceCursor.hasNext()) {
-				final UnsignedByteType voxel = sourceCursor.next();
-				final long[] positionInMask = { (long) Math.floor(sourceCursor.getDoublePosition(0) / 2),
-						(long) Math.floor(sourceCursor.getDoublePosition(1) / 2),
-						(long) Math.floor(sourceCursor.getDoublePosition(2) / 2) };
-				maskRandomAccess.setPosition(positionInMask);
-				if (maskRandomAccess.get().getRealDouble() == 0) {
-					voxel.setInteger(0);
+				// Read in mask block
+				final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5PathName);
+				final RandomAccessibleInterval<UnsignedByteType> mask = N5Utils.open(n5MaskReaderLocal,
+						"/volumes/masks/foreground");
+				final RandomAccessibleInterval<UnsignedByteType> maskInterval = Views.offsetInterval(Views.extendZero(mask),
+						new long[] { offset[0] / 2, offset[1] / 2, offset[2] / 2 },
+						new long[] { dimension[0] / 2, dimension[1] / 2, dimension[2] / 2 });
+	
+				// Mask out appropriate region in source block; need to do it this way rather
+				// than converter since mask is half the size of source
+				Cursor<UnsignedByteType> sourceCursor = Views.flatIterable(sourceInterval).cursor();
+				RandomAccess<UnsignedByteType> maskRandomAccess = maskInterval.randomAccess();
+				while (sourceCursor.hasNext()) {
+					final UnsignedByteType voxel = sourceCursor.next();
+					final long[] positionInMask = { (long) Math.floor(sourceCursor.getDoublePosition(0) / 2),
+							(long) Math.floor(sourceCursor.getDoublePosition(1) / 2),
+							(long) Math.floor(sourceCursor.getDoublePosition(2) / 2) };
+					maskRandomAccess.setPosition(positionInMask);
+					if (maskRandomAccess.get().getRealDouble() == 0) {
+						voxel.setInteger(0);
+					}
 				}
 			}
 
