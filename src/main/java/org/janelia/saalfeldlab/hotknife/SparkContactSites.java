@@ -78,7 +78,7 @@ public class SparkContactSites {
 		@Option(name = "--maskN5Path", required = true, usage = "mask N5 path, e.g. /groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5")
 		private String maskN5Path = null;
 
-		@Option(name = "--contactDistance", required = false, usage = "Distance for contact site")
+		@Option(name = "--contactDistance", required = false, usage = "Distance for contact site (nm)")
 		private double contactDistance = 10;
 		
 		@Option(name = "--resolution", required = false, usage = "Distance for contact site")
@@ -145,7 +145,8 @@ public class SparkContactSites {
 		n5Writer.createGroup(outputN5DatasetName);
 		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT8, attributes.getCompression());
-		
+		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, organelle1)));
+
 		// Set up rdd to parallelize over blockInformation list and run RDD, which will
 		// return updated block information containing list of components on the edge of
 		// the corresponding block
@@ -235,7 +236,7 @@ public class SparkContactSites {
 	public static final <T extends NativeType<T>> void caclulateObjectContactBoundaries(
 			final JavaSparkContext sc, final String inputN5Path, final String organelle,
 			final String outputN5Path, final String outputN5DatasetName,
-			final double contactDistanceInVoxels, List<BlockInformation> blockInformationList) throws IOException {
+			final double contactDistance, List<BlockInformation> blockInformationList) throws IOException {
 				
 		// Get attributes of input data set
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
@@ -248,7 +249,12 @@ public class SparkContactSites {
 		n5Writer.createGroup(outputN5DatasetName);
 		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
+		double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle);
+		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", pixelResolution);
 		
+		final double contactDistanceInVoxels = contactDistance/pixelResolution[0];
+
+
 		int contactDistanceInVoxelsCeiling=(int)Math.ceil(contactDistanceInVoxels);
 	
 		
@@ -315,7 +321,8 @@ public class SparkContactSites {
 		n5Writer.createGroup(outputN5DatasetName);
 		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT8, attributes.getCompression());
-		
+		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, organelle1)));
+
 		// Set up rdd to parallelize over blockInformation list and run RDD, which will
 		// return updated block information containing list of components on the edge of
 		// the corresponding block
@@ -407,7 +414,6 @@ public class SparkContactSites {
 			});
 		}
 		
-		final double contactDistanceInVoxels = options.getContactDistance()/options.getResolution();
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (String organelle : organelles) {
 			JavaSparkContext sc = new JavaSparkContext(conf);
@@ -415,7 +421,7 @@ public class SparkContactSites {
 			final String organelleBoundaryString = organelle+"_contact_boundary_temp_to_delete";
 			caclulateObjectContactBoundaries(sc, options.getInputN5Path(), organelle,
 					options.getOutputN5Path(), organelleBoundaryString,
-					contactDistanceInVoxels, blockInformationList);
+					options.getContactDistance(), blockInformationList);
 			sc.close();
 		}
 		

@@ -139,6 +139,8 @@ public class SparkGeneralCosemObjectInformation {
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
 		final long[] outputDimensions = attributes.getDimensions();
 		final long outOfBoundsValue = outputDimensions[0]*outputDimensions[1]*outputDimensions[2]+1;
+		double [] pixelResolution = IOHelper.getResolution(n5Reader, inputN5DatasetName);
+
 		// Set up rdd to parallelize over blockInformation list and run RDD, which will
 		// return updated block information containing list of components on the edge of
 		// the corresponding block
@@ -170,7 +172,16 @@ public class SparkGeneralCosemObjectInformation {
 			}
 			
 			Map<Long, long[]> objectIDtoInformationMap = new HashMap<>(); //Volume, Surface Area, com xyz, min xyz, max xyz
-
+			
+			//For surface area
+			List<long[]> voxelsToCheck = new ArrayList(); 
+			voxelsToCheck.add(new long[] {-1, 0, 0});
+			voxelsToCheck.add(new long[] {1, 0, 0});
+			voxelsToCheck.add(new long[] {0, -1, 0});
+			voxelsToCheck.add(new long[] {0, 1, 0});
+			voxelsToCheck.add(new long[] {0, 0, -1});
+			voxelsToCheck.add(new long[] {0, 0, 1});
+			
 			for(long x=1; x<=dimension[0]; x++) {
 				for(long y=1; y<=dimension[1]; y++) {
 					for(long z=1; z<=dimension[2]; z++) {
@@ -179,10 +190,7 @@ public class SparkGeneralCosemObjectInformation {
 						
 						if (currentVoxelValue >0  && currentVoxelValue != outOfBoundsValue ) {
 							
-							boolean isOnSurface = false;
-							if(isSurfaceVoxel(sourceRandomAccess, outOfBoundsValue)){
-								isOnSurface = true;
-							}
+							int surfaceAreaContributionOfVoxelInFaces = getSurfaceAreaContributionOfVoxelInFaces(sourceRandomAccess, outOfBoundsValue, voxelsToCheck);
 							
 							long[] absolutePosition = {x+extendedOffset[0],y+extendedOffset[1],z+extendedOffset[2]};
 							long[] organelleIDs = {-1, -1};
@@ -192,7 +200,7 @@ public class SparkGeneralCosemObjectInformation {
 								organelleIDs[0] = organelle1RandomAccess.get().get();
 								organelleIDs[1] = organelle2RandomAccess.get().get();
 							}
-							addNewVoxelToObjectInformation(objectIDtoInformationMap, currentVoxelValue, absolutePosition, isOnSurface, organelleIDs);
+							addNewVoxelToObjectInformation(objectIDtoInformationMap, currentVoxelValue, absolutePosition, surfaceAreaContributionOfVoxelInFaces, organelleIDs);
 						}
 					}
 				}
@@ -207,21 +215,19 @@ public class SparkGeneralCosemObjectInformation {
 			});
 		
 		System.out.println("Total objects: "+collectedObjectInformation.size());
-		writeData(collectedObjectInformation, outputDirectory, datasetNames);
+		writeData(collectedObjectInformation, outputDirectory, datasetNames, pixelResolution[0]);//Assuming it is isotropic
 	}
 	
-	public static void addNewVoxelToObjectInformation(Map<Long,long[]> objectIDtoInformationMap, long objectID, long[] position, boolean isSurfaceVoxel, long[] organelleIDs) {
+	public static void addNewVoxelToObjectInformation(Map<Long,long[]> objectIDtoInformationMap, long objectID, long[] position, long surfaceAreaContributionOfVoxelInFaces, long[] organelleIDs) {
 		if(!objectIDtoInformationMap.containsKey(objectID)) {
-			objectIDtoInformationMap.put(objectID, new long[]{1,isSurfaceVoxel?1:0,position[0],position[1],position[2],position[0],position[1],position[2],position[0],position[1],position[2], -1, -1});
+			objectIDtoInformationMap.put(objectID, new long[]{1,surfaceAreaContributionOfVoxelInFaces,position[0],position[1],position[2],position[0],position[1],position[2],position[0],position[1],position[2], -1, -1});
 		}
 		else {
 			long[] objectInformation = objectIDtoInformationMap.get(objectID);
 			
-			objectInformation[0]++; //Volume
+			objectInformation[0]+=1; //Volume
 			
-			if(isSurfaceVoxel) { //Surface Area
-			objectInformation[1]++;
-			}
+			objectInformation[1]+=surfaceAreaContributionOfVoxelInFaces;
 			
 			for(int i=0; i<3; i++) {
 				objectInformation[2+i]+=position[i]; //COM (will divide by volume at end)
@@ -260,7 +266,7 @@ public class SparkGeneralCosemObjectInformation {
 	
 	public static boolean isSurfaceVoxel(final RandomAccess<UnsignedLongType> sourceRandomAccess, long outOfBoundsValue ) {
 		long referenceVoxelValue = sourceRandomAccess.get().get();
-		final long sourceRandomAccessPosition[] = {sourceRandomAccess.getLongPosition(0), sourceRandomAccess.getLongPosition(1), sourceRandomAccess.getLongPosition(2)};		
+		final long sourceRandomAccessPosition[] = {sourceRandomAccess.getLongPosition(0), sourceRandomAccess.getLongPosition(1), sourceRandomAccess.getLongPosition(2)};
 		for(int x=-1; x<=1; x++) {
 			for(int y=-1; y<=1; y++) {
 				for(int z=-1; z<=1; z++) {
@@ -279,7 +285,25 @@ public class SparkGeneralCosemObjectInformation {
 	
 	}
 	
-	public static void writeData(Map<Long,long[]> collectedObjectInformation, String outputDirectory, String [] datasetNames) throws IOException {
+	public static int getSurfaceAreaContributionOfVoxelInFaces(final RandomAccess<UnsignedLongType> sourceRandomAccess, long outOfBoundsValue, List<long[]> voxelsToCheck) {
+		long referenceVoxelValue = sourceRandomAccess.get().get();
+		final long sourceRandomAccessPosition[] = {sourceRandomAccess.getLongPosition(0), sourceRandomAccess.getLongPosition(1), sourceRandomAccess.getLongPosition(2)};
+		int surfaceAreaContributionOfVoxelInFaces = 0;
+
+
+		for(long[] currentVoxel : voxelsToCheck) {
+			final long currentPosition[] = {sourceRandomAccessPosition[0]+currentVoxel[0], sourceRandomAccessPosition[1]+currentVoxel[1], sourceRandomAccessPosition[2]+currentVoxel[2]};
+			sourceRandomAccess.setPosition(currentPosition);
+			if(sourceRandomAccess.get().get() != referenceVoxelValue && sourceRandomAccess.get().get() !=outOfBoundsValue) {
+				surfaceAreaContributionOfVoxelInFaces ++;
+			}
+		}
+
+		return surfaceAreaContributionOfVoxelInFaces;	
+	
+	}
+	
+	public static void writeData(Map<Long,long[]> collectedObjectInformation, String outputDirectory, String [] datasetNames, double pixelDimension) throws IOException {
 		if (! new File(outputDirectory).exists()){
 			new File(outputDirectory).mkdirs();
 	    }
@@ -295,22 +319,22 @@ public class SparkGeneralCosemObjectInformation {
 		}
 		FileWriter csvWriter = new FileWriter(outputDirectory+"/"+outputFile+".csv");
 		if(datasetNames.length == 1) {
-			csvWriter.append("Object ID,Volume,Surface Area,COM X,COM Y,COM Z,MIN X,MIN Y,MIN Z,MAX X,MAX Y,MAX Z,,Total Objects\n");
+			csvWriter.append("Object ID,Volume (nm^3),Surface Area (nm^2),COM X (nm),COM Y (nm),COM Z (nm),MIN X (nm),MIN Y (nm),MIN Z (nm),MAX X (nm),MAX Y (nm),MAX Z (nm),,Total Objects\n");
 		}
 		else {
-			csvWriter.append("Object ID,Volume,Surface Area,COM X,COM Y,COM Z,MIN X,MIN Y,MIN Z,MAX X,MAX Y,MAX Z,"+organelle1+" ID,"+organelle2+" ID,,Total Objects\n");
+			csvWriter.append("Object ID,Volume (nm^3),Surface Area (nm^2),COM X (nm),COM Y (nm),COM Z (nm),MIN X (nm),MIN Y (nm),MIN Z (nm),MAX X (nm),MAX Y (nm),MAX Z (nm),"+organelle1+" ID,"+organelle2+" ID,,Total Objects\n");
 		}
 		boolean firstLine = true;
 		for(Entry<Long,long[]> objectIDandInformation: collectedObjectInformation.entrySet()) {
 			String outputString = Long.toString(objectIDandInformation.getKey());
 			long [] objectInformation = objectIDandInformation.getValue();
-			outputString+=","+Long.toString(objectInformation[0]); // volume
-			outputString+=","+Long.toString(objectInformation[1]); //surface area
-			outputString+=","+Float.toString((float)objectInformation[2]/(float)objectInformation[0]); //com x
-			outputString+=","+Float.toString((float)objectInformation[3]/(float)objectInformation[0]); //com y
-			outputString+=","+Float.toString((float)objectInformation[4]/(float)objectInformation[0]); //com z
+			outputString+=","+Double.toString(objectInformation[0]*Math.pow(pixelDimension,3)); // volume
+			outputString+=","+Double.toString(objectInformation[1]*Math.pow(pixelDimension,2)); //surface area
+			outputString+=","+Double.toString(pixelDimension*objectInformation[2]/objectInformation[0]); //com x
+			outputString+=","+Double.toString(pixelDimension*objectInformation[3]/objectInformation[0]); //com y
+			outputString+=","+Double.toString(pixelDimension*objectInformation[4]/objectInformation[0]); //com z
 			for(int i=5;i<11;i++) {
-				outputString+=","+Long.toString(objectInformation[i]);// min and max xyz
+				outputString+=","+Double.toString(objectInformation[i]*pixelDimension);// min and max xyz
 			}
 			if(datasetNames.length>1) {
 				outputString+=","+Long.toString(objectInformation[11])+","+Long.toString(objectInformation[12]);//organelle ids

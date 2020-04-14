@@ -168,8 +168,13 @@ public class SparkCurvature {
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		
 		n5Writer.createDataset(outputDatasetName+"_sheetness", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.setAttribute(outputDatasetName+"_sheetness", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputDatasetName)));
+
 		n5Writer.createDataset(outputDatasetName+"_meanCurvature", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.setAttribute(outputDatasetName+"_meanCurvature", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputDatasetName)));
+
 		n5Writer.createDataset(outputDatasetName+"_gaussianCurvature", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.setAttribute(outputDatasetName+"_gaussianCurvature", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputDatasetName)));
 
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);

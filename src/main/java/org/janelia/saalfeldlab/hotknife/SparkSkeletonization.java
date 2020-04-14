@@ -170,6 +170,7 @@ public class SparkSkeletonization {
 		
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT8, new GzipCompression());
+		n5Writer.setAttribute(outputDatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputDatasetName)));
 
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		

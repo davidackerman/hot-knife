@@ -152,13 +152,16 @@ public class SparkCurvatureOnSurface {
 				blockSize,
 				DataType.UINT8,
 				new GzipCompression());
-		
+		n5Writer.setAttribute(datasetName + "_sheetnessOnSurface_0p50", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, datasetName)));
+
 		n5Writer.createDataset(
 				datasetName + "_sheetnessOnSurface_0p75",
 				dimensions,
 				blockSize,
 				DataType.UINT8,
 				new GzipCompression());
+		n5Writer.setAttribute(datasetName + "_sheetnessOnSurface_0p75", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, datasetName)));
+
 		
 		n5Writer.createDataset(
 				datasetName + "_sheetnessOnSurface_0p90",
@@ -166,6 +169,7 @@ public class SparkCurvatureOnSurface {
 				blockSize,
 				DataType.UINT8,
 				new GzipCompression());
+		n5Writer.setAttribute(datasetName + "_sheetnessOnSurface_0p90", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, datasetName)));
 		
 		n5Writer.createDataset(
 				datasetName + "_sheetnessOnSurface_0p95",
@@ -173,6 +177,7 @@ public class SparkCurvatureOnSurface {
 				blockSize,
 				DataType.UINT8,
 				new GzipCompression());
+		n5Writer.setAttribute(datasetName + "_sheetnessOnSurface_0p95", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, datasetName)));
 		
 		n5Writer.createDataset(
 				datasetName + "_sheetnessOnSurface_0p99",
@@ -180,6 +185,7 @@ public class SparkCurvatureOnSurface {
 				blockSize,
 				DataType.UINT8,
 				new GzipCompression());
+		n5Writer.setAttribute(datasetName + "_sheetnessOnSurface_0p99", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, datasetName)));
 		
 
 		/*

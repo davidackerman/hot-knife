@@ -57,7 +57,9 @@ import net.imglib2.algorithm.morphology.distance.DistanceTransform;
 import net.imglib2.algorithm.morphology.distance.DistanceTransform.DISTANCE_TYPE;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.NativeImg;
+import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.basictypeaccess.array.ByteArray;
 import net.imglib2.type.logic.NativeBoolType;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.integer.*;
@@ -120,8 +122,10 @@ public class SparkLengthAndThickness {
 			final List<BlockInformation> blockInformationList) throws IOException {
 
 		final N5Reader n5Reader = new N5FSReader(n5Path);
-
+		double [] pixelResolution = IOHelper.getResolution(n5Reader, datasetName);
+		
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
+		
 		final long[] dimensions = attributes.getDimensions();
 		final int[] blockSize = attributes.getBlockSize();
 		final int n = dimensions.length;
@@ -298,14 +302,42 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		
 		List<SkeletonInformation> allObjectSkeletonInformation = javaRDDObjectInformation.collect();
 		
+		boolean demo = true;
+		ArrayImg<UnsignedByteType, ByteArray> skeleton =null;
+		RandomAccess<UnsignedByteType> skeletonRandomAccess = null;
+		if(demo) {
+			new ImageJ();
+			skeleton = ArrayImgs.unsignedBytes(new long[] {501,501,501});
+			skeletonRandomAccess = skeleton.randomAccess();
+		}
 		for(SkeletonInformation skeletonInformation : allObjectSkeletonInformation) {
 			Long objectID = skeletonInformation.objectID;			
 			String outputString = objectID+" "+skeletonInformation.longestShortestPathLength+" "+skeletonInformation.radiusMean+" "+skeletonInformation.radiusStd;
 			System.out.println(outputString);
+			if(demo) {
+				/*for(long vertexID : skeletonInformation.vertexRadii.keySet()) {
+					skeletonRandomAccess.setPosition(convertIDtoXYZ(vertexID));
+					skeletonRandomAccess.get().set(128);
+					}*/
+				for(long vertexID : skeletonInformation.longestShortestPath) {
+					skeletonRandomAccess.setPosition(convertIDtoXYZ(vertexID));
+					skeletonRandomAccess.get().set((int)Math.round(skeletonInformation.vertexRadii.get(vertexID)));
+				}
+			}
 		}
 		
-		javaRDDObjectInformation.collect();
+		if(demo) {
+			ImageJFunctions.show(skeleton);
+		}
 		
+	}
+	
+	public static int[] convertIDtoXYZ(long vertexID) {
+		int z = (int)Math.floor((vertexID-1)/(501*501));
+		int y = (int)Math.floor((vertexID-1 - z*(501*501))/501);
+		int x = (int)Math.floor((vertexID-1 - z*(501*501) - y*501));
+		//System.out.println(x+" "+y+" "+z);
+		return new int[] {x,y,z};
 	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
@@ -388,6 +420,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 
 	}
+	
 }
 
 class SkeletonEdge implements Serializable{
@@ -406,7 +439,7 @@ class SkeletonInformation implements Serializable{
 	
 	List<SkeletonEdge> listOfSkeletonEdges;
 	Map<Long,Float> vertexRadii;
-	DijkstraPriorityQueue dpq;
+	HashSet<Long> longestShortestPath;
 	
 	float longestShortestPathLength;
 	float radiusMean;
@@ -416,6 +449,7 @@ class SkeletonInformation implements Serializable{
 		this.objectID = objectID;
 		this.listOfSkeletonEdges = new ArrayList<SkeletonEdge>();
 		this.vertexRadii = new HashMap<Long, Float>();
+		this.longestShortestPath = new HashSet();
 	}
 	
 	public void merge(SkeletonInformation newSkeletonInformation) {
@@ -426,49 +460,52 @@ class SkeletonInformation implements Serializable{
 	public void calculateLongestShortestPath(){
 		Map<Integer, Long> objectVertexIDtoGlobalVertexID = new HashMap<Integer, Long>();
 		Map<Long, Integer> globalVertexIDtoObjectVertexID = new HashMap<Long, Integer>();
-		List<List<Node> > adj = new ArrayList<List<Node> >(); 
 
 		int vObject=0;
 		for (long v : vertexRadii.keySet()) {	
 			objectVertexIDtoGlobalVertexID.put(vObject, v);
-			globalVertexIDtoObjectVertexID.put(v, vObject);
-			
-			List<Node> item = new ArrayList<Node>(); 
-	        adj.add(item);
+			globalVertexIDtoObjectVertexID.put(v, vObject);			
 			vObject++;
 		}
 		
+		Map<List<Integer>,Float> adjacency = new HashMap<>();
 		for (SkeletonEdge skeletonEdge : listOfSkeletonEdges) {	
 			int v1Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV1() );
 			int v2Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV2() );
 			float edgeWeight = skeletonEdge.getEdgeWeight();
 			
-			adj.get(v1Object).add(new Node(v2Object,edgeWeight));
-			adj.get(v2Object).add(new Node(v1Object,edgeWeight));
+			adjacency.put(Arrays.asList(v1Object,v2Object),edgeWeight);
 		}
 		
-		dpq = new DijkstraPriorityQueue(vObject, adj);
-		dpq.calculateLongestShortestPath();
+		FloydWarshall floydWarshall = new FloydWarshall(adjacency, vObject);
+		floydWarshall.calculateLongestShortestPathInformation();
+		longestShortestPathLength = floydWarshall.longestShortestPathLength;
 		
-		float[] radius = new float[vObject];
+		float[] radius = new float[floydWarshall.longestShortestPath.size()];
 		radiusMean = 0;
-		for(Integer currentVObjectID : dpq.longestShortestPath) {
+		
+		int count = 0;
+		for(Integer currentVObjectID : floydWarshall.longestShortestPath) {
 			long currentVGlobalID = objectVertexIDtoGlobalVertexID.get(currentVObjectID);
+			longestShortestPath.add(currentVGlobalID);
+			
+			
 			float currentRadius = vertexRadii.get(currentVGlobalID);
 
 			radiusMean += currentRadius;
-			radius[currentVObjectID] = currentRadius;
+			radius[count] = currentRadius;
+			count++;
 		}
-		
-		radiusMean /= dpq.longestShortestPathNumVertices;
+		radiusMean /= floydWarshall.longestShortestPathNumVertices;
 		
 		radiusStd=0;
 		for(float currentRadius : radius) {
 			float diff = (radiusMean-currentRadius);
 			radiusStd+=diff*diff;
 		}
-		radiusMean = (float) Math.sqrt(radiusStd/dpq.longestShortestPathNumVertices);
+		radiusStd = (float) Math.sqrt(radiusStd/(floydWarshall.longestShortestPathNumVertices-1));
 	}
+	
 }
 
 //Class to represent a node in the graph 

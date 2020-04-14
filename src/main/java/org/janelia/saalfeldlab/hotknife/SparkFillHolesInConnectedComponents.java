@@ -284,6 +284,7 @@ public class SparkFillHolesInConnectedComponents {
 				n5Writer.createGroup(outputN5DatasetName);
 				n5Writer.createDataset(outputN5DatasetName, attributes.getDimensions(), blockSize,
 						org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
+				n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputN5DatasetName)));
 
 				
 				// Set up rdd to parallelize over blockInformation list and run RDD, which will
