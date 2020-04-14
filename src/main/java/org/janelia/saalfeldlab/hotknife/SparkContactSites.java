@@ -26,9 +26,6 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
-import java.util.stream.Stream;
-
-import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -44,7 +41,6 @@ import org.kohsuke.args4j.Option;
 
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
-import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.Img;
@@ -63,26 +59,23 @@ public class SparkContactSites {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
-		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /path/to/segmented/data.n5")
 		private String inputN5Path = null;
 
-		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /path/to/output/data.n5")
 		private String outputN5Path = null;
 
-		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
+		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. organelle")
 		private String inputN5DatasetName = null;
 
-		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
+		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be organelle1_to_organelle2_cc")
 		private String outputN5DatasetSuffix = "";
 
-		@Option(name = "--maskN5Path", required = true, usage = "mask N5 path, e.g. /groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5")
+		@Option(name = "--maskN5Path", required = true, usage = "mask N5 path, e.g. /path/to/input/mask.n5")
 		private String maskN5Path = null;
 
-		@Option(name = "--contactDistance", required = false, usage = "Distance for contact site (nm)")
+		@Option(name = "--contactDistance", required = false, usage = "Distance from orgnelle for contact site (nm)")
 		private double contactDistance = 10;
-		
-		@Option(name = "--resolution", required = false, usage = "Distance for contact site")
-		private String resolution = "4";
 
 		public Options(final String[] args) {
 
@@ -123,115 +116,22 @@ public class SparkContactSites {
 		public double getContactDistance() {
 			return contactDistance;
 		}
-		
-		public double getResolution() {
-			return Double.parseDouble(resolution);
-		}
 	}
 	
-	public static final <T extends NativeType<T>> void calculateContactSitesUsingPredictedDistances(
-			final JavaSparkContext sc, final String inputN5Path, final String organelle1, final String organelle2,
-			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
-			final double contactDistance, List<BlockInformation> blockInformationList) throws IOException {
-				
-		// Get attributes of input data set
-		final N5Reader n5Reader = new N5FSReader(inputN5Path);
-		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(organelle1);
-		final int[] blockSize = attributes.getBlockSize();
-		final long[] outputDimensions = attributes.getDimensions();
-
-		// Create output dataset
-		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
-		n5Writer.createGroup(outputN5DatasetName);
-		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
-				org.janelia.saalfeldlab.n5.DataType.UINT8, attributes.getCompression());
-		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, organelle1)));
-
-		// Set up rdd to parallelize over blockInformation list and run RDD, which will
-		// return updated block information containing list of components on the edge of
-		// the corresponding block
-		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
-		rdd.foreach(currentBlockInformation -> {
-			// Get information for reading in/writing current block
-			long[][] gridBlock = currentBlockInformation.gridBlock;
-			long[] offset = gridBlock[0];
-			long[] dimension = gridBlock[1];
-
-			// Read in source block
-			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);			
-			try{
-			final RandomAccessibleInterval<FloatType> sourceIntervalOrganelle1 = Converters.convert(
-					(RandomAccessibleInterval<UnsignedByteType>)Views.offsetInterval(Views.extendZero(
-							(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, organelle1)),
-							offset, dimension),
-					(a, b) -> {
-						final double x = (a.getInteger() - 127) / 128.0;
-						final double d = 25 * Math.log((1 + x) / (1 - x));
-						b.set((float)d);
-					},
-					new FloatType());
-			
-			final RandomAccessibleInterval<FloatType> sourceIntervalOrganelle2 = Converters.convert(
-					(RandomAccessibleInterval<UnsignedByteType>)Views.offsetInterval(Views.extendZero(
-							(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, organelle2)),
-							offset, dimension),
-					(a, b) -> {
-						final double x = (a.getInteger() - 127) / 128.0;
-						final double d = 25 * Math.log((1 + x) / (1 - x));
-						b.set((float)d);
-					},
-					new FloatType());
-
-			// Read in mask block
-			final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5PathName);
-			final RandomAccessibleInterval<UnsignedByteType> mask = N5Utils.open(n5MaskReaderLocal,
-					"/volumes/masks/foreground");
-			final RandomAccessibleInterval<UnsignedByteType> maskInterval = Views.offsetInterval(Views.extendZero(mask),
-					new long[] { offset[0] / 2, offset[1] / 2, offset[2] / 2 },
-					new long[] { dimension[0] / 2, dimension[1] / 2, dimension[2] / 2 });
-
-			// Mask out appropriate region in source block; need to do it this way rather
-			// than converter since mask is half the size of source
-			final Cursor<FloatType> sourceCursorOrganelle1 = Views.flatIterable(sourceIntervalOrganelle1).cursor();
-			final Cursor<FloatType> sourceCursorOrganelle2 = Views.flatIterable(sourceIntervalOrganelle2).cursor();
-			final RandomAccess<UnsignedByteType> maskRandomAccess = maskInterval.randomAccess();
-			
-			// Create the output based on the current dimensions
-			long[] currentDimensions = { 0, 0, 0 };
-			sourceIntervalOrganelle1.dimensions(currentDimensions);
-			final Img<UnsignedByteType> output = new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType())
-					.create(currentDimensions);
-			final Cursor<UnsignedByteType> outputCursor = Views.flatIterable(output).cursor();
-			/*new ImageJ();
-			ImageJFunctions.show((RandomAccessibleInterval<UnsignedByteType>)Views.offsetInterval(
-					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, organelle2),
-					offset, dimension));
-			ImageJFunctions.show(sourceIntervalOrganelle2);*/
-			while (sourceCursorOrganelle1.hasNext()) {
-				final FloatType voxelOrganelle1 = sourceCursorOrganelle1.next();
-				final FloatType voxelOrganelle2 = sourceCursorOrganelle2.next();
-				final UnsignedByteType voxelOutput = outputCursor.next();
-				final long [] positionInMask = new long[3];
-				Arrays.setAll(positionInMask, i -> (long) Math.floor(sourceCursorOrganelle1.getDoublePosition(i) / 2));
-				maskRandomAccess.setPosition(positionInMask);
-				if (maskRandomAccess.get().get() > 0){
-					if ((voxelOrganelle1.get() < 0 && voxelOrganelle2.get() < 0 ) && Math.abs(voxelOrganelle1.get())<=contactDistance && Math.abs(voxelOrganelle2.get()) <= contactDistance) {
-						voxelOutput.set(1);
-					}
-				}
-			}
-
-			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
-			N5Utils.saveBlock(output, n5WriterLocal, outputN5DatasetName, gridBlock[2]);
-			
-		}
-		catch(Exception e){
-			System.out.println(Arrays.toString(gridBlock));
-			throw e;
-		}
-		});
-	}
-
+	/**
+	 * Calculate contact boundaries around objects
+	 *
+	 * For a given segmented dataset, writes out an n5 file which contains halos around organelles within contactDistance. Each is labeled with the corresponding object ID from the segmentation.
+	 *
+	 * @param sc
+	 * @param inputN5Path
+	 * @param organelle
+	 * @param outputN5Path
+	 * @param outputN5DatasetName
+	 * @param contactDistance
+	 * @param blockInformationList
+	 * @throws IOException
+	 */
 	@SuppressWarnings("unchecked")
 	public static final <T extends NativeType<T>> void caclulateObjectContactBoundaries(
 			final JavaSparkContext sc, final String inputN5Path, final String organelle,
@@ -252,24 +152,17 @@ public class SparkContactSites {
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle);
 		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", pixelResolution);
 		
+		//Get contact distance in voxels
 		final double contactDistanceInVoxels = contactDistance/pixelResolution[0];
-
-
 		int contactDistanceInVoxelsCeiling=(int)Math.ceil(contactDistanceInVoxels);
-	
 		
-		// Set up rdd to parallelize over blockInformation list and run RDD, which will
-		// return updated block information containing list of components on the edge of
-		// the corresponding block
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		rdd.foreach(currentBlockInformation -> {
-			// Get information for reading in/writing current block
+			// Get information for reading in/writing current block. Need to extend offset/dimension so that can accomodate objects from different blocks
 			long[][] gridBlock = currentBlockInformation.gridBlock;
-			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 			long[] extendedOffset = gridBlock[0].clone();
 			long[] extendedDimension = gridBlock[1].clone();
-			
 			Arrays.setAll(extendedOffset, i->extendedOffset[i]-contactDistanceInVoxelsCeiling);
 			Arrays.setAll(extendedDimension, i->extendedDimension[i]+2*contactDistanceInVoxelsCeiling);
 
@@ -279,23 +172,19 @@ public class SparkContactSites {
 							(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle)),
 					extendedOffset, extendedDimension);
 	
-			long[] currentDimensions = { 0, 0, 0 };
-			segmentedOrganelle.dimensions(currentDimensions);
-			final RandomAccess<UnsignedLongType> segmentedOrganelleRandomAccess = segmentedOrganelle.randomAccess();
-			
-			final Img<UnsignedLongType> extendedOutput =  new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType())
-					.create(extendedDimension);
-			
+			// Access input/output 
+			final RandomAccess<UnsignedLongType> segmentedOrganelleRandomAccess = segmentedOrganelle.randomAccess();		
+			final Img<UnsignedLongType> extendedOutput =  new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(extendedDimension);	
 			final Cursor<UnsignedLongType> segmentedOrganelleCursor = Views.flatIterable(segmentedOrganelle).cursor();
 			final Cursor<UnsignedLongType> extendedOutputCursor = Views.flatIterable(extendedOutput).cursor();
 
+			// Loop over image and label voxel within halo according to object ID. Note: This will mean that each voxel only gets one object assignment
 			while (segmentedOrganelleCursor.hasNext()) {
 				final UnsignedLongType voxelOrganelle = segmentedOrganelleCursor.next();
 				final UnsignedLongType voxelOutput = extendedOutputCursor.next();
 				long[] position = {segmentedOrganelleCursor.getLongPosition(0),  segmentedOrganelleCursor.getLongPosition(1),  segmentedOrganelleCursor.getLongPosition(2)};
-				if (voxelOrganelle.get()==0) {
+				if (voxelOrganelle.get()==0) {//Then it is outside
 					checkIfVoxelIsWithinDistance(voxelOrganelle, voxelOutput, contactDistanceInVoxels, position, segmentedOrganelleRandomAccess);
-			
 				}
 			}
 			
@@ -306,6 +195,20 @@ public class SparkContactSites {
 		});
 	}
 	
+	/**
+	 * Calculate contact sites between object classes
+	 *
+	 * Gets contact sites from the contact halos around two different objects classes. The contact sites are taken to be voxels within the halos of two different object types
+	 *
+	 * @param sc
+	 * @param inputN5Path
+	 * @param organelle1
+	 * @param organelle2
+	 * @param outputN5Path
+	 * @param outputN5DatasetName
+	 * @param blockInformationList
+	 * @throws IOException
+	 */
 	public static final <T extends NativeType<T>> void calculateContactSitesUsingObjectContactBoundaries(
 			final JavaSparkContext sc, final String inputN5Path, final String organelle1, final String organelle2,
 			final String outputN5Path, final String outputN5DatasetName, List<BlockInformation> blockInformationList) throws IOException {
@@ -323,9 +226,6 @@ public class SparkContactSites {
 				org.janelia.saalfeldlab.n5.DataType.UINT8, attributes.getCompression());
 		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, organelle1)));
 
-		// Set up rdd to parallelize over blockInformation list and run RDD, which will
-		// return updated block information containing list of components on the edge of
-		// the corresponding block
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		rdd.foreach(currentBlockInformation -> {
 			// Get information for reading in/writing current block
@@ -333,28 +233,24 @@ public class SparkContactSites {
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 
-			// Read in source block
+			// Read in source blocks and create cursors
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);			
 			final RandomAccessibleInterval<UnsignedLongType> contactBoundaryOrganelle1 = Views.offsetInterval(Views.extendZero(
 							(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle1)),
 							offset, dimension);
-			
 			final RandomAccessibleInterval<UnsignedLongType> contactBoundaryOrganelle2 = Views.offsetInterval(Views.extendZero(
 					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle2)),
 					offset, dimension);
-
-			// Mask out appropriate region in source block; need to do it this way rather
-			// than converter since mask is half the size of source
 			final Cursor<UnsignedLongType> contactBoundaryOrganelle1Cursor = Views.flatIterable(contactBoundaryOrganelle1).cursor();
 			final Cursor<UnsignedLongType> contactBoundaryOrganelle2Cursor = Views.flatIterable(contactBoundaryOrganelle2).cursor();
 			
 			// Create the output based on the current dimensions
 			long[] currentDimensions = { 0, 0, 0 };
 			contactBoundaryOrganelle1.dimensions(currentDimensions);
-			final Img<UnsignedByteType> output = new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType())
-					.create(currentDimensions);
+			final Img<UnsignedByteType> output = new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(currentDimensions);
 			final Cursor<UnsignedByteType> outputCursor = Views.flatIterable(output).cursor();
 			
+			//Loop over both object classes and consider an object part of a contact site if it is within the contact halo of an object in both classes.
 			while (contactBoundaryOrganelle1Cursor.hasNext()) {
 				final UnsignedLongType voxelContactBoundaryOrganelle1 = contactBoundaryOrganelle1Cursor.next();
 				final UnsignedLongType voxelContactBoundaryOrganelle2 = contactBoundaryOrganelle2Cursor.next();
@@ -369,15 +265,16 @@ public class SparkContactSites {
 		});
 	}
 	
-	public static void checkIfVoxelIsWithinDistance(UnsignedLongType voxelOrganelle, UnsignedLongType voxelOutput, double contactDistanceInVoxels, long [] position, RandomAccess<UnsignedLongType>segmentedOrganelleRandomAccess) {
-		for(int radius = 1; radius <= Math.round(contactDistanceInVoxels); radius++) {
+	private static void checkIfVoxelIsWithinDistance(UnsignedLongType voxelOrganelle, UnsignedLongType voxelOutput, double contactDistanceInVoxels, long [] position, RandomAccess<UnsignedLongType>segmentedOrganelleRandomAccess) {
+		//For a given voxel outside an object, find the closest object to it and relabel the voxel with the corresponding object ID
+		for(int radius = 1; radius <= Math.ceil(contactDistanceInVoxels); radius++) {
 			int radiusSquared = radius*radius;
 			int radiusMinus1Squared = (radius-1)*(radius-1);
 			for(int x=-radius; x<=radius; x++){
 				for(int y=-radius; y<=radius; y++) {
 					for(int z=-radius; z<=radius; z++) {
 						double currentDistanceSquared = x*x+y*y+z*z;
-						if(currentDistanceSquared>radiusMinus1Squared && currentDistanceSquared<=radiusSquared) {
+						if(currentDistanceSquared>radiusMinus1Squared && currentDistanceSquared<=radiusSquared && currentDistanceSquared<=contactDistanceInVoxels) {
 							segmentedOrganelleRandomAccess.setPosition(new long[] {position[0]+x,position[1]+y,position[2]+z});
 							long currentObjectID = segmentedOrganelleRandomAccess.get().get();
 							if(currentObjectID > 0) {
@@ -392,12 +289,9 @@ public class SparkContactSites {
 	}
 	
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
-
 		final Options options = new Options(args);
-
 		if (!options.parsedSuccessfully)
 			return;
-
 		final SparkConf conf = new SparkConf().setAppName("SparkContactSites");
 
 		// Get all organelles
@@ -414,7 +308,7 @@ public class SparkContactSites {
 			});
 		}
 		
-		List<String> directoriesToDelete = new ArrayList<String>();
+		//First calculate the object contact boundaries
 		for (String organelle : organelles) {
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), organelle);
@@ -425,6 +319,8 @@ public class SparkContactSites {
 			sc.close();
 		}
 		
+		//For each pair of object classes, calculate the contact sites and get the connected component information
+		List<String> directoriesToDelete = new ArrayList<String>();
 		for (int i = 0; i<organelles.length; i++) {
 			final String organelle1 =organelles[i];
 			for(int j= i+1; j< organelles.length; j++) {

@@ -79,7 +79,7 @@ public class SparkConnectedComponents {
 		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /path/to/input/predictions.n5")
 		private String inputN5Path = null;
 
-		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /path/to/output/predictions.n5")
+		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /path/to/output/connected_components.n5")
 		private String outputN5Path = null;
 
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. organelle")

@@ -21,18 +21,10 @@ import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.stream.Collectors;
-
-import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -53,11 +45,6 @@ import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
-import com.google.common.io.Files;
-
-import ij.IJ;
-import ij.ImageJ;
-import ij.ImagePlus;
 import it.unimi.dsi.fastutil.doubles.DoubleArrays;
 import it.unimi.dsi.fastutil.doubles.DoubleComparator;
 import net.imglib2.Cursor;
@@ -65,29 +52,13 @@ import net.imglib2.IterableInterval;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.gauss3.Gauss3;
-import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
 import net.imglib2.converter.Converters;
-import net.imglib2.img.Img;
-import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.img.basictypeaccess.array.LongArray;
-import net.imglib2.img.cell.CellImgFactory;
-import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.type.logic.BoolType;
-import net.imglib2.type.logic.NativeBoolType;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.type.numeric.real.DoubleType;
-import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.util.Intervals;
 import net.imglib2.view.ExtendedRandomAccessibleInterval;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
-
-import net.imglib2.algorithm.neighborhood.DiamondShape;
-import net.imglib2.algorithm.neighborhood.Neighborhood;
-import net.imglib2.algorithm.neighborhood.RectangleShape;
-import net.imglib2.algorithm.neighborhood.Shape;
 
 
 /**
@@ -99,17 +70,17 @@ public class SparkCurvature {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
-		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /path/to/input/data.n5")
 		private String inputN5Path = null;
 
-		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /path/to/output/data.n5")
 		private String outputN5Path = null;
 
-		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
+		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. organelle")
 		private String inputN5DatasetName = null;
 
-		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
-		private String outputN5DatasetSuffix = "_curvatureTesting";
+		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _curvatureResults so output would be mito_curvatureResults, defaults to '_curvature")
+		private String outputN5DatasetSuffix = "_curvature";
 
 		public Options(final String[] args) {
 
@@ -145,28 +116,31 @@ public class SparkCurvature {
 
 	}
 
-	
-
+	/**
+	 * Compute curvatures for objects in images.
+	 *
+	 * Calculates the sheetness, mean curvature and gaussian curvature of objects in images
+	 * 
+	 * @param sc
+	 * @param n5Path
+	 * @param inputDatasetName
+	 * @param n5OutputPath
+	 * @param outputDatasetName
+	 * @param blockInformationList
+	 * @throws IOException
+	 */
 	public static final void computeCurvature(final JavaSparkContext sc, final String n5Path,
 			final String inputDatasetName, final String n5OutputPath, String outputDatasetName,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
+		//Read in input block information
 		final N5Reader n5Reader = new N5FSReader(n5Path);
-
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputDatasetName);
 		final long[] dimensions = attributes.getDimensions();
 		final int[] blockSize = attributes.getBlockSize();
-		final int n = dimensions.length;
 
-		/*
-		 * grid block size for parallelization to minimize double loading of blocks
-		 */
-		boolean show = false;
-		if (show)
-			new ij.ImageJ();
-
-		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
-		
+		//Create outputs
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);	
 		n5Writer.createDataset(outputDatasetName+"_sheetness", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
 		n5Writer.setAttribute(outputDatasetName+"_sheetness", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputDatasetName)));
 
@@ -178,27 +152,24 @@ public class SparkCurvature {
 
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
-		
-
 		rdd.foreach(blockInformation -> {
+			//Get information for processing blocks
 			final long[][] gridBlock = blockInformation.gridBlock;
-			long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
-			//System.out.println(Arrays.toString(offset));
+			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
-			int sigma = 50; //2 because need to know if surrounding voxels are removablel
+			int sigma = 50;
 			int padding = sigma+1;//Since need extra of 1 around each voxel for curvature
 			long[] paddedOffset = new long[]{offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long[] paddedDimension = new long []{dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			
-
+			//Binarize input
 			RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName);
 			final RandomAccessibleInterval<DoubleType> sourceConverted =
 					Converters.convert(
 							source,
 							(a, b) -> { b.set(a.getRealDouble()>0 ? 1 : 0);},
 							new DoubleType());
-			
 			final IntervalView<DoubleType> sourceCropped = Views.offsetInterval(Views.extendZero(sourceConverted), paddedOffset, paddedDimension);
 			
 			RandomAccessibleInterval<UnsignedLongType> sourceUnchanging = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName);
@@ -277,16 +248,6 @@ public class SparkCurvature {
 		
 		final double[][][] sigmaSeries = sigmaSeries(resolution, octaveSteps, scaleSteps);
 		
-		for (int i = 0; i < scaleSteps; ++i) {
-
-		
-			System.out.println(
-					i + ": " +
-					Arrays.toString(sigmaSeries[0][i]) + " : " +
-					Arrays.toString(sigmaSeries[1][i]) + " : " +
-					Arrays.toString(sigmaSeries[2][i]));
-		}
-		
 		ExtendedRandomAccessibleInterval<DoubleType, RandomAccessibleInterval<DoubleType>> source =
 				Views.extendZero(converted);
 		final RandomAccessible[] gradients = new RandomAccessible[converted.numDimensions()];
@@ -317,19 +278,8 @@ public class SparkCurvature {
 					sheetness, null, null,false, sigmaSeries[0][i],padding, dimension);
 			}
 			else {
-				//ImageJ ij = new ImageJ();
-				//ImageJFunctions.show(unchangingSourceCropped);
 				getCurvatureInformation(converted,unchangingSourceCropped, gradients, medialSurface, minimumLaplacian, 
 						sheetness, meanCurvature, gaussianCurvature,true, sigmaSeries[0][i],padding, dimension);
-			}
-			
-			if (show && i>12) {
-				ImageJ ij = new ImageJ();
-				ImagePlus imp = ImageJFunctions.show(smoothed);
-			//	imp.setDimensions(1, 300, 1);
-			//	imp.setDisplayRange(-1, 1);
-			//	IJ.run(imp, "Merge Channels...", "c1=Image 1 c2=Image 2 c3=Image 3 c4=Image 0 create keep");
-			//	ImageJFunctions.show(output);
 			}
 		}
 		
@@ -406,22 +356,16 @@ A:		while (sourceCursor.hasNext()) {
 				}
 			}
 			
-			//final T Tsheetness = sheetnessCursor.next();
 			if(tmedialSurface.getRealDouble()>0 && isWithinOutputBlock(new long [] {sourceCursor.getLongPosition(0), sourceCursor.getLongPosition(1), sourceCursor.getLongPosition(2)}, padding, dimension)) {
 
 				eigen.decompose(hessian);
-				DMatrixRMaj largestEigenvector;
-				double largestEigenvalue=-1;
-				
 				for (int d = 0; d < n; ++d)
 					eigenvalues[d] = eigen.getEigenvalue(d).getReal();
 				
 				DoubleArrays.quickSort(eigenvalues, absDoubleComparator);
 				
-				double tubeness = 0;
-				
 				 
-				// http://www.cim.mcgill.ca/~shape/publications/miccai05b.pdf
+				// Based on this paper http://www.cim.mcgill.ca/~shape/publications/miccai05b.pdf
 				if(eigenvalues[2]>0) {
 					continue A;
 				}
@@ -435,7 +379,6 @@ A:		while (sourceCursor.hasNext()) {
 					else {
 						updatedCount++;
 					}
-				//	System.out.println(tminimumLaplacian.getRealDouble()+" "+laplacian);
 					double Rsheet = Math.abs(eigenvalues[1]/eigenvalues[2]);
 					double alpha = 0.5;
 					double sheetEnhancementTerm = Math.exp(-Rsheet*Rsheet/(2*alpha*alpha));
@@ -490,15 +433,6 @@ A:		while (sourceCursor.hasNext()) {
 						tmeanCurvature.setReal((eigenvalues[0]+eigenvalues[1])/2.0);
 						tgaussianCurvature.setReal(eigenvalues[0]*eigenvalues[1]);
 					}
-					/*if(eigenvalues[2]>0) {
-						System.out.println("greater than 0");
-						DoubleArrays.quickSort(eigenvalues, absDoubleComparator);
-					
-						tgaussianCurvature.setReal(1);//(eigenvalues[0]*eigenvalues[1]);
-					}
-					else {
-						tgaussianCurvature.setReal(-1);//(eigenvalues[0]*eigenvalues[1]);
-					}*/
 				}
 			}
 		}
@@ -516,7 +450,7 @@ A:		while (sourceCursor.hasNext()) {
 		}
 	};
 	
-	public static boolean isWithinOutputBlock(long [] sourcePosition, long [] padding, long [] dimension) {
+	private static boolean isWithinOutputBlock(long [] sourcePosition, long [] padding, long [] dimension) {
 		for(int i =0; i<3; i++) {
 			if( !(sourcePosition[i]>=padding[i] && sourcePosition[i]<padding[i]+dimension[i])) {
 				return false;
@@ -525,7 +459,7 @@ A:		while (sourceCursor.hasNext()) {
 		return true;		
 	}
 	
-	public static boolean isBoundaryVoxel(RandomAccess<DoubleType> ra, long[] sourcePosition, long [] padding, long[] dimension){
+	private static boolean isBoundaryVoxel(RandomAccess<DoubleType> ra, long[] sourcePosition, long [] padding, long[] dimension){
 		ra.setPosition(sourcePosition);
 		if(ra.get().getRealDouble()>0) {
 			for(int dx=-1; dx<=1; dx++) {
