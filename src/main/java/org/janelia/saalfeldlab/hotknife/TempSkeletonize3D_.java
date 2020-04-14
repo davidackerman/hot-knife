@@ -175,8 +175,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 		prepareData(this.inputImage);
 		
 		// Compute Thinning	
-		//computeThinSurface(this.inputImage);
-		computeMedialSurface(this.inputImage);
+		computeThinImage(this.inputImage);
+		//computeMedialSurface(this.inputImage);
 		
 		// Convert image to binary 0-255
 		for(int i = 1; i <= this.inputImage.getSize(); i++)
@@ -187,7 +187,8 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException{ 
 		new ij.ImageJ();
-		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/er_cc.tif");
+		ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_cc_filled.tif");
+		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/er_cc.tif");
 		//ImagePlus imp = IJ.openImage("/groups/scicompsoft/home/ackermand/Desktop/rectangles_lee_figure12_attempt2.tif");
 		//ImagePlus imp = IJ.openImage("/groups/cosem/cosem/ackermand/mito_minVolume.tif");
 		imp.show();
@@ -438,24 +439,24 @@ public class TempSkeletonize3D_ implements PlugInFilter
 							// check 6-neighbors if point is a border point of type currentBorder
 							boolean isBorderPoint = false;
 							// North
-							if( currentBorder == 1 && N(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 3 && N(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// South
-							if( currentBorder == 2 && S(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 4 && S(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// East
-							if( currentBorder == 3 && E(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 6 && E(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							// West
-							if( currentBorder == 4 && W(outputImage, x, y, z) <= 0 )
+							if( currentBorder == 5 && W(outputImage, x, y, z) <= 0 )
 								isBorderPoint = true;
 							if(outputImage.getSize() > 1)
 							{
 								// Up							
-								if( currentBorder == 5 && U(outputImage, x, y, z) <= 0 )
+								if( currentBorder == 1 && U(outputImage, x, y, z) <= 0 )
 									isBorderPoint = true;
 								// Bottom
-								if( currentBorder == 6 && B(outputImage, x, y, z) <= 0 )
+								if( currentBorder == 2 && B(outputImage, x, y, z) <= 0 )
 									isBorderPoint = true;
 							}
 							if( !isBorderPoint )
@@ -499,23 +500,23 @@ public class TempSkeletonize3D_ implements PlugInFilter
 
 				// sequential re-checking to preserve connectivity when
 				// deleting in a parallel way
-				int[] index;
-
 				for (ArrayList<int[]> subvolumeSimpleBorderPoints : simpleBorderPoints) {
-					for (int[] simpleBorderPoint : subvolumeSimpleBorderPoints) {
-					index = simpleBorderPoint;
-
-					// Check if border points is simple		
-					byte [] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
-					if (isSimplePoint(neighborhood) && isEulerInvariant(neighborhood, eulerLUT )) {
-						// we can delete the current point
+					for (int[] index : subvolumeSimpleBorderPoints) {			
+					final byte[] neighborhood = getNeighborhood(outputImage, index[0], index[1], index[2]);
+					final byte[] neighborhoodIfRemoved = neighborhood;
+					neighborhoodIfRemoved[13]=0;
+					//Do actual rechecking, ie, making sure that if point is removed, everything is still satisfied
+					// Check if border points is simple
+					if (isSimplePoint(neighborhood) && isEulerInvariant( neighborhood, eulerLUT ) &&
+							isSimplePoint(neighborhoodIfRemoved) && isEulerInvariant( neighborhoodIfRemoved, eulerLUT ))//condition 4 in paper
+							{						// we can delete the current point
 						setPixel(outputImage, index[0], index[1], index[2], (byte) 0);
 						noChange = false;
 					}
-
-
 				}
-				}
+			}
+				
+				
 				if( noChange )
 					unchangedBorders++;
 

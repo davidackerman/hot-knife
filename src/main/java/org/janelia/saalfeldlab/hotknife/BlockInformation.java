@@ -5,7 +5,6 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import org.janelia.saalfeldlab.hotknife.util.Grid;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
@@ -14,10 +13,7 @@ import org.janelia.saalfeldlab.n5.N5Reader;
 
 public class BlockInformation implements Serializable {
 	/**
-	 * Class to contain relevant information for doing connected components:
-	 * information about block location/size, object ids on edge of block and a map
-	 * for relabeling those ids if necessary
-	 * 
+	 * Class to contain relevant block information for doing COSEM analysis
 	 */
 	private static final long serialVersionUID = 1L;
 	public long[][] gridBlock;

@@ -4,31 +4,17 @@ import java.io.IOException;
 import java.util.*;
 import java.util.Map.Entry;
 
-import org.apache.commons.math3.analysis.solvers.NewtonSolver;
-import org.apache.hadoop.yarn.webapp.hamlet.Hamlet.EM;
-import org.janelia.saalfeldlab.n5.N5FSReader;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-
-import ij.IJ;
-import ij.ImagePlus;
-import net.imglib2.RandomAccess;
-import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.util.unionfind.IntArrayRankedUnionFind;
-import net.imglib2.img.Img;
-import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.type.numeric.integer.UnsignedByteType;
-import net.imglib2.view.Views;
-
 public class FloydWarshall {
-	//Floyd Warshall algorithm for symmetric adjacency matrix based on wiki: https://stackoverflow.com/questions/2037735/optimise-floyd-warshall-for-symmetric-adjacency-matrix
-	
+	/**
+	 * Class for doing Floyd Warshall algorithm for symmetric adjacency matrix based on wiki: https://stackoverflow.com/questions/2037735/optimise-floyd-warshall-for-symmetric-adjacency-matrix
+	*/
 	public float dist[][];
 	public int next[][];
 	final Set<Long> V = new HashSet<>(); 
 	public float longestShortestPathLength;
 	public  int longestShortestPathI = -1;
 	public int longestShortestPathJ = -1;
-	public List<Integer> longestShortestPath = new ArrayList();
+	public List<Integer> longestShortestPath = new ArrayList<Integer>();
 	public 	int longestShortestPathNumVertices = 0;
  
 	
@@ -68,7 +54,7 @@ public class FloydWarshall {
 	}
 	
 	private static int getNumberOfVertices(Map<List<Integer>,Float> adjacency) {
-		HashSet<Integer> uniqueVertices = new HashSet();
+		HashSet<Integer> uniqueVertices = new HashSet<Integer>();
 		for(List<Integer> key : adjacency.keySet()) {
 			uniqueVertices.add(key.get(0));
 			uniqueVertices.add(key.get(1));
@@ -154,47 +140,26 @@ public class FloydWarshall {
 		
 		calculateLongestShortestPath();
 		System.out.println("Number of vertices: "+dist.length+ ". Longest shortest path: (Start,End,Vertices, Length): "+"("+longestShortestPathI + ", " + longestShortestPathJ+", "+ longestShortestPathNumVertices+ ", "+ longestShortestPathLength + "). Time: "+(System.currentTimeMillis()-tic)/1000.0);
-		//System.out.println(longestShortestPath);
-
 	}
 	 
 
 	public static void main(final String[] args) throws IOException {
-		int vertexCount = 0;
 
 		//System.out.println(vertexCount);
-		Map<List<Integer>,Float> distanceMap = new HashMap<>();
-
-		
-		
-		
-        
-		vertexCount = 0;
-		int edgeCount = 0;
+		Map<List<Integer>,Float> distanceMap = new HashMap<>();   
 		for(int i = 0; i<10;i++) {
 			distanceMap.put(Arrays.asList(i,i+1),1.0f);
-			/*distanceMap.put(Arrays.asList(i,i+2),1.0f);
-			distanceMap.put(Arrays.asList(i,i+3),1.0f);
-			distanceMap.put(Arrays.asList(i,i+4),1.0f);
-			distanceMap.put(Arrays.asList(i,i+5),1.0f);
-			distanceMap.put(Arrays.asList(i,i+6),1.0f);
-			distanceMap.put(Arrays.asList(i,i+7),1.0f);
-			distanceMap.put(Arrays.asList(i,i+8),1.0f);*/
 		}
 		distanceMap.put(Arrays.asList(1,11),1.0f);
 		distanceMap.put(Arrays.asList(0,11),1.0f);
 		distanceMap.put(Arrays.asList(11,12),1.0f);
 		distanceMap.put(Arrays.asList(12,13),1.0f);
-
-		//distanceMap.put(Arrays.asList(5L,8L),1.0f);
 						
 		FloydWarshall as = new FloydWarshall(distanceMap);
 		long tic = System.currentTimeMillis();
 		as.calculateFloydWarshallPathsOriginal();
 		as.calculateLongestShortestPathInformation();
-		System.out.println("time: "+(System.currentTimeMillis()-tic));
-
-		
+		System.out.println("time: "+(System.currentTimeMillis()-tic));	
 		
 	}
 	

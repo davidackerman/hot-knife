@@ -34,14 +34,11 @@ import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.hotknife.util.Grid;
-import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
-import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -52,36 +49,23 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import org.spark_project.guava.collect.Sets;
 
-import bdv.labels.labelset.Label;
-import ij.ImageJ;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
-import net.imglib2.algorithm.morphology.distance.DistanceTransform;
-import net.imglib2.algorithm.morphology.distance.DistanceTransform.DISTANCE_TYPE;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.Img;
-import net.imglib2.img.NativeImg;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.LongArray;
-import net.imglib2.img.cell.CellImgFactory;
-import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.BoolType;
-import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.integer.*;
-import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
-import net.imglib2.view.ExtendedRandomAccessibleInterval;
-import net.imglib2.view.IntervalView;
-import net.imglib2.view.SubsampleIntervalView;
 import net.imglib2.view.Views;
 
 import org.janelia.saalfeldlab.hotknife.IOHelper;
-import org.janelia.saalfeldlab.hotknife.IOHelper.PixelResolution;
 
 /**
  * Connected components for an entire n5 volume
@@ -92,26 +76,26 @@ public class SparkConnectedComponents {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
-		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /path/to/input/predictions.n5")
 		private String inputN5Path = null;
 
-		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /path/to/output/predictions.n5")
 		private String outputN5Path = null;
 
-		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
+		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. organelle")
 		private String inputN5DatasetName = null;
 
-		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
+		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be organelle_cc")
 		private String outputN5DatasetSuffix = "_cc";
 
-		@Option(name = "--maskN5Path", required = true, usage = "mask N5 path, e.g. /groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5")
+		@Option(name = "--maskN5Path", required = true, usage = "mask N5 path, e.g. /path/to/input/mask.n5")
 		private String maskN5Path = null;
 
-		@Option(name = "--thresholdDistance", required = false, usage = "Distance for thresholding (positive inside, negative outside)")
+		@Option(name = "--thresholdDistance", required = false, usage = "Distance for thresholding (positive inside, negative outside) (nm)")
 		private double thresholdDistance = 0;
 		
-		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept")
-		private int minimumVolumeCutoff = 100;
+		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept (nm^3)")
+		private double minimumVolumeCutoff = 64000;
 
 		public Options(final String[] args) {
 
@@ -153,7 +137,7 @@ public class SparkConnectedComponents {
 			return 128 * Math.tanh(thresholdDistance / 50) + 127;
 		}
 		
-		public int getMinimumVolumeCutoff() {
+		public double getMinimumVolumeCutoff() {
 			return minimumVolumeCutoff;
 		}
 
@@ -181,7 +165,9 @@ public class SparkConnectedComponents {
 	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
-			final double thresholdIntensityCutoff, int minimumVolumeCutoff, List<BlockInformation> blockInformationList) throws IOException {
+			final double thresholdIntensityCutoff, double minimumVolumeCutoff, List<BlockInformation> blockInformationList) throws IOException {
+		
+		//Do not find holes unless explicitly called for
 		return blockwiseConnectedComponents(
 				sc, inputN5Path, inputN5DatasetName,
 				outputN5Path,  outputN5DatasetName,maskN5PathName,
@@ -192,7 +178,7 @@ public class SparkConnectedComponents {
 	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
-			final double thresholdIntensityCutoff, int minimumVolumeCutoff, List<BlockInformation> blockInformationList, boolean findHoles) throws IOException {
+			final double thresholdIntensityCutoff, double minimumVolumeCutoff, List<BlockInformation> blockInformationList, boolean findHoles) throws IOException {
 
 		// Get attributes of input data set
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
@@ -200,13 +186,14 @@ public class SparkConnectedComponents {
 		final int[] blockSize = attributes.getBlockSize();
 		final long[] blockSizeL = new long[] { blockSize[0], blockSize[1], blockSize[2] };
 		final long[] outputDimensions = attributes.getDimensions();
+		final double [] pixelResolution = IOHelper.getResolution(n5Reader, inputN5DatasetName);
 				
 		// Create output dataset
 		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
 		n5Writer.createGroup(outputN5DatasetName);
 		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
-		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputN5DatasetName)));
+		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 
 		// Set up rdd to parallelize over blockInformation list and run RDD, which will
 		// return updated block information containing list of components on the edge of
@@ -268,8 +255,9 @@ public class SparkConnectedComponents {
 
 			// Compute the connected components which returns the components along the block
 			// edges, and update the corresponding blockInformation object
+			int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
 			currentBlockInformation.edgeComponentIDtoVolumeMap = computeConnectedComponents(sourceInterval, output, outputDimensions,
-					blockSizeL, offset, thresholdIntensityCutoff, minimumVolumeCutoff);
+					blockSizeL, offset, thresholdIntensityCutoff, minimumVolumeCutoffInVoxels);
 
 			// Write out output to temporary n5 stack
 			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
@@ -300,13 +288,14 @@ public class SparkConnectedComponents {
 	 * @throws IOException
 	 */
 	public static final <T extends NativeType<T>> List<BlockInformation> unionFindConnectedComponents(
-			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, int minimumVolumeCutoff,
+			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, double minimumVolumeCutoff,
 			List<BlockInformation> blockInformationList) throws IOException {
 
 		// Get attributes of input data set:
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
 		final int[] blockSize = attributes.getBlockSize();
+		final double [] pixelResolution = IOHelper.getResolution(n5Reader, inputN5DatasetName);
 
 		// Set up and run RDD, which will return the set of pairs of object IDs that
 		// need to be fused
@@ -319,6 +308,7 @@ public class SparkConnectedComponents {
 
 			// Get source
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
+			@SuppressWarnings("unchecked")
 			final RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5ReaderLocal, inputN5DatasetName);
 			long[] sourceDimensions = { 0, 0, 0 };
 			source.dimensions(sourceDimensions);
@@ -388,12 +378,13 @@ public class SparkConnectedComponents {
 			currentBlockInformation.edgeComponentIDtoRootIDmap = currentGlobalIDtoRootIDMap;
 		}
 		
+		int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
 		for (BlockInformation currentBlockInformation : blockInformationList) {
 			for (Entry <Long,Long> e : currentBlockInformation.edgeComponentIDtoRootIDmap.entrySet()) {
 				Long key = e.getKey();
 				Long value = e.getValue();
 				currentBlockInformation.edgeComponentIDtoRootIDmap.put(key, 
-						rootIDtoVolumeMap.get(value) <= minimumVolumeCutoff ? 0L : value);
+						rootIDtoVolumeMap.get(value) <= minimumVolumeCutoffInVoxels ? 0L : value);
 			}
 		}
 		
@@ -644,7 +635,7 @@ public class SparkConnectedComponents {
 				calculateDistanceTransform(sc, options.getInputN5Path(), currentOrganelle,
 						options.getOutputN5Path(), "distance_transform_w"+String.valueOf(weight).replace('.', 'p'), new long[] {16,16,16}, weight, blockInformationList);
 			}*/
-			int minimumVolumeCutoff = options.getMinimumVolumeCutoff();
+			double minimumVolumeCutoff = options.getMinimumVolumeCutoff();
 			if(currentOrganelle.equals("ribosomes") || currentOrganelle.equals("microtubules")) {
 				minimumVolumeCutoff = 0;
 			}
