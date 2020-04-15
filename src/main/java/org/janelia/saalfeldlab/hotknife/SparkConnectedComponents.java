@@ -630,11 +630,7 @@ public class SparkConnectedComponents {
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
 				currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			/*double weights [] = {0.0001}; 
-			for (double weight : weights) {
-				calculateDistanceTransform(sc, options.getInputN5Path(), currentOrganelle,
-						options.getOutputN5Path(), "distance_transform_w"+String.valueOf(weight).replace('.', 'p'), new long[] {16,16,16}, weight, blockInformationList);
-			}*/
+		
 			double minimumVolumeCutoff = options.getMinimumVolumeCutoff();
 			if(currentOrganelle.equals("ribosomes") || currentOrganelle.equals("microtubules")) {
 				minimumVolumeCutoff = 0;
