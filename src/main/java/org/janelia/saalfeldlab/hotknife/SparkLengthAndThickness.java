@@ -16,7 +16,9 @@
  */
 package org.janelia.saalfeldlab.hotknife;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
@@ -243,12 +245,14 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 							connectedComponentsRandomAccess.setPosition(pos);
 							distanceTransformRandomAccess.setPosition(pos);
 							long objectID = connectedComponentsRandomAccess.get().get();
+						//	if(objectID!=1865920002L) skeletonRandomAccess.get().set(0);
 							long[] globalVoxelPosition = new long[] { pos[0]+gridBlock[0][0]-1, pos[1]+gridBlock[0][1]-1, pos[2]+gridBlock[0][2]-1};//subtract 1 because offset by -1
 							
 							long v1 = sourceDimensions[0] * sourceDimensions[1] * globalVoxelPosition[2] + sourceDimensions[0] * globalVoxelPosition[1] + globalVoxelPosition[0] + 1;
 							
 							float radius = (float) Math.sqrt(distanceTransformRandomAccess.get().get());
 							currentBlockObjectwiseSkeletonInformation.addRadius(objectID, v1, radius);
+							boolean pairFound = false;
 							for(int dx=-1; dx<=1; dx++) { //Check for edges
 								for(int dy=-1; dy<=1; dy++) {
 									for(int dz=-1; dz<=1; dz++) { //DGA:  redundant checking but necessary because we need to check corners TODO could optimize
@@ -263,7 +267,6 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 													long v2 = sourceDimensions[0] * sourceDimensions[1] * globalVoxelPosition[2] + sourceDimensions[0] * globalVoxelPosition[1] + globalVoxelPosition[0] + 1;
 													float edgeWeight = (float)Math.sqrt(dx*dx+dy*dy+dz*dz);
 													currentBlockObjectwiseSkeletonInformation.addSkeletonEdge(objectID, Math.min(v1,v2), Math.max(v1,v2), edgeWeight);
-													show = false;
 												}
 											}
 										}
@@ -274,6 +277,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 					}
 				}
 			}
+			show = false;
 			if(show) {
 				new ImageJ();
 				ImageJFunctions.show(connectedComponentsCropped);
@@ -307,54 +311,65 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		final N5Reader n5Reader = new N5FSReader(n5Path);		
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle);
 
-		ArrayList<SkeletonInformation> listOfObjectwiseSkeletonInformation= objectwiseSkeletonInformation.asList();
+		ArrayList<SkeletonInformation> listOfObjectwiseSkeletonInformation = objectwiseSkeletonInformation.asList();
 		final JavaRDD<SkeletonInformation> rdd = sc.parallelize(listOfObjectwiseSkeletonInformation);
-		JavaRDD<SkeletonInformation> javaRDDObjectInformation = rdd.map(skeletonInformation -> {
-			try {
+		if (! new File(outputDirectory).exists()){
+			new File(outputDirectory).mkdirs();
+	    }
+		rdd.foreach(skeletonInformation -> {
+				long tic = System.currentTimeMillis();
+				System.out.println(skeletonInformation.objectID);
 				skeletonInformation.calculateLongestShortestPath();
-			} catch (Exception e) {
-				System.out.println("Failed for ObjectID: "+skeletonInformation.objectID+". Nodes: "+skeletonInformation.vertexRadii.size()+". Edges: "+skeletonInformation.listOfSkeletonEdges.size());
-			}
-			return skeletonInformation;
+				FileWriter csvWriter = new FileWriter(outputDirectory+"/"+organelle+"_"+skeletonInformation.objectID+"_lengthAndThickness_to_delete.csv");
+				System.out.println(skeletonInformation.objectID+" time "+(System.currentTimeMillis()-tic));
+				
+				csvWriter.append(skeletonInformation.objectID+","+skeletonInformation.longestShortestPathLength*pixelResolution[0]+ ","+skeletonInformation.radiusMean*pixelResolution[0]+","+skeletonInformation.radiusStd*pixelResolution[0]+"\n");				
+				csvWriter.flush();
+				csvWriter.close();
+				
+				skeletonInformation.clear();
 		});
 		
-		List<SkeletonInformation> allObjectSkeletonInformation = javaRDDObjectInformation.collect();
 		
-		boolean demo = false;
+		
+		
+		/*boolean demo = false;
 		ArrayImg<UnsignedByteType, ByteArray> skeleton =null;
 		RandomAccess<UnsignedByteType> skeletonRandomAccess = null;
 		if(demo) {
 			new ImageJ();
 			skeleton = ArrayImgs.unsignedBytes(new long[] {501,501,501});
 			skeletonRandomAccess = skeleton.randomAccess();
-		}
+		}*/
 		
-		if (! new File(outputDirectory).exists()){
-			new File(outputDirectory).mkdirs();
-	    }
 		FileWriter csvWriter = new FileWriter(outputDirectory+"/"+organelle+"_lengthAndThickness.csv");
 		csvWriter.append("Object ID,Longest Shortest Path (nm),Radius Mean (nm), Radius STD (nm)\n");
-		for(SkeletonInformation skeletonInformation : allObjectSkeletonInformation) {
-			Long objectID = skeletonInformation.objectID;			
-			String outputString = "ObjectID: "+ objectID+". Longest Shortest Path Length "+skeletonInformation.longestShortestPathLength+". Mean radius:  "+skeletonInformation.radiusMean+" STD radius: "+skeletonInformation.radiusStd +".";
-			csvWriter.append(objectID+","+skeletonInformation.longestShortestPathLength*pixelResolution[0]+ ","+skeletonInformation.radiusMean*pixelResolution[0]+","+skeletonInformation.radiusStd*pixelResolution[0]+"\n");
+		for(SkeletonInformation skeletonInformation : listOfObjectwiseSkeletonInformation) {
+			String filePath = outputDirectory+"/"+organelle+"_"+skeletonInformation.objectID+"_lengthAndThickness_to_delete.csv";
+			BufferedReader brTest = new BufferedReader(new FileReader(filePath));
+			String outputString = brTest.readLine();
+			brTest.close();
 			System.out.println(outputString);
-			if(demo) {
-				/*for(long vertexID : skeletonInformation.vertexRadii.keySet()) {
-					skeletonRandomAccess.setPosition(convertIDtoXYZ(vertexID));
-					skeletonRandomAccess.get().set(128);
-					}*/
-				for(long vertexID : skeletonInformation.longestShortestPath) {
-					skeletonRandomAccess.setPosition(convertIDtoXYZ(vertexID));
-					skeletonRandomAccess.get().set((int)Math.round(skeletonInformation.vertexRadii.get(vertexID)));
-				}
-			}
+			csvWriter.append(outputString+"\n");
+			
+			File fileToDelete = new File(filePath);
+			fileToDelete.delete();
+//			if(demo) {
+//				/*for(long vertexID : skeletonInformation.vertexRadii.keySet()) {
+//					skeletonRandomAccess.setPosition(convertIDtoXYZ(vertexID));
+//					skeletonRandomAccess.get().set(128);
+//					}*/
+//				for(long vertexID : skeletonInformation.longestShortestPath) {
+//					skeletonRandomAccess.setPosition(convertIDtoXYZ(vertexID));
+//					skeletonRandomAccess.get().set((int)Math.round(skeletonInformation.vertexRadii.get(vertexID)));
+//				}
+//			}
 		}
 		
-		if(demo) {
+	/*	if(demo) {
 			ImageJFunctions.show(skeleton);
 		}
-		
+		*/
 		csvWriter.flush();
 		csvWriter.close();
 		
@@ -472,7 +487,7 @@ class SkeletonEdge implements Serializable{
 				return false;
 			if (getClass() != other.getClass())
 				return false;
-			SkeletonEdgeFW recasted = (SkeletonEdgeFW) other;
+			SkeletonEdge recasted = (SkeletonEdge) other;
 			return (getV1()==recasted.getV1() && getV2()==recasted.getV2() && getEdgeWeight()==recasted.getEdgeWeight());
 	  }
 
@@ -481,7 +496,7 @@ class SkeletonEdge implements Serializable{
 class SkeletonInformation implements Serializable{
 	long objectID;
 	
-	List<SkeletonEdgeFW> listOfSkeletonEdges;
+	List<SkeletonEdge> listOfSkeletonEdges;
 	Map<Long,Float> vertexRadii;
 	HashSet<Long> longestShortestPath;
 	
@@ -491,13 +506,19 @@ class SkeletonInformation implements Serializable{
 	
 	public SkeletonInformation(long objectID){
 		this.objectID = objectID;
-		this.listOfSkeletonEdges = new ArrayList<SkeletonEdgeFW>();
+		this.listOfSkeletonEdges = new ArrayList<SkeletonEdge>();
+		this.vertexRadii = new HashMap<Long, Float>();
+		this.longestShortestPath = new HashSet();
+	}
+	
+	public void clear() {
+		this.listOfSkeletonEdges = new ArrayList<SkeletonEdge>();
 		this.vertexRadii = new HashMap<Long, Float>();
 		this.longestShortestPath = new HashSet();
 	}
 	
 	public void merge(SkeletonInformation newSkeletonInformation) {
-		for (SkeletonEdgeFW skeletonEdge : newSkeletonInformation.listOfSkeletonEdges) {
+		for (SkeletonEdge skeletonEdge : newSkeletonInformation.listOfSkeletonEdges) {
 			if ( !listOfSkeletonEdges.contains(skeletonEdge) ) {
 				listOfSkeletonEdges.add(skeletonEdge);
 			}
@@ -519,7 +540,7 @@ class SkeletonInformation implements Serializable{
 		}
 		//HashSet <List<Integer>> temp = new HashSet();
  		//Map<List<Integer>,Float> adjacency = new HashMap<>();
-		for (SkeletonEdgeFW skeletonEdge : listOfSkeletonEdges) {	
+		for (SkeletonEdge skeletonEdge : listOfSkeletonEdges) {	
 			int v1Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV1() );
 			int v2Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV2() );
 			float edgeWeight = skeletonEdge.getEdgeWeight();
@@ -582,7 +603,7 @@ class ObjectwiseSkeletonInformation implements Serializable{
 	public void addSkeletonEdge(long objectID, long v1, long v2, float edgeWeight) {
 		//System.out.println(objectID+" "+" "+v1+" "+v2+" "+edgeWeight);
 		SkeletonInformation currentSkeletonInformation = skeletonInformationByObjectID.getOrDefault(objectID, new SkeletonInformation(objectID));
-		SkeletonEdgeFW skeletonEdge = new SkeletonEdgeFW(v1,v2, edgeWeight);
+		SkeletonEdge skeletonEdge = new SkeletonEdge(v1,v2, edgeWeight);
 		if ( !currentSkeletonInformation.listOfSkeletonEdges.contains(skeletonEdge) ) {
 			currentSkeletonInformation.listOfSkeletonEdges.add(skeletonEdge);
 		}

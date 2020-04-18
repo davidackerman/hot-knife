@@ -188,9 +188,10 @@ public class SparkTopologicalThinning {
 				while(sourceCroppedCursor.hasNext()) {
 					UnsignedLongType v1 = sourceCroppedCursor.next();
 					UnsignedByteType v2 = outputImageCursor.next();
-					if(v1.get()>0) {
+					if(v1.get() >0) {//==1865920002L) {
 						v2.set(1);
 					}
+					//else{v1.set(0)};
 				}
 				
 			}
@@ -225,10 +226,11 @@ public class SparkTopologicalThinning {
 			}
 			else {
 				if(!blockInformation.isIndependent) {
-					if(iteration==0)		//TODO: The below fix for touching objects by thinning them independently, therebey producing indpependent skeletons will fail in some extreme cases like if the objects are already thin/touching or still touching after an iteration because on the next iteration, they will be treated as one object
+					if(iteration==0){		//TODO: The below fix for touching objects by thinning them independently, therebey producing indpependent skeletons will fail in some extreme cases like if the objects are already thin/touching or still touching after an iteration because on the next iteration, they will be treated as one object
 						needToThinAgain = thinEachObjectIndependently(sourceCropped, outputImage, padding, paddedOffset, paddedDimension, needToThinAgain ); //to prevent one skeleton being created for two distinct objects that are touching
-					else 
+					}else{ 
 						needToThinAgain = skeletonize3D.computeSkeletonIteration(); //just do normal thinning
+					}
 					blockInformation.isIndependent = skeletonize3D.isSkeletonBlockIndependent();
 					if(blockInformation.isIndependent) {//then can finish it
 						skeletonize3D = new Skeletonize3D_(croppedOutputImage, new int[]{0, 0, 0}, new int[] {(int) offset[0],(int) offset[1], (int)offset[2]});
