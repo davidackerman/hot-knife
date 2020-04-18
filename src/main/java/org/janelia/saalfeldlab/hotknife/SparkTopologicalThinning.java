@@ -265,7 +265,7 @@ public class SparkTopologicalThinning {
 			
 		}
 		
-		if(!needToThinAgain)
+			if(!needToThinAgain)
 			blockInformationList = new LinkedList<BlockInformation>();
 		
 		return blockInformationList;
@@ -373,7 +373,6 @@ public class SparkTopologicalThinning {
 			// Create block information list
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			int iteration=0;
 			int fullIterations = 0;
 			DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
 						
@@ -385,7 +384,7 @@ public class SparkTopologicalThinning {
 				System.out.println(dateFormat.format(date)+" Number of Remaining Blocks: "+blockInformationList.size()+", Full iteration complete: "+fullIterations);
 			}
 			
-			String finalFileName = finalOutputN5DatasetName + '_'+ ((iteration-1)%2==0 ? "even" : "odd");
+			String finalFileName = finalOutputN5DatasetName + '_'+ ((fullIterations-1)%2==0 ? "even" : "odd");
 			FileUtils.deleteDirectory(new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName));
 			FileUtils.moveDirectory(new File(options.getOutputN5Path() + "/" + finalFileName), new File(options.getOutputN5Path() + "/" + finalOutputN5DatasetName));
 			sc.close();

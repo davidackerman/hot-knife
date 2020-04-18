@@ -103,7 +103,7 @@ public class SparkFillHolesInConnectedComponents {
 
 		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept")
-		private int minimumVolumeCutoff = 100;
+		private float minimumVolumeCutoff = 100;
 
 		public Options(final String[] args) {
 
@@ -129,11 +129,85 @@ public class SparkFillHolesInConnectedComponents {
 			return outputN5DatasetSuffix;
 		}
 		
-		public int getMinimumVolumeCutoff() {
+		public float getMinimumVolumeCutoff() {
 			return minimumVolumeCutoff;
 		}
 	
 
+	}
+	
+	public static final <T extends NativeType<T>> void volumeFilterConnectedComponents(
+			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, final String outputN5DatasetName, float minimumVolumeCutoff,
+			List<BlockInformation> blockInformationList) throws IOException {
+				// Get attributes of input data set
+				final N5Reader n5Reader = new N5FSReader(inputN5Path);
+				final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
+				final int[] blockSize = attributes.getBlockSize();
+				final double[] pixelResolution = IOHelper.getResolution(n5Reader, inputN5DatasetName);
+				final float minimumVolumeCutoffInVoxels = (float) (minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
+				// Create output dataset
+				final N5Writer n5Writer = new N5FSWriter(inputN5Path);
+				n5Writer.createGroup(outputN5DatasetName);
+				n5Writer.createDataset(outputN5DatasetName, attributes.getDimensions(), blockSize,
+						org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
+				n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputN5DatasetName)));
+				
+				// Set up rdd to parallelize over blockInformation list and run RDD, which will
+				// return updated block information containing list of components on the edge of
+				// the corresponding block
+				JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+				JavaRDD<HashMap<Long,Long>> objectIDtoVolumeMaps = rdd.map(currentBlockInformation -> {
+					// Get information for reading in/writing current block
+					long[][] gridBlock = currentBlockInformation.gridBlock;
+					long[] offset = gridBlock[0];
+					long[] dimension = gridBlock[1];
+			
+					// Read in source block
+					final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
+					final RandomAccessibleInterval<UnsignedLongType> objects = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)),offset, dimension); 
+					Cursor<UnsignedLongType> objectsCursor = Views.flatIterable(objects).cursor();
+					
+					HashMap<Long,Long> objectIDtoVolumeMap = new HashMap();
+					while(objectsCursor.hasNext()) {
+						UnsignedLongType voxel = objectsCursor.next();
+						long objectID = voxel.get();
+						objectIDtoVolumeMap.put(objectID, objectIDtoVolumeMap.getOrDefault(objectID,0L)+1);
+					}
+					return objectIDtoVolumeMap;
+				});
+			
+				HashMap<Long,Long> finalObjectIDtoVolumeMap = objectIDtoVolumeMaps.reduce((a,b) -> {
+					for(Long objectID : b.keySet()) {
+						a.put(objectID, a.getOrDefault(objectID,0L)+b.get(objectID));
+					}
+					return a; 
+					});
+
+				//rewrite it
+				rdd = sc.parallelize(blockInformationList);
+				rdd.foreach(currentBlockInformation -> {
+					// Get information for reading in/writing current block
+					long[][] gridBlock = currentBlockInformation.gridBlock;
+					long[] offset = gridBlock[0];
+					long[] dimension = gridBlock[1];
+			
+					// Read in source block
+					final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
+					final RandomAccessibleInterval<UnsignedLongType> objects = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)),offset, dimension); 
+					Cursor<UnsignedLongType> objectsCursor = Views.flatIterable(objects).cursor();
+					
+					while(objectsCursor.hasNext()) {
+						UnsignedLongType voxel = objectsCursor.next();
+						long objectID = voxel.get();
+						if(finalObjectIDtoVolumeMap.get(objectID) <= minimumVolumeCutoffInVoxels) {
+							voxel.set(0);
+						}
+					}
+					// Write out output to temporary n5 stack
+					final N5Writer n5WriterLocal = new N5FSWriter(inputN5Path);
+					N5Utils.saveBlock(objects, n5WriterLocal, outputN5DatasetName, gridBlock[2]);
+				});
+		
 	}
 
 	/**
@@ -199,6 +273,13 @@ public class SparkFillHolesInConnectedComponents {
 			RandomAccess<UnsignedLongType> holeComponentsRandomAccess = holes.randomAccess();
 			RandomAccess<UnsignedLongType> objectsRandomAccess = objects.randomAccess();
 			
+		/*	if(offset[0]==0 && offset[1]==360 && offset[2] ==0) {
+				new ImageJ();
+				ImageJFunctions.show(objects,"objects");
+				ImageJFunctions.show(holes,"holes");
+				ImageJFunctions.show(distanceFromObjects,"distance");
+			}*/
+			
 			Map<Long,Long> holeIDtoObjectIDMap = new HashMap();
 			Map<Long,Long> objectIDtoVolumeMap = new HashMap();
 			Map<Long,Long> holeIDtoVolumeMap = new HashMap();
@@ -208,25 +289,25 @@ public class SparkFillHolesInConnectedComponents {
 				int pos [] = new int[] {distanceFromObjectCursor.getIntPosition(0), distanceFromObjectCursor.getIntPosition(1), distanceFromObjectCursor.getIntPosition(2)};
 				objectsRandomAccess.setPosition(pos);
 				long objectID = objectsRandomAccess.get().get();
-				if (objectID != maxValue && objectID>0) {
+				/*if (objectID != maxValue && objectID>0) {
 					objectIDtoVolumeMap.put(objectID, objectIDtoVolumeMap.getOrDefault(objectID, 0L) + 1);		
-				}
+				}*/
 				
 				if (distanceFromObjectSquared>0 && distanceFromObjectSquared <= 3) { //3 for corners. If true, then is on edge of hole
 					if(pos[0]>0 && pos[0]<=dimension[0] && pos[1]>0 && pos[1]<=dimension[1] && pos[2]>0 && pos[2]<=dimension[2]) {//Then in original block
 						holeComponentsRandomAccess.setPosition(pos);
 						long holeID = holeComponentsRandomAccess.get().get();
 						holeIDtoVolumeMap.put(holeID, holeIDtoVolumeMap.getOrDefault(holeID, 0L) + 1);	
-						
+
 						for(int dx=-1; dx<=1; dx++) {
 							for(int dy=-1; dy<=1; dy++) {
 								for(int dz=-1; dz<=1; dz++) {
-									if(!(dx==0 && dy==0 && dz==0)) {
+									if((dx==0 && dy==0 && dz!=0) || (dx==0 && dz==0 && dy!=0) || (dy==0 && dz==0 && dx!=0)) {//diamond checking
 										int newPos [] = new int[] {pos[0]+dx, pos[1]+dy, pos[2]+dz};
 										objectsRandomAccess.setPosition(newPos);
 										objectID = objectsRandomAccess.get().get();
-										if(objectID>0) {
-											if ( objectID == maxValue || (holeIDtoObjectIDMap.containsKey(holeID) && objectID != holeIDtoObjectIDMap.get(holeID)) ) //then has already been assigned to an object and is not really a hole since it is touching multiple objects
+										if(objectID>0) {//can still be outside
+											if ( objectID == maxValue || (holeIDtoObjectIDMap.containsKey(holeID) && objectID != holeIDtoObjectIDMap.get(holeID)) ) //is touching outside or then has already been assigned to an object and is not really a hole since it is touching multiple objects
 													holeIDtoObjectIDMap.put(holeID,0L);
 											else 
 												holeIDtoObjectIDMap.put(holeID,objectID);										
@@ -248,7 +329,7 @@ public class SparkFillHolesInConnectedComponents {
 			return a;
 		});
 		
-		mapsForFillingHoles.filterObjectsByVolume(1000);
+		//mapsForFillingHoles.filterObjectsByVolume(1000);
 		
 		/*
 		for(Entry entry: mapsForFillingHoles.objectIDtoVolumeMap.entrySet())
@@ -316,12 +397,12 @@ public class SparkFillHolesInConnectedComponents {
 						long objectID = objectsRandomAccess.get().get();
 						
 						
-						long setValue =0;	
-						if( objectID >0 ) {
+						long setValue = objectID;	
+						/*if( objectID >0 ) {
 							if(! mapsForFillingHoles.objectIDsBelowVolumeFilter.contains(objectID))
 								setValue = objectID;
-						}
-						else if( holeID > 0)
+						}*/
+						if( holeID > 0)
 							setValue = mapsForFillingHoles.holeIDtoObjectIDMap.get(holeID);
 						
 						voxel.set(setValue);
@@ -357,7 +438,7 @@ public class SparkFillHolesInConnectedComponents {
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkConnectedComponents");
+		final SparkConf conf = new SparkConf().setAppName("SparkFillHolesInConnectedComponents");
 
 		// Get all organelles
 		String[] organelles = { "" };
@@ -375,23 +456,27 @@ public class SparkFillHolesInConnectedComponents {
 
 		System.out.println(Arrays.toString(organelles));
 
+		String tempVolumeFilteredDatasetName = null;
 		String tempOutputN5DatasetName = null;
 		String finalOutputN5DatasetName = null;
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (String currentOrganelle : organelles) {
 			logMemory(currentOrganelle);
+			tempVolumeFilteredDatasetName = currentOrganelle + "_volumeFiltered";
 			tempOutputN5DatasetName = currentOrganelle + "_holes" + "_blockwise_temp_to_delete";
 			finalOutputN5DatasetName = currentOrganelle + "_holes";
-
+			
 			// Create block information list
 			List<BlockInformation> blockInformationList = SparkConnectedComponents
-					.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
+								.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
+			
+			volumeFilterConnectedComponents(sc, options.getInputN5Path(), currentOrganelle, tempVolumeFilteredDatasetName, options.getMinimumVolumeCutoff(), blockInformationList);
 
 			// Get connected components of holes in *_holes
-			/*int minimumVolumeCutoff = 0;
+			int minimumVolumeCutoff = 0;
 			blockInformationList = SparkConnectedComponents.blockwiseConnectedComponents(sc, options.getInputN5Path(),
-					currentOrganelle, options.getInputN5Path(), tempOutputN5DatasetName, null, 1, minimumVolumeCutoff,
+					tempVolumeFilteredDatasetName, options.getInputN5Path(), tempOutputN5DatasetName, null, 1, minimumVolumeCutoff,
 					blockInformationList, true);
 			logMemory("Stage 1 complete");
 
@@ -403,8 +488,9 @@ public class SparkFillHolesInConnectedComponents {
 					finalOutputN5DatasetName, blockInformationList);
 			logMemory("Stage 3 complete");
 
+			directoriesToDelete.add(options.getInputN5Path() + "/" + tempVolumeFilteredDatasetName);
 			directoriesToDelete.add(options.getInputN5Path() + "/" + tempOutputN5DatasetName);
-			*/
+			directoriesToDelete.add(options.getInputN5Path() + "/" + finalOutputN5DatasetName);
 
 			MapsForFillingHoles mapsForFillingHoles = getMapsForFillingHoles(sc,  options.getInputN5Path(), currentOrganelle, blockInformationList);
 			fillHoles(sc, options.getInputN5Path(), currentOrganelle, currentOrganelle+options.getOutputN5DatasetSuffix(), mapsForFillingHoles, blockInformationList);

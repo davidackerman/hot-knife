@@ -59,12 +59,12 @@ public class ConnectedComponents {
 	public static void main(final String[] args) throws IOException {
 		Set<long[][]> temp = new HashSet<>();
 		
-		ImagePlus imp = new Opener().openImage( "/groups/cosem/cosem/ackermand/HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5/skeletonShortestPathAsRadii.tif" );
+		ImagePlus imp = new Opener().openImage( "/groups/cosem/cosem/ackermand/jan_skeleton.tif");//HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5/skeletonShortestPathAsRadii.tif" );
 		RandomAccessible<UnsignedByteType> wrapImg = ImageJFunctions.wrapByte(imp);
 		//ra = RandomAccessible<>wrapImg;
 		final RandomAccessible<BoolType> thresholded = Converters.convert(wrapImg, (a, b) -> b.set( a.getInteger() > 0), new BoolType());
-		final ArrayImg<UnsignedLongType, LongArray> components = ArrayImgs.unsignedLongs(new long[] {501,501,501});
-		ConnectedComponentAnalysis.connectedComponents(Views.offsetInterval(thresholded,new long[]{0,0,0},new long[] {501,501,501}), components,new RectangleShape(1,false));
+		final ArrayImg<UnsignedLongType, LongArray> components = ArrayImgs.unsignedLongs(new long[] {182,143,182});//{501,501,501});
+		ConnectedComponentAnalysis.connectedComponents(Views.offsetInterval(thresholded,new long[]{0,0,0},new long[] {182,143,182}), components,new RectangleShape(1,false));//{501,501,501}), components,new RectangleShape(1,false));
 		new ImageJ();
 		ImageJFunctions.show(components);
 		

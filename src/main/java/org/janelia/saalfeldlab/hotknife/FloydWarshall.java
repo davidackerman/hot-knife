@@ -147,13 +147,13 @@ public class FloydWarshall {
 
 		//System.out.println(vertexCount);
 		Map<List<Integer>,Float> distanceMap = new HashMap<>();   
-		for(int i = 0; i<10;i++) {
+		for(int i = 0; i<2000;i++) {
 			distanceMap.put(Arrays.asList(i,i+1),1.0f);
 		}
-		distanceMap.put(Arrays.asList(1,11),1.0f);
+		/*distanceMap.put(Arrays.asList(1,11),1.0f);
 		distanceMap.put(Arrays.asList(0,11),1.0f);
 		distanceMap.put(Arrays.asList(11,12),1.0f);
-		distanceMap.put(Arrays.asList(12,13),1.0f);
+		distanceMap.put(Arrays.asList(12,13),1.0f);*/
 						
 		FloydWarshall as = new FloydWarshall(distanceMap);
 		long tic = System.currentTimeMillis();

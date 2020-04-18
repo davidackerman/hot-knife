@@ -49,6 +49,7 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import org.spark_project.guava.collect.Sets;
 
+import net.imagej.ImageJ;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
@@ -59,6 +60,7 @@ import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.LongArray;
+import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.numeric.integer.*;
@@ -216,6 +218,10 @@ public class SparkConnectedComponents {
 				
 				sourceInterval = Converters.convert(connectedComponents,
 						(a, b) -> b.set(a.getLong()==0 ? 255 : 0 ), new UnsignedByteType());
+			/*	if(offset[0]==0 && offset[1]==360 && offset[2] ==0) {
+					new ImageJ();
+				ImageJFunctions.show(sourceInterval);
+				}*/
 				
 			}
 			else {
@@ -468,7 +474,8 @@ public class SparkConnectedComponents {
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
 		final int[] blockSize = attributes.getBlockSize();
 		final long[] outputDimensions = attributes.getDimensions();
-		
+		//final long[] outputDimensions = new long[] {501,501,501};
+
 		//Build list
 		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
 		List<BlockInformation> blockInformationList = new ArrayList<BlockInformation>();

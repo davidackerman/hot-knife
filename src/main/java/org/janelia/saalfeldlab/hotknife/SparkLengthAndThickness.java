@@ -17,6 +17,7 @@
 package org.janelia.saalfeldlab.hotknife;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
@@ -121,11 +122,9 @@ public class SparkLengthAndThickness {
 			final String datasetName,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
-		final N5Reader n5Reader = new N5FSReader(n5Path);
-		double [] pixelResolution = IOHelper.getResolution(n5Reader, datasetName);
-		
+		final N5Reader n5Reader = new N5FSReader(n5Path);		
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
-		
+
 		final long[] dimensions = attributes.getDimensions();
 		final int[] blockSize = attributes.getBlockSize();
 		final int n = dimensions.length;
@@ -158,7 +157,7 @@ public class SparkLengthAndThickness {
 			final long[] paddedBlockSize = new long[n];
 			final long[] minInside = new long[n];
 			final long[] dimensionsInside = new long[n];
-			
+
 			int shellPadding = 1;
 
 			//Distance Transform
@@ -223,6 +222,11 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, datasetName+"_skeleton")
 					),paddedOffset, paddedDimension);
 			IntervalView<FloatType> distanceTransformCropped = Views.offsetInterval(Views.extendZero(distanceTransform), new long[] {minInside[0]-1, minInside[1]-1,minInside[2]-1}, new long[] {dimensionsInside[0]+2, dimensionsInside[1]+2, dimensionsInside[2]+2});		
+			if(show) {
+				ImageJFunctions.show(connectedComponentsCropped);
+				ImageJFunctions.show(skeleton);
+				ImageJFunctions.show(distanceTransformCropped);
+			}
 			
 			final RandomAccess<UnsignedLongType> connectedComponentsRandomAccess = connectedComponentsCropped.randomAccess();
 			final RandomAccess<UnsignedByteType> skeletonRandomAccess = skeleton.randomAccess();
@@ -258,8 +262,8 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 													globalVoxelPosition = new long[] { newPos[0]+gridBlock[0][0]-1, newPos[1]+gridBlock[0][1]-1, newPos[2]+gridBlock[0][2]-1};//subtract 1 because offset by -1
 													long v2 = sourceDimensions[0] * sourceDimensions[1] * globalVoxelPosition[2] + sourceDimensions[0] * globalVoxelPosition[1] + globalVoxelPosition[0] + 1;
 													float edgeWeight = (float)Math.sqrt(dx*dx+dy*dy+dz*dz);
-													
 													currentBlockObjectwiseSkeletonInformation.addSkeletonEdge(objectID, Math.min(v1,v2), Math.max(v1,v2), edgeWeight);
+													show = false;
 												}
 											}
 										}
@@ -270,7 +274,13 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 					}
 				}
 			}
-			
+			if(show) {
+				new ImageJ();
+				ImageJFunctions.show(connectedComponentsCropped);
+				ImageJFunctions.show(skeleton);
+				ImageJFunctions.show(distanceTransformCropped);
+			} 
+
 						
 			return currentBlockObjectwiseSkeletonInformation;
 		
@@ -291,18 +301,26 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 	public static void calculateObjectwiseLengthAndThickness(final JavaSparkContext sc,
 		ObjectwiseSkeletonInformation objectwiseSkeletonInformation, 
-		String outputDirectory) {
+		String n5Path,
+		String organelle,
+		String outputDirectory) throws IOException, InterruptedException {
+		final N5Reader n5Reader = new N5FSReader(n5Path);		
+		double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle);
+
 		ArrayList<SkeletonInformation> listOfObjectwiseSkeletonInformation= objectwiseSkeletonInformation.asList();
 		final JavaRDD<SkeletonInformation> rdd = sc.parallelize(listOfObjectwiseSkeletonInformation);
 		JavaRDD<SkeletonInformation> javaRDDObjectInformation = rdd.map(skeletonInformation -> {
-			System.out.println(skeletonInformation.objectID);
-			skeletonInformation.calculateLongestShortestPath();		
+			try {
+				skeletonInformation.calculateLongestShortestPath();
+			} catch (Exception e) {
+				System.out.println("Failed for ObjectID: "+skeletonInformation.objectID+". Nodes: "+skeletonInformation.vertexRadii.size()+". Edges: "+skeletonInformation.listOfSkeletonEdges.size());
+			}
 			return skeletonInformation;
 		});
 		
 		List<SkeletonInformation> allObjectSkeletonInformation = javaRDDObjectInformation.collect();
 		
-		boolean demo = true;
+		boolean demo = false;
 		ArrayImg<UnsignedByteType, ByteArray> skeleton =null;
 		RandomAccess<UnsignedByteType> skeletonRandomAccess = null;
 		if(demo) {
@@ -310,9 +328,16 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			skeleton = ArrayImgs.unsignedBytes(new long[] {501,501,501});
 			skeletonRandomAccess = skeleton.randomAccess();
 		}
+		
+		if (! new File(outputDirectory).exists()){
+			new File(outputDirectory).mkdirs();
+	    }
+		FileWriter csvWriter = new FileWriter(outputDirectory+"/"+organelle+"_lengthAndThickness.csv");
+		csvWriter.append("Object ID,Longest Shortest Path (nm),Radius Mean (nm), Radius STD (nm)\n");
 		for(SkeletonInformation skeletonInformation : allObjectSkeletonInformation) {
 			Long objectID = skeletonInformation.objectID;			
-			String outputString = objectID+" "+skeletonInformation.longestShortestPathLength+" "+skeletonInformation.radiusMean+" "+skeletonInformation.radiusStd;
+			String outputString = "ObjectID: "+ objectID+". Longest Shortest Path Length "+skeletonInformation.longestShortestPathLength+". Mean radius:  "+skeletonInformation.radiusMean+" STD radius: "+skeletonInformation.radiusStd +".";
+			csvWriter.append(objectID+","+skeletonInformation.longestShortestPathLength*pixelResolution[0]+ ","+skeletonInformation.radiusMean*pixelResolution[0]+","+skeletonInformation.radiusStd*pixelResolution[0]+"\n");
 			System.out.println(outputString);
 			if(demo) {
 				/*for(long vertexID : skeletonInformation.vertexRadii.keySet()) {
@@ -329,6 +354,9 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		if(demo) {
 			ImageJFunctions.show(skeleton);
 		}
+		
+		csvWriter.flush();
+		csvWriter.close();
 		
 	}
 	
@@ -348,6 +376,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		final int[] blockSize = attributes.getBlockSize();
 		final long[] outputDimensions = attributes.getDimensions();
 		
+		//final long[] outputDimensions = new long[] {501,501,501};
 		//Build list
 		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
 		List<BlockInformation> blockInformationList = new ArrayList<BlockInformation>();
@@ -373,14 +402,17 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 	}
 	
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
-
 		final Options options = new Options(args);
 
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkCurvatureOnSurface");
-
+		final SparkConf conf = new SparkConf().setAppName("SparkLengthAndThickness");
+		/*conf.set("spark.executor.heartbeatInterval","1000000");
+		conf.set("spark.network.timeout","100000");
+		
+		//conf.set("spark.executor.heartbeatInterval","1");	
+		System.out.println(conf.get("spark.network.timeout"));*/
 		// Get all organelles
 		String[] organelles = { "" };
 		if (options.getInputN5DatasetName() != null) {
@@ -412,7 +444,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 					options.getInputN5DatasetName(),
 					blockInformationList);
 			
-			calculateObjectwiseLengthAndThickness(sc, objectwiseSkeletonInformation, options.getOutputDirectory() );
+			calculateObjectwiseLengthAndThickness(sc, objectwiseSkeletonInformation, options.getInputN5Path(), currentOrganelle, options.getOutputDirectory());
 			
 			sc.close();
 		}
@@ -431,13 +463,25 @@ class SkeletonEdge implements Serializable{
 	  public long getV1() {return v1;}
 	  public long getV2() {return v2;}
 	  public float getEdgeWeight() {return edgeWeight;}
+	  
+	  @Override
+	  public boolean equals(Object other){
+			if (this == other)
+				return true;
+			if (other == null)
+				return false;
+			if (getClass() != other.getClass())
+				return false;
+			SkeletonEdgeFW recasted = (SkeletonEdgeFW) other;
+			return (getV1()==recasted.getV1() && getV2()==recasted.getV2() && getEdgeWeight()==recasted.getEdgeWeight());
+	  }
 
 }
 
 class SkeletonInformation implements Serializable{
 	long objectID;
 	
-	List<SkeletonEdge> listOfSkeletonEdges;
+	List<SkeletonEdgeFW> listOfSkeletonEdges;
 	Map<Long,Float> vertexRadii;
 	HashSet<Long> longestShortestPath;
 	
@@ -447,13 +491,17 @@ class SkeletonInformation implements Serializable{
 	
 	public SkeletonInformation(long objectID){
 		this.objectID = objectID;
-		this.listOfSkeletonEdges = new ArrayList<SkeletonEdge>();
+		this.listOfSkeletonEdges = new ArrayList<SkeletonEdgeFW>();
 		this.vertexRadii = new HashMap<Long, Float>();
 		this.longestShortestPath = new HashSet();
 	}
 	
 	public void merge(SkeletonInformation newSkeletonInformation) {
-		listOfSkeletonEdges.addAll(newSkeletonInformation.listOfSkeletonEdges);
+		for (SkeletonEdgeFW skeletonEdge : newSkeletonInformation.listOfSkeletonEdges) {
+			if ( !listOfSkeletonEdges.contains(skeletonEdge) ) {
+				listOfSkeletonEdges.add(skeletonEdge);
+			}
+		}
 		vertexRadii.putAll(newSkeletonInformation.vertexRadii);
 	}
 	
@@ -461,31 +509,44 @@ class SkeletonInformation implements Serializable{
 		Map<Integer, Long> objectVertexIDtoGlobalVertexID = new HashMap<Integer, Long>();
 		Map<Long, Integer> globalVertexIDtoObjectVertexID = new HashMap<Long, Integer>();
 
+	    List<List<Node> > adjacency = new ArrayList<List<Node> >(); 
 		int vObject=0;
 		for (long v : vertexRadii.keySet()) {	
 			objectVertexIDtoGlobalVertexID.put(vObject, v);
 			globalVertexIDtoObjectVertexID.put(v, vObject);			
 			vObject++;
+			adjacency.add(new ArrayList<Node>()); 			
 		}
-		
-		Map<List<Integer>,Float> adjacency = new HashMap<>();
-		for (SkeletonEdge skeletonEdge : listOfSkeletonEdges) {	
+		//HashSet <List<Integer>> temp = new HashSet();
+ 		//Map<List<Integer>,Float> adjacency = new HashMap<>();
+		for (SkeletonEdgeFW skeletonEdge : listOfSkeletonEdges) {	
 			int v1Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV1() );
 			int v2Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV2() );
 			float edgeWeight = skeletonEdge.getEdgeWeight();
-			
-			adjacency.put(Arrays.asList(v1Object,v2Object),edgeWeight);
+	        adjacency.get(v1Object).add(new Node(v2Object,edgeWeight));
+	        adjacency.get(v2Object).add(new Node(v1Object,edgeWeight));
+			/*if(temp.contains(Arrays.asList(v1Object, v2Object)) || temp.contains(Arrays.asList(v2Object, v1Object))){
+				System.out.println(objectID+" adjacency.get("+v1Object+").add(new Node("+v2Object+","+edgeWeight+"));");
+			}
+			else {
+				temp.add(Arrays.asList(v1Object, v2Object));
+				temp.add(Arrays.asList(v2Object, v1Object));
+			}*/
+
+			//adjacency.put(Arrays.asList(v1Object,v2Object),edgeWeight);
 		}
+
+		DijkstraPriorityQueue dpq = new DijkstraPriorityQueue(vObject, adjacency);
+		long tic = System.currentTimeMillis();
+		dpq.calculateLongestShortestPath();
+		System.out.println("Time "+(System.currentTimeMillis()-tic));
+		longestShortestPathLength = dpq.longestShortestPathLength;
 		
-		FloydWarshall floydWarshall = new FloydWarshall(adjacency, vObject);
-		floydWarshall.calculateLongestShortestPathInformation();
-		longestShortestPathLength = floydWarshall.longestShortestPathLength;
-		
-		float[] radius = new float[floydWarshall.longestShortestPath.size()];
+		float[] radius = new float[dpq.longestShortestPath.size()];
 		radiusMean = 0;
 		
 		int count = 0;
-		for(Integer currentVObjectID : floydWarshall.longestShortestPath) {
+		for(Integer currentVObjectID : dpq.longestShortestPath) {
 			long currentVGlobalID = objectVertexIDtoGlobalVertexID.get(currentVObjectID);
 			longestShortestPath.add(currentVGlobalID);
 			
@@ -496,14 +557,14 @@ class SkeletonInformation implements Serializable{
 			radius[count] = currentRadius;
 			count++;
 		}
-		radiusMean /= floydWarshall.longestShortestPathNumVertices;
+		radiusMean /= dpq.longestShortestPathNumVertices;
 		
 		radiusStd=0;
 		for(float currentRadius : radius) {
 			float diff = (radiusMean-currentRadius);
 			radiusStd+=diff*diff;
 		}
-		radiusStd = (float) Math.sqrt(radiusStd/(floydWarshall.longestShortestPathNumVertices-1));
+		radiusStd = (float) Math.sqrt(radiusStd/(dpq.longestShortestPathNumVertices-1));
 	}
 	
 }
@@ -521,7 +582,10 @@ class ObjectwiseSkeletonInformation implements Serializable{
 	public void addSkeletonEdge(long objectID, long v1, long v2, float edgeWeight) {
 		//System.out.println(objectID+" "+" "+v1+" "+v2+" "+edgeWeight);
 		SkeletonInformation currentSkeletonInformation = skeletonInformationByObjectID.getOrDefault(objectID, new SkeletonInformation(objectID));
-		currentSkeletonInformation.listOfSkeletonEdges.add(new SkeletonEdge(v1,v2,edgeWeight));
+		SkeletonEdgeFW skeletonEdge = new SkeletonEdgeFW(v1,v2, edgeWeight);
+		if ( !currentSkeletonInformation.listOfSkeletonEdges.contains(skeletonEdge) ) {
+			currentSkeletonInformation.listOfSkeletonEdges.add(skeletonEdge);
+		}
 		skeletonInformationByObjectID.put(objectID, currentSkeletonInformation);
 	}
 	
