@@ -59,7 +59,7 @@ public class ConnectedComponents {
 	public static void main(final String[] args) throws IOException {
 		Set<long[][]> temp = new HashSet<>();
 		
-		ImagePlus imp = new Opener().openImage( "/groups/cosem/cosem/ackermand/failed_skeleton_again.tif");//jan_skeleton.tif");//HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5/skeletonShortestPathAsRadii.tif" );
+		ImagePlus imp = new Opener().openImage( "/groups/cosem/cosem/ackermand/other_skeleton_failed.tif");//failed_skeleton.tif");//jan_skeleton.tif");//HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5/skeletonShortestPathAsRadii.tif" );
 		RandomAccessible<UnsignedByteType> wrapImg = ImageJFunctions.wrapByte(imp);
 		//ra = RandomAccessible<>wrapImg;
 		final RandomAccessible<BoolType> thresholded = Converters.convert(wrapImg, (a, b) -> b.set( a.getInteger() > 0), new BoolType());

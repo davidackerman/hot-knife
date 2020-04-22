@@ -48,10 +48,14 @@ import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
+import ij.ImageJ;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.basictypeaccess.array.LongArray;
+import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
@@ -155,7 +159,7 @@ public class SparkTopologicalThinning {
 		final int[] blockSize = attributes.getBlockSize();
 		
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
-		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT8, new GzipCompression());
+		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, org.janelia.saalfeldlab.n5.DataType.UINT64, new GzipCompression());
 		n5Writer.setAttribute(outputDatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, originalInputDatasetName)));
 
 		
@@ -170,82 +174,45 @@ public class SparkTopologicalThinning {
 			long [] paddedDimension = blockInformation.paddedGridBlock[1];
 			long [] padding = blockInformation.padding;
 			
-			//Read in input and create output
-			N5Reader n5BlockReader = null;	
-			IntervalView<UnsignedByteType> outputImage = null;
-			IntervalView<UnsignedLongType> sourceCropped = null;
-			if(iteration==0 ) {//Then this is the first thinning			
-				//Get input from source, padded so that any thinning that will occur in the current block will have necessary context.
-				//Create output image
-				n5BlockReader = new N5FSReader(n5Path);
-				RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, originalInputDatasetName);
-				sourceCropped = Views.offsetInterval(Views.extendValue(source, new UnsignedLongType(0)), paddedOffset, paddedDimension);
-				outputImage = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
+			//Input source is now the previously completed iteration image, and output is initialized to that
+			String currentInputDatasetName;
+			if(iteration==0) {
+				currentInputDatasetName = originalInputDatasetName;
+			}
+			else {
+				currentInputDatasetName = inputDatasetName;
+			}
+			N5FSReader n5BlockReader = new N5FSReader(n5OutputPath);
+			final RandomAccessibleInterval<UnsignedLongType> previousThinningResult = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, currentInputDatasetName);
+			IntervalView<UnsignedLongType> thinningResultCropped = Views.offsetInterval(Views.extendValue(previousThinningResult, new UnsignedLongType(0)), paddedOffset, paddedDimension);
 
-				//Initialize output image as binarized input
-				final Cursor<UnsignedLongType> sourceCroppedCursor = sourceCropped.cursor();
-				final Cursor<UnsignedByteType> outputImageCursor = outputImage.cursor();
-				while(sourceCroppedCursor.hasNext()) {
-					UnsignedLongType v1 = sourceCroppedCursor.next();
-					UnsignedByteType v2 = outputImageCursor.next();
-					if(v1.get() >0) {//==1865920002L) {
-						v2.set(1);
-					}
-					//else{v1.set(0)};
-				}
-				
-			}
-			else {//Then has already done a thinning		
-				//Input source is now the previously completed iteration image, and output is initialized to that
-				n5BlockReader = new N5FSReader(n5OutputPath);
-				final RandomAccessibleInterval<UnsignedByteType> source = (RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, inputDatasetName);
-				outputImage = Views.offsetInterval(Views.extendValue(source, new UnsignedByteType(0)), paddedOffset, paddedDimension);
-			}
+			//IntervalView<UnsignedLongType> outputImage = Views.offsetInterval(Views.extendValue(previousThinningResult, new UnsignedLongType(0)), paddedOffset, paddedDimension);
+			//IntervalView<UnsignedLongType> outputImage = Views.offsetInterval(ArrayImgs.unsignedLongs(paddedDimension),new long[]{0,0,0}, paddedDimension);
 			
 			
-			//Create instance of Skeletonize3D_
-			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
-	
 			//Assume we don't need to thin again and that the output image to write is the appropriately cropped version of outputImage
-			boolean needToThinAgain = false;
-			IntervalView<UnsignedByteType> croppedOutputImage = Views.offsetInterval(outputImage, padding, dimension);
 			
 			//For skeletonization and medial surface:
 			//All blocks start off dependent, so it will only be independent after it made it through one iteration, ensuring all blocks are checked.
 			//Perform thinning, then check if block is independent. If so, complete the block.
-			if (doMedialSurface) {//Then do medial surface thinning
-				if(!blockInformation.isIndependent) { 
-					needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
-					blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
-					if(blockInformation.isIndependent) {//then can finish it
-						skeletonize3D = new Skeletonize3D_(croppedOutputImage, new int[]{0, 0, 0}, new int[] {(int) offset[0],(int) offset[1], (int)offset[2]});
-						while(needToThinAgain) 
-							needToThinAgain = skeletonize3D.computeMedialSurfaceIteration();
-					}
+			if(!blockInformation.isIndependent) {
+				//Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
+				//if(iteration==0){		//TODO: The below fix for touching objects by thinning them independently, therebey producing indpependent skeletons will fail in some extreme cases like if the objects are already thin/touching or still touching after an iteration because on the next iteration, they will be treated as one object
+				blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching	
+				if(blockInformation.isIndependent) {//then can finish it
+					while(blockInformation.needToThinAgainCurrent) 
+						blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching
 				}
 			}
-			else {
-				if(!blockInformation.isIndependent) {
-					if(iteration==0){		//TODO: The below fix for touching objects by thinning them independently, therebey producing indpependent skeletons will fail in some extreme cases like if the objects are already thin/touching or still touching after an iteration because on the next iteration, they will be treated as one object
-						needToThinAgain = thinEachObjectIndependently(sourceCropped, outputImage, padding, paddedOffset, paddedDimension, needToThinAgain ); //to prevent one skeleton being created for two distinct objects that are touching
-					}else{ 
-						needToThinAgain = skeletonize3D.computeSkeletonIteration(); //just do normal thinning
-					}
-					blockInformation.isIndependent = skeletonize3D.isSkeletonBlockIndependent();
-					if(blockInformation.isIndependent) {//then can finish it
-						skeletonize3D = new Skeletonize3D_(croppedOutputImage, new int[]{0, 0, 0}, new int[] {(int) offset[0],(int) offset[1], (int)offset[2]});
-						while(needToThinAgain) 
-							needToThinAgain = skeletonize3D.computeSkeletonIteration();
-					}
-				}
-			}
+			IntervalView<UnsignedLongType> croppedOutputImage = Views.offsetInterval(thinningResultCropped, padding, dimension);
+//			}
 
 			//Write out current thinned block and return block information updated with whether it needs to be thinned again
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 			N5Utils.saveBlock(croppedOutputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
 			
-			blockInformation.needToThinAgainCurrent = needToThinAgain;
 			return blockInformation;
+			
 			
 		});
 		
@@ -272,51 +239,153 @@ public class SparkTopologicalThinning {
 		
 		return blockInformationList;
 	}
+	
+	private static boolean areObjectsTouching(IntervalView<UnsignedLongType> thinningResult, long[] paddedDimension) {
+		RandomAccess<UnsignedLongType> thinningResultRandomAccess = thinningResult.randomAccess();
+		for(int x=0; x<paddedDimension[0]; x++) {
+			for(int y=0; y<paddedDimension[1]; y++) {
+				for(int z=0; z<paddedDimension[2]; z++) {
+					thinningResultRandomAccess.setPosition(new int[] {x,y,z});
+					long objectID = thinningResultRandomAccess.get().get();
+					if(objectID>0) {
+						for(int dx=-1; dx<=1; dx++) {
+							for(int dy=-1; dy<=1; dy++) {
+								for(int dz=-1; dz<=1; dz++) {
+									int newX = x+dx;
+									int newY = y+dy;
+									int newZ = z+dz;
+									if(newX>=0 && newX<paddedDimension[0] && newY>=0 & newY<paddedDimension[1] && newZ>=0 && newZ<paddedDimension[2]) {//Then still inside block
+										thinningResultRandomAccess.setPosition(new int[] {newX,newY,newZ});
+										long neighboringObjectID = thinningResultRandomAccess.get().get();
+										if(neighboringObjectID>0 && neighboringObjectID!=objectID) {//then two objects are touching
+											return true;
+										}
+									}
+								}
+							}
+						}
+					}
+					
+				}
+			}
+		}
+		return false;
+	}
 
-	private static boolean thinEachObjectIndependently(IntervalView<UnsignedLongType> sourceCropped, IntervalView<UnsignedByteType> outputImage, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean needToThinAgain ){
-		Cursor<UnsignedLongType> sourceCroppedCursor = sourceCropped.cursor();
-		RandomAccess<UnsignedByteType> outputImageRandomAccess = outputImage.randomAccess();
+	private static BlockInformation updateThinningResult(IntervalView<UnsignedLongType> thinningResult, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ) {
+		if(blockInformation.areObjectsTouching) {//check if objects are still touching
+			blockInformation.areObjectsTouching = areObjectsTouching(thinningResult, paddedDimension);
+		}
+		System.out.println("Are objects touching:"+ blockInformation.areObjectsTouching);
+		if(blockInformation.areObjectsTouching) {
+			blockInformation = thinEachObjectIndependently(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
+		}
+		else {
+			blockInformation = thinEverythingTogether(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
+		}
+		return blockInformation;
+	}
+	
+	private static BlockInformation thinEachObjectIndependently(IntervalView<UnsignedLongType> thinningResult, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ){
+		blockInformation.needToThinAgainCurrent = false;
+		blockInformation.isIndependent = true;
+		
+		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.cursor();
+		thinningResultCursor.reset();
 		
 		Set<Long> objectIDsInBlock = new HashSet<Long>();
-		while(sourceCroppedCursor.hasNext()) {
-			long objectID = sourceCroppedCursor.next().get();
-			int [] pos = new int [] {sourceCroppedCursor.getIntPosition(0), sourceCroppedCursor.getIntPosition(1), sourceCroppedCursor.getIntPosition(2)};
-			outputImageRandomAccess.setPosition(pos);
-			outputImageRandomAccess.get().set(0);
-			if (objectID >0)
+		while(thinningResultCursor.hasNext()) {
+			long objectID = thinningResultCursor.next().get();
+			if (objectID >0) {
 				objectIDsInBlock.add(objectID);
+			}
 		}
+		
 		
 		IntervalView<UnsignedByteType> current = null;
 		Cursor<UnsignedByteType> currentCursor = null;
 		for(long objectID : objectIDsInBlock) {
-			sourceCroppedCursor.reset();
+			thinningResultCursor.reset();
 			current = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
 			currentCursor = current.cursor();
-			while(sourceCroppedCursor.hasNext()) { //initialize to only look at current object
-				sourceCroppedCursor.next();
+			while(thinningResultCursor.hasNext()) { //initialize to only look at current object
+				thinningResultCursor.next();
 				currentCursor.next();
-				if(sourceCroppedCursor.get().get() == objectID)
+				if(thinningResultCursor.get().get() == objectID)
 					currentCursor.get().set(1);
 			}
-			
+		
 			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(current, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
-			needToThinAgain |= skeletonize3D.computeSkeletonIteration();
+			if(doMedialSurface) {
+				blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeMedialSurfaceIteration();
+				blockInformation.isIndependent &= skeletonize3D.isMedialSurfaceBlockIndependent();
+			}
+			else {
+				blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeSkeletonIteration();
+				blockInformation.isIndependent &= skeletonize3D.isSkeletonBlockIndependent();
+			}
 			
 			//update output
 			currentCursor.reset();
+			thinningResultCursor.reset();//update in case need to rethin
 			while(currentCursor.hasNext()) {
 				currentCursor.next();
-				if(currentCursor.get().get() >0) {
-					int [] pos = new int [] {currentCursor.getIntPosition(0), currentCursor.getIntPosition(1), currentCursor.getIntPosition(2)};
-					outputImageRandomAccess.setPosition(pos);
-					outputImageRandomAccess.get().set(1);
+				thinningResultCursor.next();
+				if(currentCursor.get().get() ==0) {
+					if (thinningResultCursor.get().get() == objectID) {
+						thinningResultCursor.get().set(0);//Then this voxel was thinned out
+					}
 				}
 			}
 		}
 		
-		return needToThinAgain;
+		//previous thinning result should now equal the current thinning result
+		return blockInformation;
+	}
+	
+	private static BlockInformation thinEverythingTogether(IntervalView<UnsignedLongType> thinningResult, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ){
+		blockInformation.needToThinAgainCurrent = false;
+		blockInformation.isIndependent = true;
 		
+		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.cursor();
+		thinningResultCursor.reset();
+		
+		IntervalView<UnsignedByteType> current = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension); //need this as unsigned byte type
+		RandomAccess<UnsignedByteType> currentRandomAccess = current.randomAccess();
+		Cursor<UnsignedByteType> currentCursor = current.cursor();	
+		while(thinningResultCursor.hasNext()) {
+			long objectID = thinningResultCursor.next().get();
+			if (objectID >0) {
+				int [] pos = new int [] {thinningResultCursor.getIntPosition(0), thinningResultCursor.getIntPosition(1), thinningResultCursor.getIntPosition(2)};
+				currentRandomAccess.setPosition(pos);
+				currentRandomAccess.get().set(1);
+			}
+		}
+		
+	
+		Skeletonize3D_ skeletonize3D = new Skeletonize3D_(current, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
+		if(doMedialSurface) {
+			blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeMedialSurfaceIteration();
+			blockInformation.isIndependent &= skeletonize3D.isMedialSurfaceBlockIndependent();
+		}
+		else {
+			blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeSkeletonIteration();
+			blockInformation.isIndependent &= skeletonize3D.isSkeletonBlockIndependent();
+		}
+		
+		//update output
+		currentCursor.reset();
+		thinningResultCursor.reset();//update in case need to rethin
+		while(currentCursor.hasNext()) {
+			currentCursor.next();
+			thinningResultCursor.next();
+			if(currentCursor.get().get() == 0) {
+				thinningResultCursor.get().set(0);//Then this voxel was thinned out
+			}
+		}
+	
+		//previous thinning result should now equal the current thinning result
+		return blockInformation;
 	}
 
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,

@@ -220,8 +220,8 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			long [] paddedDimension = new long[] {gridBlock[1][0]+2, gridBlock[1][1]+2, gridBlock[1][2]+2};//Extend by 1 so can get overlap region
 			
 			final IntervalView<UnsignedLongType> connectedComponentsCropped = Views.offsetInterval(Views.extendZero(connectedComponents), paddedOffset, paddedDimension);
-			final IntervalView<UnsignedByteType> skeleton = Views.offsetInterval(Views.extendZero(
-					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, datasetName+"_skeleton")
+			final IntervalView<UnsignedLongType> skeleton = Views.offsetInterval(Views.extendZero(
+					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5BlockReader, datasetName+"_skeleton")
 					),paddedOffset, paddedDimension);
 			IntervalView<FloatType> distanceTransformCropped = Views.offsetInterval(Views.extendZero(distanceTransform), new long[] {minInside[0]-1, minInside[1]-1,minInside[2]-1}, new long[] {dimensionsInside[0]+2, dimensionsInside[1]+2, dimensionsInside[2]+2});		
 			if(show) {
@@ -230,8 +230,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 				ImageJFunctions.show(distanceTransformCropped);
 			}
 			
-			final RandomAccess<UnsignedLongType> connectedComponentsRandomAccess = connectedComponentsCropped.randomAccess();
-			final RandomAccess<UnsignedByteType> skeletonRandomAccess = skeleton.randomAccess();
+			final RandomAccess<UnsignedLongType> skeletonRandomAccess = skeleton.randomAccess();
 			final RandomAccess<FloatType> distanceTransformRandomAccess = distanceTransformCropped.randomAccess();
 
 			ObjectwiseSkeletonInformation currentBlockObjectwiseSkeletonInformation = new ObjectwiseSkeletonInformation();
@@ -241,18 +240,16 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 						int [] pos = {x,y,z};
 						
 						skeletonRandomAccess.setPosition(pos);
-						if(skeletonRandomAccess.get().get()>0) { //then it is skeleton
-							connectedComponentsRandomAccess.setPosition(pos);
+						long objectID = skeletonRandomAccess.get().get();
+						if(objectID>0) { //then it is skeleton
 							distanceTransformRandomAccess.setPosition(pos);
-							long objectID = connectedComponentsRandomAccess.get().get();
-						//	if(objectID!=1865920002L) skeletonRandomAccess.get().set(0);
+						//	if(objectID==1865920002L) skeletonRandomAccess.get().set(0);
 							long[] globalVoxelPosition = new long[] { pos[0]+gridBlock[0][0]-1, pos[1]+gridBlock[0][1]-1, pos[2]+gridBlock[0][2]-1};//subtract 1 because offset by -1
 							
 							long v1 = sourceDimensions[0] * sourceDimensions[1] * globalVoxelPosition[2] + sourceDimensions[0] * globalVoxelPosition[1] + globalVoxelPosition[0] + 1;
 							
 							float radius = (float) Math.sqrt(distanceTransformRandomAccess.get().get());
 							currentBlockObjectwiseSkeletonInformation.addRadius(objectID, v1, radius);
-							boolean pairFound = false;
 							for(int dx=-1; dx<=1; dx++) { //Check for edges
 								for(int dy=-1; dy<=1; dy++) {
 									for(int dz=-1; dz<=1; dz++) { //DGA:  redundant checking but necessary because we need to check corners TODO could optimize
@@ -261,8 +258,8 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 											int [] newPos = {pos[0]+dx, pos[1]+dy, pos[2]+dz};
 											skeletonRandomAccess.setPosition(newPos);
 											if (skeletonRandomAccess.get().get()>0) {
-												connectedComponentsRandomAccess.setPosition(newPos);
-												if(connectedComponentsRandomAccess.get().get() == objectID) {//then same object
+												skeletonRandomAccess.setPosition(newPos);
+												if(skeletonRandomAccess.get().get() == objectID) {//then same object
 													globalVoxelPosition = new long[] { newPos[0]+gridBlock[0][0]-1, newPos[1]+gridBlock[0][1]-1, newPos[2]+gridBlock[0][2]-1};//subtract 1 because offset by -1
 													long v2 = sourceDimensions[0] * sourceDimensions[1] * globalVoxelPosition[2] + sourceDimensions[0] * globalVoxelPosition[1] + globalVoxelPosition[0] + 1;
 													float edgeWeight = (float)Math.sqrt(dx*dx+dy*dy+dz*dz);
@@ -280,9 +277,9 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			show = false;
 			if(show) {
 				new ImageJ();
-				ImageJFunctions.show(connectedComponentsCropped);
+				//ImageJFunctions.show(connectedComponentsCropped);
 				ImageJFunctions.show(skeleton);
-				ImageJFunctions.show(distanceTransformCropped);
+				//ImageJFunctions.show(distanceTransformCropped);
 			} 
 
 						

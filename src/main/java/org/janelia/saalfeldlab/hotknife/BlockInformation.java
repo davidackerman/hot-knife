@@ -22,6 +22,7 @@ public class BlockInformation implements Serializable {
 	public boolean needToThinAgainPrevious;
 	public boolean needToThinAgainCurrent;
 	public boolean isIndependent;
+	public boolean areObjectsTouching;
 	
 	public Map<Long,Long> edgeComponentIDtoVolumeMap;
 	public Map<Long, Long> edgeComponentIDtoRootIDmap;
@@ -43,6 +44,7 @@ public class BlockInformation implements Serializable {
 		this.needToThinAgainPrevious = true;
 		this.needToThinAgainCurrent = true;
 		this.isIndependent = false;
+		this.areObjectsTouching = true;
 	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,

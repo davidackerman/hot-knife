@@ -287,8 +287,8 @@ public class SparkFillHolesInConnectedComponents {
 			while(distanceFromObjectCursor.hasNext()) {
 				float distanceFromObjectSquared = distanceFromObjectCursor.next().get();
 				int pos [] = new int[] {distanceFromObjectCursor.getIntPosition(0), distanceFromObjectCursor.getIntPosition(1), distanceFromObjectCursor.getIntPosition(2)};
-				objectsRandomAccess.setPosition(pos);
-				long objectID = objectsRandomAccess.get().get();
+				//objectsRandomAccess.setPosition(pos);
+				//long objectID = objectsRandomAccess.get().get();
 				/*if (objectID != maxValue && objectID>0) {
 					objectIDtoVolumeMap.put(objectID, objectIDtoVolumeMap.getOrDefault(objectID, 0L) + 1);		
 				}*/
@@ -297,7 +297,7 @@ public class SparkFillHolesInConnectedComponents {
 					if(pos[0]>0 && pos[0]<=dimension[0] && pos[1]>0 && pos[1]<=dimension[1] && pos[2]>0 && pos[2]<=dimension[2]) {//Then in original block
 						holeComponentsRandomAccess.setPosition(pos);
 						long holeID = holeComponentsRandomAccess.get().get();
-						holeIDtoVolumeMap.put(holeID, holeIDtoVolumeMap.getOrDefault(holeID, 0L) + 1);	
+						//holeIDtoVolumeMap.put(holeID, holeIDtoVolumeMap.getOrDefault(holeID, 0L) + 1);	
 
 						for(int dx=-1; dx<=1; dx++) {
 							for(int dy=-1; dy<=1; dy++) {
@@ -305,10 +305,10 @@ public class SparkFillHolesInConnectedComponents {
 									if((dx==0 && dy==0 && dz!=0) || (dx==0 && dz==0 && dy!=0) || (dy==0 && dz==0 && dx!=0)) {//diamond checking
 										int newPos [] = new int[] {pos[0]+dx, pos[1]+dy, pos[2]+dz};
 										objectsRandomAccess.setPosition(newPos);
-										objectID = objectsRandomAccess.get().get();
+										long objectID = objectsRandomAccess.get().get();
 										if(objectID>0) {//can still be outside
 											if ( objectID == maxValue || (holeIDtoObjectIDMap.containsKey(holeID) && objectID != holeIDtoObjectIDMap.get(holeID)) ) //is touching outside or then has already been assigned to an object and is not really a hole since it is touching multiple objects
-													holeIDtoObjectIDMap.put(holeID,0L);
+												holeIDtoObjectIDMap.put(holeID,0L);
 											else 
 												holeIDtoObjectIDMap.put(holeID,objectID);										
 										}
@@ -402,8 +402,10 @@ public class SparkFillHolesInConnectedComponents {
 							if(! mapsForFillingHoles.objectIDsBelowVolumeFilter.contains(objectID))
 								setValue = objectID;
 						}*/
-						if( holeID > 0)
+						 
+						if( holeID > 0) {
 							setValue = mapsForFillingHoles.holeIDtoObjectIDMap.get(holeID);
+						}
 						
 						voxel.set(setValue);
 					}
@@ -462,9 +464,9 @@ public class SparkFillHolesInConnectedComponents {
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (String currentOrganelle : organelles) {
 			logMemory(currentOrganelle);
-			tempVolumeFilteredDatasetName = currentOrganelle + "_volumeFiltered";
-			tempOutputN5DatasetName = currentOrganelle + "_holes" + "_blockwise_temp_to_delete";
-			finalOutputN5DatasetName = currentOrganelle + "_holes";
+			tempVolumeFilteredDatasetName = currentOrganelle + "_volumeFilteredTemp";
+			tempOutputN5DatasetName = tempVolumeFilteredDatasetName + "_holes" + "_blockwise_temp_to_delete";
+			finalOutputN5DatasetName = tempVolumeFilteredDatasetName + "_holes";
 			
 			// Create block information list
 			List<BlockInformation> blockInformationList = SparkConnectedComponents
@@ -492,8 +494,8 @@ public class SparkFillHolesInConnectedComponents {
 			directoriesToDelete.add(options.getInputN5Path() + "/" + tempOutputN5DatasetName);
 			directoriesToDelete.add(options.getInputN5Path() + "/" + finalOutputN5DatasetName);
 
-			MapsForFillingHoles mapsForFillingHoles = getMapsForFillingHoles(sc,  options.getInputN5Path(), currentOrganelle, blockInformationList);
-			fillHoles(sc, options.getInputN5Path(), currentOrganelle, currentOrganelle+options.getOutputN5DatasetSuffix(), mapsForFillingHoles, blockInformationList);
+			MapsForFillingHoles mapsForFillingHoles = getMapsForFillingHoles(sc,  options.getInputN5Path(), tempVolumeFilteredDatasetName, blockInformationList);
+			fillHoles(sc, options.getInputN5Path(), tempVolumeFilteredDatasetName, currentOrganelle+options.getOutputN5DatasetSuffix(), mapsForFillingHoles, blockInformationList);
 			
 			sc.close();
 		}

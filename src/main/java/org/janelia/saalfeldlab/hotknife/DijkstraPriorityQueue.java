@@ -69,6 +69,8 @@ private float dist[];
 
      // Distance to the source is 0 
      dist[src] = 0; 
+     long tic = System.currentTimeMillis();
+     int numChecked=0;
      while (settled.size() != V) { 
 
          // remove the minimum distance node  
@@ -80,7 +82,9 @@ private float dist[];
          settled.add(u); 
 
          e_Neighbours(u); 
+         numChecked++;
      } 
+     System.out.println(src+" "+numChecked+" "+(System.currentTimeMillis()-tic));
  } 
 
  // Function to process all the neighbours  
@@ -115,7 +119,7 @@ private float dist[];
      long tic = System.currentTimeMillis();
      longestShortestPathLength = -1;
      for(int source=0; source<V; source++) {
-    	 dijkstra(adj, source);
+    	dijkstra(adj, source);
          for (int target = source; target < V; target++) { 
         	 if(dist[target]>longestShortestPathLength) {
         		 longestShortestPathLength = dist[target];
@@ -146,7 +150,7 @@ private float dist[];
  public static void main(String arg[]) throws IOException 
  { 
 	 
-     int V = 50000; 
+     int V = 120000; 
 
      // Adjacency list representation of the  
      // connected edges 
@@ -165,10 +169,10 @@ private float dist[];
 	    	 adjacency.get(i+c).add(new Node(i,1));
     	 }
      }
-     
-     adjacency.get(25000).add(new Node(49000,1));
-     adjacency.get(49000).add(new Node(25000,1));
-
+     for(int i=1000;i<4000;i+=2) {
+    	 adjacency.get(i).add(new Node(V-i,1));
+    	 adjacency.get(V-i).add(new Node(i,1));
+     }
    /*
      adjacency.get(13).add(new Node(17,1.0));
      adjacency.get(17).add(new Node(13,1.0));
