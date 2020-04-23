@@ -276,7 +276,7 @@ public class SparkTopologicalThinning {
 		if(blockInformation.areObjectsTouching) {//check if objects are still touching
 			blockInformation.areObjectsTouching = areObjectsTouching(thinningResult, paddedDimension);
 		}
-		System.out.println("Are objects touching:"+ blockInformation.areObjectsTouching);
+		//System.out.println("Are objects touching:"+ blockInformation.areObjectsTouching);
 		if(blockInformation.areObjectsTouching) {
 			blockInformation = thinEachObjectIndependently(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
 		}
