@@ -5,6 +5,7 @@ import java.io.Serializable;
 //Java implementation of Dijkstra's Algorithm  
 //using Priority Queue: https://www.geeksforgeeks.org/dijkstras-shortest-path-algorithm-in-java-using-priorityqueue/
 import java.util.*;
+import java.util.Map.Entry;
  
 public class DijkstraPriorityQueue implements Serializable{ 
  /**
@@ -42,7 +43,27 @@ private float dist[];
      
      settled = new HashSet<Integer>();
      pq = new PriorityQueue<Node>(V, new Node()); 
+     
+     adj = new ArrayList();
  } 
+ 
+ 
+ public DijkstraPriorityQueue(int V, Map<List<Integer>,Float> adj) 
+ { 
+	 this(V);
+	 for (int i = 0; i < V; i++) { 
+         List<Node> item = new ArrayList<Node>(); 
+         this.adj.add(item); 
+     } 
+	for(Entry<List<Integer>, Float> e : adj.entrySet()) {
+		Integer v1 = e.getKey().get(0);
+		Integer v2 = e.getKey().get(1);
+		float edgeWeight = e.getValue();
+		this.adj.get(v1).add(new Node(v2,edgeWeight));
+		this.adj.get(v2).add(new Node(v1,edgeWeight));
+	}
+    
+ }
  
  public DijkstraPriorityQueue(int V, List<List<Node> > adj) 
  { 
@@ -140,7 +161,7 @@ private float dist[];
          e_Neighbours(u); 
          numChecked++;
      } 
-     System.out.println(src+" "+numChecked+" "+(System.currentTimeMillis()-tic));
+     //System.out.println(src+" "+numChecked+" "+(System.currentTimeMillis()-tic));
  } 
 
  // Function to process all the neighbours  
@@ -171,7 +192,7 @@ private float dist[];
      } 
  } 
  
- public void calculateLongestShortestPath() {
+ public void calculateLongestShortestPathInformation() {
      long tic = System.currentTimeMillis();
      longestShortestPathLength = -1;
      for(int source=0; source<V; source++) {
@@ -250,11 +271,15 @@ private float dist[];
  public static void main(String arg[]) throws IOException 
  { 
 	 
-     int V = 120000; 
-
+     int V = 100; 
+     Map<List<Integer>,Float>adjacency = new HashMap();
+     for(int i=0; i<V-1;i++) {
+    	 adjacency.put(Arrays.asList(i,i+1),1.0f);
+     }
+     adjacency.put(Arrays.asList(50,99),3.0f);
      // Adjacency list representation of the  
      // connected edges 
-     List<List<Node> > adjacency = new ArrayList<List<Node> >(); 
+    /* List<List<Node> > adjacency = new ArrayList<List<Node> >(); 
 
      // Initialize list for every node 
      for (int i = 0; i < V; i+=1) { 
@@ -272,10 +297,10 @@ private float dist[];
      for(int i=1000;i<4000;i+=2) {
     	 adjacency.get(i).add(new Node(V-i,1));
     	 adjacency.get(V-i).add(new Node(i,1));
-     }
+     }*/
      System.out.println("hi");
      DijkstraPriorityQueue dpq = new DijkstraPriorityQueue(V, adjacency);
-     dpq.calculateLongestShortestPath();
+     dpq.calculateLongestShortestPathInformation();
  } 
 } 
 

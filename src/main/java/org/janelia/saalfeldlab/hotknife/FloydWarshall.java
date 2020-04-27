@@ -18,12 +18,16 @@ public class FloydWarshall {
 	public 	int longestShortestPathNumVertices = 0;
  
 	
-	public FloydWarshall(Map<List<Integer>,Float> adjacency, int numVertices) {
+	public FloydWarshall(int numVertices, Map<List<Integer>,Float> adjacency) {
 		
 		
 		this.dist = new float[numVertices][numVertices];
 		for (float[] row: dist)
 		    Arrays.fill(row, Float.MAX_VALUE);
+
+		for(int i=0; i<numVertices;i++) {
+			dist[i][i]=0;
+		}
 		
 		this.next = new int[numVertices][numVertices];
 		for (int[] row: next)
@@ -36,8 +40,6 @@ public class FloydWarshall {
 			
 			int v1 = key.get(0);
 			int v2 = key.get(1);
-			dist[v1][v1] = 0;
-			dist[v2][v2] = 0;
 			dist[v1][v2] = value;
 			dist[v2][v1] = value;
 			
@@ -50,7 +52,7 @@ public class FloydWarshall {
 	}
 	
 	public FloydWarshall(Map<List<Integer>,Float> adjacency) {
-		this(adjacency, getNumberOfVertices(adjacency));
+		this(getNumberOfVertices(adjacency), adjacency);
 	}
 	
 	private static int getNumberOfVertices(Map<List<Integer>,Float> adjacency) {
@@ -109,11 +111,11 @@ public class FloydWarshall {
 
 	}
 	
-	public void calculateLongestShortestPath() {	
+	public void calculateLongestShortestPath() {
+		longestShortestPath.add(longestShortestPathI);
 		if (next[longestShortestPathI][longestShortestPathJ] != -1) {
 				int i  = longestShortestPathI;
 				int j = longestShortestPathJ;
-				longestShortestPath.add(longestShortestPathI);
 				while(i != j) {
 					i = next[i][j];
 					longestShortestPath.add(i);
@@ -128,7 +130,7 @@ public class FloydWarshall {
 		calculateFloydWarshallPathsOriginal();
 		float maxDist = -1;
 		for(int i=0; i<dist.length; i++) {
-			for(int j=0; j<i; j++) {
+			for(int j=0; j<=i; j++) {
 				if(dist[i][j]>maxDist) {
 					longestShortestPathI = i;
 					longestShortestPathJ = j;
@@ -147,15 +149,15 @@ public class FloydWarshall {
 
 		//System.out.println(vertexCount);
 		Map<List<Integer>,Float> distanceMap = new HashMap<>();   
-		for(int i = 0; i<6000;i++) {
-			distanceMap.put(Arrays.asList(i,i+1),1.0f);
+		for(int i = 0; i<0;i++) {
+		//	distanceMap.put(Arrays.asList(i,i+1),1.0f);
 		}
 		/*distanceMap.put(Arrays.asList(1,11),1.0f);
 		distanceMap.put(Arrays.asList(0,11),1.0f);
 		distanceMap.put(Arrays.asList(11,12),1.0f);
 		distanceMap.put(Arrays.asList(12,13),1.0f);*/
 						
-		FloydWarshall as = new FloydWarshall(distanceMap);
+		FloydWarshall as = new FloydWarshall(1,distanceMap);
 		long tic = System.currentTimeMillis();
 		//as.calculateFloydWarshallPathsOriginal();
 		as.calculateLongestShortestPathInformation();

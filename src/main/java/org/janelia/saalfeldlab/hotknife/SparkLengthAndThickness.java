@@ -527,13 +527,12 @@ class SkeletonInformation implements Serializable{
 		Map<Integer, Long> objectVertexIDtoGlobalVertexID = new HashMap<Integer, Long>();
 		Map<Long, Integer> globalVertexIDtoObjectVertexID = new HashMap<Long, Integer>();
 
-	    List<List<Node> > adjacency = new ArrayList<List<Node> >(); 
+	    Map<List<Integer>,Float> adjacency = new HashMap<List<Integer>,Float>();
 		int vObject=0;
 		for (long v : vertexRadii.keySet()) {	
 			objectVertexIDtoGlobalVertexID.put(vObject, v);
 			globalVertexIDtoObjectVertexID.put(v, vObject);			
 			vObject++;
-			adjacency.add(new ArrayList<Node>()); 			
 		}
 		//HashSet <List<Integer>> temp = new HashSet();
  		//Map<List<Integer>,Float> adjacency = new HashMap<>();
@@ -541,8 +540,8 @@ class SkeletonInformation implements Serializable{
 			int v1Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV1() );
 			int v2Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV2() );
 			float edgeWeight = skeletonEdge.getEdgeWeight();
-	        adjacency.get(v1Object).add(new Node(v2Object,edgeWeight));
-	        adjacency.get(v2Object).add(new Node(v1Object,edgeWeight));
+	       // adjacency.get(v1Object).add(new Node(v2Object,edgeWeight));
+	       // adjacency.get(v2Object).add(new Node(v1Object,edgeWeight));
 			/*if(temp.contains(Arrays.asList(v1Object, v2Object)) || temp.contains(Arrays.asList(v2Object, v1Object))){
 				System.out.println(objectID+" adjacency.get("+v1Object+").add(new Node("+v2Object+","+edgeWeight+"));");
 			}
@@ -551,20 +550,31 @@ class SkeletonInformation implements Serializable{
 				temp.add(Arrays.asList(v2Object, v1Object));
 			}*/
 
-			//adjacency.put(Arrays.asList(v1Object,v2Object),edgeWeight);
+			adjacency.put(Arrays.asList(v1Object,v2Object),edgeWeight);
 		}
 
-		DijkstraPriorityQueue dpq = new DijkstraPriorityQueue(vObject, adjacency);
-		long tic = System.currentTimeMillis();
-		dpq.calculateLongestShortestPath();
-		System.out.println("Time "+(System.currentTimeMillis()-tic));
-		longestShortestPathLength = dpq.longestShortestPathLength;
+		int longestShortestPathNumVertices;
+		List<Integer> longestShortestPathVObjectID;
+		if(vObject<30000) {//use floyd warshall
+			FloydWarshall shortestPathCalculator = new FloydWarshall(vObject, adjacency);
+			shortestPathCalculator.calculateLongestShortestPathInformation();
+			longestShortestPathLength = shortestPathCalculator.longestShortestPathLength;
+			longestShortestPathNumVertices = shortestPathCalculator.longestShortestPathNumVertices;
+			longestShortestPathVObjectID = shortestPathCalculator.longestShortestPath;
+		}
+		else {//possibly getting too big for memory, use dijkstra
+			DijkstraPriorityQueue shortestPathCalculator = new DijkstraPriorityQueue(vObject, adjacency);
+			shortestPathCalculator.calculateLongestShortestPathInformation();
+			longestShortestPathLength = shortestPathCalculator.longestShortestPathLength;
+			longestShortestPathNumVertices = shortestPathCalculator.longestShortestPathNumVertices;
+			longestShortestPathVObjectID = shortestPathCalculator.longestShortestPath;
+		}
 		
-		float[] radius = new float[dpq.longestShortestPath.size()];
+		float[] radius = new float[longestShortestPathNumVertices];
 		radiusMean = 0;
 		
 		int count = 0;
-		for(Integer currentVObjectID : dpq.longestShortestPath) {
+		for(Integer currentVObjectID : longestShortestPathVObjectID) {
 			long currentVGlobalID = objectVertexIDtoGlobalVertexID.get(currentVObjectID);
 			longestShortestPath.add(currentVGlobalID);
 			
@@ -575,14 +585,14 @@ class SkeletonInformation implements Serializable{
 			radius[count] = currentRadius;
 			count++;
 		}
-		radiusMean /= dpq.longestShortestPathNumVertices;
+		radiusMean /= longestShortestPathNumVertices;
 		
 		radiusStd=0;
 		for(float currentRadius : radius) {
 			float diff = (radiusMean-currentRadius);
 			radiusStd+=diff*diff;
 		}
-		radiusStd = (float) Math.sqrt(radiusStd/(dpq.longestShortestPathNumVertices-1));
+		radiusStd = (float) Math.sqrt(radiusStd/(longestShortestPathNumVertices-1));
 	}
 	
 }
