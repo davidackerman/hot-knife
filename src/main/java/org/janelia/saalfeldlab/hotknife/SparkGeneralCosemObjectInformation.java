@@ -73,6 +73,9 @@ public class SparkGeneralCosemObjectInformation {
 
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
 		private String inputN5DatasetName = null;
+		
+		@Option(name = "--doContactSites", required = false, usage = "Get general information for contact sites")
+		private boolean doContactSites = true;
 
 		public Options(final String[] args) {
 			final CmdLineParser parser = new CmdLineParser(this);
@@ -97,6 +100,10 @@ public class SparkGeneralCosemObjectInformation {
 				outputDirectory = inputN5Path.split(".n5")[0]+"_results";
 			}
 			return outputDirectory;
+		}
+		
+		public boolean getDoContactSites() {
+			return doContactSites;
 		}
 		
 	}
@@ -220,7 +227,7 @@ public class SparkGeneralCosemObjectInformation {
 	
 	public static void addNewVoxelToObjectInformation(Map<Long,long[]> objectIDtoInformationMap, long objectID, long[] position, long surfaceAreaContributionOfVoxelInFaces, long[] organelleIDs) {
 		if(!objectIDtoInformationMap.containsKey(objectID)) {
-			objectIDtoInformationMap.put(objectID, new long[]{1,surfaceAreaContributionOfVoxelInFaces,position[0],position[1],position[2],position[0],position[1],position[2],position[0],position[1],position[2], -1, -1});
+			objectIDtoInformationMap.put(objectID, new long[]{1,surfaceAreaContributionOfVoxelInFaces,position[0],position[1],position[2],position[0],position[1],position[2],position[0],position[1],position[2], organelleIDs[0], organelleIDs[1]});
 		}
 		else {
 			long[] objectInformation = objectIDtoInformationMap.get(objectID);
@@ -409,15 +416,18 @@ public class SparkGeneralCosemObjectInformation {
 			calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
 			sc.close();
 		}
-		for (int i=0; i<organelles.length; i++) {
-			for(int j=i+1; j<organelles.length;j++) {
-				String [] datasetNames = {organelles[i],organelles[j],organelles[i]+"_to_"+organelles[j]+"_cc"};
-				System.out.println(datasetNames[2]);
-				
-				JavaSparkContext sc = new JavaSparkContext(conf);
-				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[2]);
-				calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
-				sc.close();
+		
+		if (options.getDoContactSites()) {
+			for (int i=0; i<organelles.length; i++) {
+				for(int j=i+1; j<organelles.length;j++) {
+					String [] datasetNames = {organelles[i],organelles[j],organelles[i]+"_to_"+organelles[j]+"_cc"};
+					System.out.println(datasetNames[2]);
+					
+					JavaSparkContext sc = new JavaSparkContext(conf);
+					List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[2]);
+					calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
+					sc.close();
+				}
 			}
 		}
 	}

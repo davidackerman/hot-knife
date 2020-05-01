@@ -87,7 +87,7 @@ public class IOHelper
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-		return null;
+		return new double[] {4,4,4};//Default to 4 nm
 	}
 
 	

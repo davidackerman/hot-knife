@@ -26,6 +26,7 @@ public class BlockInformation implements Serializable {
 	
 	public Map<Long,Long> edgeComponentIDtoVolumeMap;
 	public Map<Long, Long> edgeComponentIDtoRootIDmap;
+	public Map<Long, List<Long>> edgeComponentIDtoOrganelleIDs;//for contact sites
 	
 	public BlockInformation(long[][] gridBlock, Map<Long,Long> edgeComponentIDs,
 			Map<Long, Long> edgeComponentIDtoRootIDmap) {
