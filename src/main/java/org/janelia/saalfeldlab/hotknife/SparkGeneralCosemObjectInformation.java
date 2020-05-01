@@ -419,8 +419,8 @@ public class SparkGeneralCosemObjectInformation {
 		
 		if (options.getDoContactSites()) {
 			for (int i=0; i<organelles.length; i++) {
-				for(int j=i+1; j<organelles.length;j++) {
-					String [] datasetNames = {organelles[i],organelles[j],organelles[i]+"_to_"+organelles[j]+"_cc"};
+				for(int j=i; j<organelles.length;j++) {
+					String [] datasetNames = {organelles[i],i==j ? organelles[j] : organelles[j]+"_pairs",organelles[i]+"_to_"+organelles[j]+"_cc"};
 					System.out.println(datasetNames[2]);
 					
 					JavaSparkContext sc = new JavaSparkContext(conf);
