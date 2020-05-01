@@ -76,9 +76,6 @@ public class SparkContactSites {
 		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be organelle1_to_organelle2_cc")
 		private String outputN5DatasetSuffix = "";
 
-		@Option(name = "--maskN5Path", required = true, usage = "mask N5 path, e.g. /path/to/input/mask.n5")
-		private String maskN5Path = null;
-
 		@Option(name = "--contactDistance", required = false, usage = "Distance from orgnelle for contact site (nm)")
 		private double contactDistance = 10;
 		
@@ -115,10 +112,6 @@ public class SparkContactSites {
 
 		public String getOutputN5Path() {
 			return outputN5Path;
-		}
-
-		public String getMaskN5Path() {
-			return maskN5Path;
 		}
 
 		public double getContactDistance() {
@@ -162,7 +155,7 @@ public class SparkContactSites {
 		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle);
-		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", pixelResolution);
+		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 		
 		//Get contact distance in voxels
 		final double contactDistanceInVoxels = contactDistance/pixelResolution[0];
@@ -378,7 +371,14 @@ public class SparkContactSites {
 						Long organelle2ID = organelle2DataRA.get().get();
 
 						if(organelle1ID>0 && organelle2ID>0) { //then is part of a contact site
-							contactSiteOrganellePairsSet.add(Arrays.asList(organelle1ID,organelle2ID));
+							if(organelle1.equals(organelle2) ) {
+								if(! organelle1ID.equals(organelle2ID)) { //if it is the same organelle type, then can't be the same ID otherwise it is the halo itself
+									contactSiteOrganellePairsSet.add(Arrays.asList(organelle1ID,organelle2ID));
+								}
+							}
+							else {
+								contactSiteOrganellePairsSet.add(Arrays.asList(organelle1ID,organelle2ID));
+							}
 						}
 					}
 				}
@@ -639,7 +639,7 @@ public class SparkContactSites {
 				
 				double minimumVolumeCutoff = options.getMinimumVolumeCutoff();
 				blockInformationList = blockwiseConnectedComponents(
-						sc, options.getInputN5Path(),
+						sc, options.getOutputN5Path(),
 						organelle1+"_contact_boundary_temp_to_delete", organelle2+"_contact_boundary_temp_to_delete", 
 						options.getOutputN5Path(),
 						tempOutputN5ConnectedComponents,
@@ -669,7 +669,7 @@ public class SparkContactSites {
 			}
 		}
 		
-		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
+		//SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 		System.out.println("Stage 5 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
 		
 	}
