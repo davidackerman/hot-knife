@@ -43,11 +43,14 @@ import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.broadcast.Broadcast;
 import org.janelia.saalfeldlab.hotknife.util.Grid;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
+import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
@@ -59,8 +62,10 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.morphology.distance.DistanceTransform;
 import net.imglib2.algorithm.morphology.distance.DistanceTransform.DISTANCE_TYPE;
 import net.imglib2.converter.Converters;
+import net.imglib2.img.Img;
 import net.imglib2.img.NativeImg;
 import net.imglib2.img.array.ArrayImg;
+import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.ByteArray;
 import net.imglib2.type.logic.NativeBoolType;
@@ -89,6 +94,9 @@ public class SparkLengthAndThickness {
 
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
 		private String inputN5DatasetName = null;
+		
+		@Option(name = "--minimumBranchLength", required = false, usage = "Minimum branch length (nm)")
+		private float minimumBranchLength = 20;
 
 		public Options(final String[] args) {
 			final CmdLineParser parser = new CmdLineParser(this);
@@ -115,6 +123,9 @@ public class SparkLengthAndThickness {
 			return outputDirectory;
 		}
 		
+		public float getMinimumBranchLength() {
+			return minimumBranchLength;
+		}
 
 	}
 
@@ -300,23 +311,25 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		return objectwiseSkeletonInformation;
 	}
 
-	public static void calculateObjectwiseLengthAndThickness(final JavaSparkContext sc,
+	public static DataForWritingImages calculateObjectwiseLengthAndThickness(final JavaSparkContext sc,
 		ObjectwiseSkeletonInformation objectwiseSkeletonInformation, 
 		String n5Path,
 		String organelle,
+		float minimumBranchLengthInVoxels,
 		String outputDirectory) throws IOException, InterruptedException {
 		final N5Reader n5Reader = new N5FSReader(n5Path);		
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle);
 
 		ArrayList<SkeletonInformation> listOfObjectwiseSkeletonInformation = objectwiseSkeletonInformation.asList();
+
 		final JavaRDD<SkeletonInformation> rdd = sc.parallelize(listOfObjectwiseSkeletonInformation);
 		if (! new File(outputDirectory).exists()){
 			new File(outputDirectory).mkdirs();
 	    }
-		rdd.foreach(skeletonInformation -> {
+		JavaRDD<DataForWritingImages> javaRDDDataForWritingImages = rdd.map(skeletonInformation -> {
 				long tic = System.currentTimeMillis();
 				System.out.println(skeletonInformation.objectID);
-				skeletonInformation.calculateLongestShortestPath();
+				skeletonInformation.calculateLongestShortestPath(minimumBranchLengthInVoxels);
 				FileWriter csvWriter = new FileWriter(outputDirectory+"/"+organelle+"_"+skeletonInformation.objectID+"_lengthAndThickness_to_delete.csv");
 				System.out.println(skeletonInformation.objectID+" time "+(System.currentTimeMillis()-tic));
 				
@@ -324,20 +337,26 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 				csvWriter.flush();
 				csvWriter.close();
 				
+				
+				Set<Long> prunedGlobalVertexIDtoObjectIDMap = new HashSet<Long>();
+				for(Long globalVertexID : skeletonInformation.prunedVertices) {
+					prunedGlobalVertexIDtoObjectIDMap.add(globalVertexID);
+				}
+				
+				Map<Long, Long> longestShortestPathGlobalVertexIDtoObjectIDMap = new HashMap<Long,Long>();
+				for(Long globalVertexID : skeletonInformation.longestShortestPath) {
+					longestShortestPathGlobalVertexIDtoObjectIDMap.put(globalVertexID, skeletonInformation.objectID);
+				}
+				
 				skeletonInformation.clear();
+				DataForWritingImages dataForWritingImages = new DataForWritingImages(prunedGlobalVertexIDtoObjectIDMap, longestShortestPathGlobalVertexIDtoObjectIDMap);
+				return dataForWritingImages;
 		});
 		
-		
-		
-		
-		/*boolean demo = false;
-		ArrayImg<UnsignedByteType, ByteArray> skeleton =null;
-		RandomAccess<UnsignedByteType> skeletonRandomAccess = null;
-		if(demo) {
-			new ImageJ();
-			skeleton = ArrayImgs.unsignedBytes(new long[] {501,501,501});
-			skeletonRandomAccess = skeleton.randomAccess();
-		}*/
+		DataForWritingImages dataForWritingImages = javaRDDDataForWritingImages.reduce((a,b) -> {
+			a.merge(b);
+			return a;
+		});
 		
 		FileWriter csvWriter = new FileWriter(outputDirectory+"/"+organelle+"_lengthAndThickness.csv");
 		csvWriter.append("Object ID,Longest Shortest Path (nm),Radius Mean (nm), Radius STD (nm)\n");
@@ -351,25 +370,95 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			
 			File fileToDelete = new File(filePath);
 			fileToDelete.delete();
-//			if(demo) {
-//				/*for(long vertexID : skeletonInformation.vertexRadii.keySet()) {
-//					skeletonRandomAccess.setPosition(convertIDtoXYZ(vertexID));
-//					skeletonRandomAccess.get().set(128);
-//					}*/
-//				for(long vertexID : skeletonInformation.longestShortestPath) {
-//					skeletonRandomAccess.setPosition(convertIDtoXYZ(vertexID));
-//					skeletonRandomAccess.get().set((int)Math.round(skeletonInformation.vertexRadii.get(vertexID)));
-//				}
-//			}
 		}
 		
-	/*	if(demo) {
-			ImageJFunctions.show(skeleton);
-		}
-		*/
+
 		csvWriter.flush();
 		csvWriter.close();
 		
+		return dataForWritingImages;
+	}
+	
+	public static final void writeLongestShortestPathsToN5(
+			final JavaSparkContext sc,
+			final String n5Path,
+			final String datasetName,
+			final Broadcast<DataForWritingImages> broadcastedDataForWritingImages,
+			final List<BlockInformation> blockInformationList) throws IOException {
+
+		final N5Reader n5Reader = new N5FSReader(n5Path);		
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName+"_skeleton");
+
+		final long[] sourceDimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		final int n = sourceDimensions.length;
+		final double [] pixelResolution = IOHelper.getResolution(n5Reader, datasetName);
+		
+		
+		final String prunedSkeletonN5DatasetName = datasetName+"_skeleton_pruned";
+		final N5Writer n5Writer = new N5FSWriter(n5Path);
+		n5Writer.createGroup(prunedSkeletonN5DatasetName);
+		n5Writer.createDataset(prunedSkeletonN5DatasetName, sourceDimensions, blockSize,
+				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
+		n5Writer.setAttribute(prunedSkeletonN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		
+		
+		final String longestShortestPathN5DatasetName = datasetName+"_skeleton_pruned_longestShortestPath";
+		n5Writer.createGroup(longestShortestPathN5DatasetName);
+		n5Writer.createDataset(longestShortestPathN5DatasetName, sourceDimensions, blockSize,
+				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
+		n5Writer.setAttribute(longestShortestPathN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		
+		/*
+		 * grid block size for parallelization to minimize double loading of
+		 * blocks
+		 */
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		rdd.foreach(currentBlockInformation -> {
+			// Get block-specific information
+			final long[][] gridBlock = currentBlockInformation.gridBlock;
+			long[] offset = gridBlock[0];
+			long[] dimension = gridBlock[1];
+			final N5Reader n5ReaderLocal = new N5FSReader(n5Path);		
+
+			RandomAccessibleInterval<UnsignedLongType> skeleton = Views.offsetInterval(Views.extendZero(
+						(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, datasetName+"_skeleton")
+						),offset, dimension);
+			RandomAccess<UnsignedLongType> skeletonRA = skeleton.randomAccess();
+			
+			DataForWritingImages dataForWritingImages = broadcastedDataForWritingImages.value();
+			
+			// Create the output based on the current dimensions
+			final Img<UnsignedLongType> output = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(dimension);
+			RandomAccess<UnsignedLongType> outputRA = output.randomAccess();
+			for(long x=0; x<dimension[0]; x++) {
+				for(long y=0; y<dimension[1]; y++) {
+					for(long z=0; z<dimension[2]; z++) {
+						
+						// Unique global ID is based on pixel index, +1 to differentiate it from
+						// background
+						Long globalVertexID = sourceDimensions[0] * sourceDimensions[1] * (z+offset[2])
+								+ sourceDimensions[0] * (y+offset[1])+ (x+offset[0]) + 1;
+
+						long [] pos = new long[] {x,y,z};
+						skeletonRA.setPosition(pos);
+						if(skeletonRA.get().get()>0) {//then is part of original skeleton
+							if(dataForWritingImages.prunedGlobalVertexIDtoObjectIDMap.contains(globalVertexID)) { //then it should be removed
+								skeletonRA.get().set(0);
+							}
+							else if(dataForWritingImages.longestShortestPathGlobalVertexIDtoObjectIDMap.containsKey(globalVertexID)) {//then it is a voxel in a longest shortst path
+								outputRA.setPosition(pos);
+								Long objectID = dataForWritingImages.longestShortestPathGlobalVertexIDtoObjectIDMap.get(globalVertexID);
+								outputRA.get().set(objectID);
+							}
+						}
+					}
+				}
+			}
+			final N5Writer n5WriterLocal = new N5FSWriter(n5Path);
+			N5Utils.saveBlock(skeleton, n5WriterLocal, prunedSkeletonN5DatasetName, gridBlock[2]);
+			N5Utils.saveBlock(output, n5WriterLocal, longestShortestPathN5DatasetName, gridBlock[2]);
+		});
 	}
 	
 	public static int[] convertIDtoXYZ(long vertexID) {
@@ -420,11 +509,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			return;
 
 		final SparkConf conf = new SparkConf().setAppName("SparkLengthAndThickness");
-		/*conf.set("spark.executor.heartbeatInterval","1000000");
-		conf.set("spark.network.timeout","100000");
 		
-		//conf.set("spark.executor.heartbeatInterval","1");	
-		System.out.println(conf.get("spark.network.timeout"));*/
 		// Get all organelles
 		String[] organelles = { "" };
 		if (options.getInputN5DatasetName() != null) {
@@ -456,7 +541,15 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 					options.getInputN5DatasetName(),
 					blockInformationList);
 			
-			calculateObjectwiseLengthAndThickness(sc, objectwiseSkeletonInformation, options.getInputN5Path(), currentOrganelle, options.getOutputDirectory());
+			DataForWritingImages dataForWritingImages = calculateObjectwiseLengthAndThickness(sc, objectwiseSkeletonInformation, options.getInputN5Path(), currentOrganelle, options.getMinimumBranchLength(), options.getOutputDirectory());
+			Broadcast<DataForWritingImages> broadcastedDataForWritingImages = sc.broadcast(dataForWritingImages);
+
+			writeLongestShortestPathsToN5(
+					sc,
+					options.getInputN5Path(),
+					options.getInputN5DatasetName(),
+					broadcastedDataForWritingImages,
+					blockInformationList);
 			
 			sc.close();
 		}
@@ -465,6 +558,21 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 	}
 	
+}
+
+class DataForWritingImages implements Serializable{
+	Set<Long> prunedGlobalVertexIDtoObjectIDMap;
+	Map<Long,Long> longestShortestPathGlobalVertexIDtoObjectIDMap;
+	
+	public DataForWritingImages(Set<Long> prunedGlobalVertexIDtoObjectIDMap, Map<Long,Long> longestShortestPathGlobalVertexIDtoObjectIDMap){
+		this.prunedGlobalVertexIDtoObjectIDMap = prunedGlobalVertexIDtoObjectIDMap;
+		this.longestShortestPathGlobalVertexIDtoObjectIDMap = longestShortestPathGlobalVertexIDtoObjectIDMap;
+	}
+	
+	public void merge(DataForWritingImages b) {
+		prunedGlobalVertexIDtoObjectIDMap.addAll(b.prunedGlobalVertexIDtoObjectIDMap);
+		longestShortestPathGlobalVertexIDtoObjectIDMap.putAll(b.longestShortestPathGlobalVertexIDtoObjectIDMap);
+	}
 }
 
 class SkeletonEdge implements Serializable{
@@ -496,6 +604,8 @@ class SkeletonInformation implements Serializable{
 	List<SkeletonEdge> listOfSkeletonEdges;
 	Map<Long,Float> vertexRadii;
 	HashSet<Long> longestShortestPath;
+	HashSet<Long> prunedVertices;
+	Map<Integer, Long> objectVertexIDtoGlobalVertexID;
 	
 	float longestShortestPathLength;
 	float radiusMean;
@@ -506,12 +616,14 @@ class SkeletonInformation implements Serializable{
 		this.listOfSkeletonEdges = new ArrayList<SkeletonEdge>();
 		this.vertexRadii = new HashMap<Long, Float>();
 		this.longestShortestPath = new HashSet();
+		this.prunedVertices = new HashSet();
 	}
 	
 	public void clear() {
 		this.listOfSkeletonEdges = new ArrayList<SkeletonEdge>();
 		this.vertexRadii = new HashMap<Long, Float>();
 		this.longestShortestPath = new HashSet();
+		this.prunedVertices = new HashSet();
 	}
 	
 	public void merge(SkeletonInformation newSkeletonInformation) {
@@ -523,7 +635,7 @@ class SkeletonInformation implements Serializable{
 		vertexRadii.putAll(newSkeletonInformation.vertexRadii);
 	}
 	
-	public void calculateLongestShortestPath(){
+	public void calculateLongestShortestPath(float minimumBranchLength){
 		Map<Integer, Long> objectVertexIDtoGlobalVertexID = new HashMap<Integer, Long>();
 		Map<Long, Integer> globalVertexIDtoObjectVertexID = new HashMap<Long, Integer>();
 
@@ -534,42 +646,36 @@ class SkeletonInformation implements Serializable{
 			globalVertexIDtoObjectVertexID.put(v, vObject);			
 			vObject++;
 		}
-		//HashSet <List<Integer>> temp = new HashSet();
- 		//Map<List<Integer>,Float> adjacency = new HashMap<>();
+		
+
 		for (SkeletonEdge skeletonEdge : listOfSkeletonEdges) {	
 			int v1Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV1() );
 			int v2Object = globalVertexIDtoObjectVertexID.get( skeletonEdge.getV2() );
 			float edgeWeight = skeletonEdge.getEdgeWeight();
-	       // adjacency.get(v1Object).add(new Node(v2Object,edgeWeight));
-	       // adjacency.get(v2Object).add(new Node(v1Object,edgeWeight));
-			/*if(temp.contains(Arrays.asList(v1Object, v2Object)) || temp.contains(Arrays.asList(v2Object, v1Object))){
-				System.out.println(objectID+" adjacency.get("+v1Object+").add(new Node("+v2Object+","+edgeWeight+"));");
-			}
-			else {
-				temp.add(Arrays.asList(v1Object, v2Object));
-				temp.add(Arrays.asList(v2Object, v1Object));
-			}*/
-
 			adjacency.put(Arrays.asList(v1Object,v2Object),edgeWeight);
 		}
 
 		int longestShortestPathNumVertices;
 		List<Integer> longestShortestPathVObjectID;
-		if(vObject<30000) {//use floyd warshall
+		//if(vObject<30000) {//use floyd warshall
 			FloydWarshall shortestPathCalculator = new FloydWarshall(vObject, adjacency);
-			shortestPathCalculator.calculateLongestShortestPathInformation();
+			shortestPathCalculator.pruneAndCalculateLongestShortestPathInformation(minimumBranchLength);
 			longestShortestPathLength = shortestPathCalculator.longestShortestPathLength;
 			longestShortestPathNumVertices = shortestPathCalculator.longestShortestPathNumVertices;
 			longestShortestPathVObjectID = shortestPathCalculator.longestShortestPath;
-		}
+		/*}
 		else {//possibly getting too big for memory, use dijkstra
 			DijkstraPriorityQueue shortestPathCalculator = new DijkstraPriorityQueue(vObject, adjacency);
 			shortestPathCalculator.calculateLongestShortestPathInformation();
 			longestShortestPathLength = shortestPathCalculator.longestShortestPathLength;
 			longestShortestPathNumVertices = shortestPathCalculator.longestShortestPathNumVertices;
 			longestShortestPathVObjectID = shortestPathCalculator.longestShortestPath;
+		}*/
+		for(Integer prunedVertexObjectID : shortestPathCalculator.prunedVertices) {
+			long prunedVertexGlobalID = objectVertexIDtoGlobalVertexID.get(prunedVertexObjectID);
+			this.prunedVertices.add(prunedVertexGlobalID);
 		}
-		
+			
 		float[] radius = new float[longestShortestPathNumVertices];
 		radiusMean = 0;
 		

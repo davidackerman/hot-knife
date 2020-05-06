@@ -646,16 +646,8 @@ public class SparkContactSites {
 				JavaSparkContext sc = new JavaSparkContext(conf);
 				
 				final String organelleContactString = organelle1 + "_to_" + organelle2;
-				//final String tempOutputN5ContactSites= organelleContactString+"_temp_to_delete";
 				final String tempOutputN5ConnectedComponents = organelleContactString + "_cc_blockwise_temp_to_delete";
 				final String finalOutputN5DatasetName = organelleContactString + "_cc";
-				
-				System.out.println(organelleContactString + " " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
-				
-				/*calculateContactSitesUsingObjectContactBoundaries(
-						sc, options.getInputN5Path(), organelle1+"_contact_boundary_temp_to_delete", organelle2+"_contact_boundary_temp_to_delete",
-						options.getOutputN5Path(), tempOutputN5ContactSites, blockInformationList); */
-				System.out.println("Stage 1 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
 				
 				double minimumVolumeCutoff = options.getMinimumVolumeCutoff();
 				blockInformationList = blockwiseConnectedComponents(
@@ -665,25 +657,14 @@ public class SparkContactSites {
 						tempOutputN5ConnectedComponents,
 						minimumVolumeCutoff,
 						blockInformationList);
-				//blockInformationList = blockwiseConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ContactSites, options.getOutputN5Path(), organelle1, organelle2, blockInformationList);				
 				
-				System.out.println("Stage 2 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
 				HashMap<Long, List<Long>> edgeComponentIDtoOrganelleIDs = new HashMap<Long,List<Long>>();
 				for(BlockInformation currentBlockInformation : blockInformationList) {
 					edgeComponentIDtoOrganelleIDs.putAll(currentBlockInformation.edgeComponentIDtoOrganelleIDs);
 				}
 				blockInformationList = unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ConnectedComponents, minimumVolumeCutoff,edgeComponentIDtoOrganelleIDs, blockInformationList);
 				
-				System.out.println("Stage 3 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
-				
-				SparkConnectedComponents.mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ConnectedComponents, finalOutputN5DatasetName,
-						blockInformationList);
-				
-				//getMapForRelabelingContactSites(sc, options.getOutputN5Path(), finalOutputN5DatasetName, blockInformationList);
-				//relabelContactSites(sc, options.getOutputN5Path(), finalOutputN5DatasetName, blockInformationList);
-
-				System.out.println("Stage 4 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
-				
+				SparkConnectedComponents.mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5ConnectedComponents, finalOutputN5DatasetName, blockInformationList);				
 				directoriesToDelete.add(options.getOutputN5Path() + "/" + tempOutputN5ConnectedComponents);
 				sc.close();
 			}
