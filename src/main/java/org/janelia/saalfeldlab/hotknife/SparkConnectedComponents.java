@@ -49,10 +49,12 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import org.spark_project.guava.collect.Sets;
 
-import net.imagej.ImageJ;
+import ij.ImageJ;
+import net.imagej.ops.Ops.Filter.Gauss;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.Img;
@@ -64,7 +66,9 @@ import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.numeric.integer.*;
+import net.imglib2.type.numeric.real.*;
 import net.imglib2.util.Intervals;
+import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 
 import org.janelia.saalfeldlab.hotknife.IOHelper;
@@ -97,7 +101,7 @@ public class SparkConnectedComponents {
 		private double thresholdDistance = 0;
 		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept (nm^3)")
-		private double minimumVolumeCutoff = 64000;
+		private double minimumVolumeCutoff = 20E6;
 
 		public Options(final String[] args) {
 
@@ -173,14 +177,14 @@ public class SparkConnectedComponents {
 		return blockwiseConnectedComponents(
 				sc, inputN5Path, inputN5DatasetName,
 				outputN5Path,  outputN5DatasetName,maskN5PathName,
-				thresholdIntensityCutoff, minimumVolumeCutoff, blockInformationList, false);	
+				thresholdIntensityCutoff, minimumVolumeCutoff, blockInformationList, false, true);	
 	}
 	
 	@SuppressWarnings("unchecked")
 	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
-			final double thresholdIntensityCutoff, double minimumVolumeCutoff, List<BlockInformation> blockInformationList, boolean findHoles) throws IOException {
+			final double thresholdIntensityCutoff, double minimumVolumeCutoff, List<BlockInformation> blockInformationList, boolean findHoles, boolean smooth) throws IOException {
 
 		// Get attributes of input data set
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
@@ -209,7 +213,7 @@ public class SparkConnectedComponents {
 
 			// Read in source block
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-			final RandomAccessibleInterval<UnsignedByteType> sourceInterval;
+			RandomAccessibleInterval<UnsignedByteType> sourceInterval = null;
 			if(findHoles) {
 				
 				RandomAccessibleInterval<UnsignedLongType> connectedComponents = Views.offsetInterval(Views.extendZero(
@@ -225,9 +229,29 @@ public class SparkConnectedComponents {
 				
 			}
 			else {
-				sourceInterval = Views.offsetInterval(Views.extendZero(
-						(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
-						),offset, dimension);
+				if(smooth) {
+					double [] sigma = new double[] {3,3,3};
+					int[] sizes = Gauss3.halfkernelsizes( sigma );
+					long padding = sizes[0];
+					long [] paddedOffset = new long [] {offset[0]-padding,offset[1]-padding,offset[2]-padding};
+					long [] paddedDimension = new long [] {dimension[0]+2*padding,dimension[1]+2*padding,dimension[2]+2*padding};
+					RandomAccessibleInterval<UnsignedByteType> rawPredictions = Views.offsetInterval(Views.extendMirrorSingle(
+							(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
+							),paddedOffset, paddedDimension);
+					
+					final Img<UnsignedByteType> smoothedPredictions =  new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(paddedDimension);	
+
+					Gauss3.gauss(sigma, rawPredictions, smoothedPredictions, 1);
+					/*ImageJ ij = new ImageJ();
+					ImageJFunctions.show(rawPredictions);
+					ImageJFunctions.show(smoothedPredictions);*/
+					sourceInterval = Views.offsetInterval(smoothedPredictions,new long[] {padding,padding,padding},dimension);
+					
+				}else {
+					sourceInterval = Views.offsetInterval(Views.extendZero(
+							(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
+							),offset, dimension);
+				}
 
 				// Read in mask block
 				final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5PathName);

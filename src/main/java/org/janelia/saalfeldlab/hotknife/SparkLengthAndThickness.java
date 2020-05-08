@@ -96,7 +96,7 @@ public class SparkLengthAndThickness {
 		private String inputN5DatasetName = null;
 		
 		@Option(name = "--minimumBranchLength", required = false, usage = "Minimum branch length (nm)")
-		private float minimumBranchLength = 20;
+		private float minimumBranchLength = 80;
 
 		public Options(final String[] args) {
 			final CmdLineParser parser = new CmdLineParser(this);
@@ -315,11 +315,11 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		ObjectwiseSkeletonInformation objectwiseSkeletonInformation, 
 		String n5Path,
 		String organelle,
-		float minimumBranchLengthInVoxels,
+		float minimumBranchLength,
 		String outputDirectory) throws IOException, InterruptedException {
 		final N5Reader n5Reader = new N5FSReader(n5Path);		
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle);
-
+		final float minimumBranchLengthInVoxels = (float) (minimumBranchLength/pixelResolution[0]);
 		ArrayList<SkeletonInformation> listOfObjectwiseSkeletonInformation = objectwiseSkeletonInformation.asList();
 
 		final JavaRDD<SkeletonInformation> rdd = sc.parallelize(listOfObjectwiseSkeletonInformation);
@@ -603,7 +603,7 @@ class SkeletonInformation implements Serializable{
 	
 	List<SkeletonEdge> listOfSkeletonEdges;
 	Map<Long,Float> vertexRadii;
-	HashSet<Long> longestShortestPath;
+	HashSet<Long> longestShortestPath;	
 	HashSet<Long> prunedVertices;
 	Map<Integer, Long> objectVertexIDtoGlobalVertexID;
 	
@@ -635,7 +635,7 @@ class SkeletonInformation implements Serializable{
 		vertexRadii.putAll(newSkeletonInformation.vertexRadii);
 	}
 	
-	public void calculateLongestShortestPath(float minimumBranchLength){
+	public void calculateLongestShortestPath(float minimumBranchLengthInVoxels){
 		Map<Integer, Long> objectVertexIDtoGlobalVertexID = new HashMap<Integer, Long>();
 		Map<Long, Integer> globalVertexIDtoObjectVertexID = new HashMap<Long, Integer>();
 
@@ -659,7 +659,7 @@ class SkeletonInformation implements Serializable{
 		List<Integer> longestShortestPathVObjectID;
 		//if(vObject<30000) {//use floyd warshall
 			FloydWarshall shortestPathCalculator = new FloydWarshall(vObject, adjacency);
-			shortestPathCalculator.pruneAndCalculateLongestShortestPathInformation(minimumBranchLength);
+			shortestPathCalculator.pruneAndCalculateLongestShortestPathInformation(minimumBranchLengthInVoxels);
 			longestShortestPathLength = shortestPathCalculator.longestShortestPathLength;
 			longestShortestPathNumVertices = shortestPathCalculator.longestShortestPathNumVertices;
 			longestShortestPathVObjectID = shortestPathCalculator.longestShortestPath;

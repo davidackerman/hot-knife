@@ -479,7 +479,7 @@ public class SparkFillHolesInConnectedComponents {
 			int minimumVolumeCutoff = 0;
 			blockInformationList = SparkConnectedComponents.blockwiseConnectedComponents(sc, options.getInputN5Path(),
 					tempVolumeFilteredDatasetName, options.getInputN5Path(), tempOutputN5DatasetName, null, 1, minimumVolumeCutoff,
-					blockInformationList, true);
+					blockInformationList, true, false);
 			logMemory("Stage 1 complete");
 
 			blockInformationList = SparkConnectedComponents.unionFindConnectedComponents(sc, options.getInputN5Path(),

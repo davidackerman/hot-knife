@@ -126,7 +126,7 @@ public class FloydWarshall {
 				if (dist[i][j]<=sqrt3 && dist[i][j]>0) {//For voxel image, where can be diagonally connected, then two voxels are directly connected if the distance is less than sqrt(3)
 					numConnections++;
 				}
-				if(numConnections>3) {//is not branchpoint or endpoint
+				if(numConnections==3) {//considered branchpoint if it has at least 3 connections
 					break;
 				}
 			}
@@ -178,7 +178,7 @@ public class FloydWarshall {
 			}
 		}
 		
-		if(prunedVertices.size()>0) {//then removed some vertices
+		if(prunedVertices.size()>0) {//for visualization we are using the pruned version of the skeleton, but otherwise we use the original longest shortest path for skeletonization
 			calculateLongestShortestPathStartEndAndLength(); //recalculate longest shortest path after pruning
 		}
 		
@@ -209,7 +209,7 @@ public class FloydWarshall {
 				}
 			}
 			
-			if(shortestPathLength!=-1 && shortestPathLength<=minLength) { //then there is a branch branch should be removed
+			if(shortestPathLength!=-1 && shortestPathLength<=minLength) { //then there is a branch that should be removed
 				removeBranch(shortestPathEndpoint, shortestPathBranchpoint);
 			}
 			
@@ -225,6 +225,9 @@ public class FloydWarshall {
 				prunedVertices.add(vertexOnBranch);
 				dist[vertexOnBranch][i] = Float.MAX_VALUE;
 				dist[i][vertexOnBranch] = Float.MAX_VALUE;
+				
+				next[vertexOnBranch][i] = -1;
+				next[i][vertexOnBranch] = -1;
 			}
 		}
 	}
