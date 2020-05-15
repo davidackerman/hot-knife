@@ -143,8 +143,8 @@ public class SparkConnectedComponents {
 			return maskN5Path;
 		}
 
-		public double getThresholdIntensityCutoff() {
-			return 128 * Math.tanh(thresholdDistance / 50) + 127;
+		public double getThresholdDistance() {
+			return thresholdDistance;
 		}
 		
 		public double getMinimumVolumeCutoff() {
@@ -262,26 +262,28 @@ public class SparkConnectedComponents {
 							),offset, dimension);
 				}
 
-				// Read in mask block
-				final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5PathName);
-				final RandomAccessibleInterval<UnsignedByteType> mask = N5Utils.open(n5MaskReaderLocal,
-						"/volumes/masks/foreground");
-				final RandomAccessibleInterval<UnsignedByteType> maskInterval = Views.offsetInterval(Views.extendZero(mask),
-						new long[] { offset[0] / 2, offset[1] / 2, offset[2] / 2 },
-						new long[] { dimension[0] / 2, dimension[1] / 2, dimension[2] / 2 });
-	
-				// Mask out appropriate region in source block; need to do it this way rather
-				// than converter since mask is half the size of source
-				Cursor<UnsignedByteType> sourceCursor = Views.flatIterable(sourceInterval).cursor();
-				RandomAccess<UnsignedByteType> maskRandomAccess = maskInterval.randomAccess();
-				while (sourceCursor.hasNext()) {
-					final UnsignedByteType voxel = sourceCursor.next();
-					final long[] positionInMask = { (long) Math.floor(sourceCursor.getDoublePosition(0) / 2),
-							(long) Math.floor(sourceCursor.getDoublePosition(1) / 2),
-							(long) Math.floor(sourceCursor.getDoublePosition(2) / 2) };
-					maskRandomAccess.setPosition(positionInMask);
-					if (maskRandomAccess.get().getRealDouble() == 0) {
-						voxel.setInteger(0);
+				if(maskN5PathName != null) {
+					// Read in mask block
+					final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5PathName);
+					final RandomAccessibleInterval<UnsignedByteType> mask = N5Utils.open(n5MaskReaderLocal,
+							"/volumes/masks/foreground");
+					final RandomAccessibleInterval<UnsignedByteType> maskInterval = Views.offsetInterval(Views.extendZero(mask),
+							new long[] { offset[0] / 2, offset[1] / 2, offset[2] / 2 },
+							new long[] { dimension[0] / 2, dimension[1] / 2, dimension[2] / 2 });
+		
+					// Mask out appropriate region in source block; need to do it this way rather
+					// than converter since mask is half the size of source
+					Cursor<UnsignedByteType> sourceCursor = Views.flatIterable(sourceInterval).cursor();
+					RandomAccess<UnsignedByteType> maskRandomAccess = maskInterval.randomAccess();
+					while (sourceCursor.hasNext()) {
+						final UnsignedByteType voxel = sourceCursor.next();
+						final long[] positionInMask = { (long) Math.floor(sourceCursor.getDoublePosition(0) / 2),
+								(long) Math.floor(sourceCursor.getDoublePosition(1) / 2),
+								(long) Math.floor(sourceCursor.getDoublePosition(2) / 2) };
+						maskRandomAccess.setPosition(positionInMask);
+						if (maskRandomAccess.get().getRealDouble() == 0) {
+							voxel.setInteger(0);
+						}
 					}
 				}
 			}
@@ -712,21 +714,15 @@ public class SparkConnectedComponents {
 		System.out.println(ts + " " + msg);
 	}
 	
-	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
-
-		final Options options = new Options(args);
-
-		if (!options.parsedSuccessfully)
-			return;
-
-		final SparkConf conf = new SparkConf().setAppName("SparkConnectedComponents");
-
+	public static void standardConnectedComponentAnalysisWorkflow(SparkConf conf, String inputN5DatasetName, String inputN5Path, String maskN5Path, String outputN5Path, String outputN5DatasetSuffix, double thresholdDistance, double minimumVolumeCutoff, boolean onlyKeepLargestComponent ) throws IOException {
 		// Get all organelles
 		String[] organelles = { "" };
-		if (options.getInputN5DatasetName() != null) {
-			organelles = options.getInputN5DatasetName().split(",");
+		double thresholdIntensityCutoff = 	128 * Math.tanh(thresholdDistance / 50) + 127;
+
+		if (inputN5DatasetName!= null) {
+			organelles = inputN5DatasetName.split(",");
 		} else {
-			File file = new File(options.getInputN5Path());
+			File file = new File(inputN5Path);
 			organelles = file.list(new FilenameFilter() {
 				@Override
 				public boolean accept(File current, String name) {
@@ -742,31 +738,30 @@ public class SparkConnectedComponents {
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (String currentOrganelle : organelles) {
 			logMemory(currentOrganelle);	
-			tempOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix() + "_blockwise_temp_to_delete";
-			finalOutputN5DatasetName = currentOrganelle + options.getOutputN5DatasetSuffix();
+			tempOutputN5DatasetName = currentOrganelle + outputN5DatasetSuffix + "_blockwise_temp_to_delete";
+			finalOutputN5DatasetName = currentOrganelle + outputN5DatasetSuffix;
 			
 			//Create block information list
-			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
+			List<BlockInformation> blockInformationList = buildBlockInformationList(inputN5Path,
 				currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 		
-			double minimumVolumeCutoff = options.getMinimumVolumeCutoff();
 			if(currentOrganelle.equals("ribosomes") || currentOrganelle.equals("microtubules")) {
 				minimumVolumeCutoff = 0;
 			}
-			blockInformationList = blockwiseConnectedComponents(sc, options.getInputN5Path(), currentOrganelle,
-					options.getOutputN5Path(), tempOutputN5DatasetName, options.getMaskN5Path(),
-					options.getThresholdIntensityCutoff(), minimumVolumeCutoff, blockInformationList);
+			blockInformationList = blockwiseConnectedComponents(sc, inputN5Path, currentOrganelle,
+					outputN5Path, tempOutputN5DatasetName, maskN5Path,
+					thresholdIntensityCutoff, minimumVolumeCutoff, blockInformationList);
 			logMemory("Stage 1 complete");
 			
-			blockInformationList = unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName, minimumVolumeCutoff,
+			blockInformationList = unionFindConnectedComponents(sc, outputN5Path, tempOutputN5DatasetName, minimumVolumeCutoff,
 					blockInformationList);
 			logMemory("Stage 2 complete");
 			
-			mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName, finalOutputN5DatasetName, options.getOnlyKeepLargestComponent(),blockInformationList);
+			mergeConnectedComponents(sc, outputN5Path, tempOutputN5DatasetName, finalOutputN5DatasetName, onlyKeepLargestComponent,blockInformationList);
 			logMemory("Stage 3 complete");
 
-			directoriesToDelete.add(options.getOutputN5Path() + "/" + tempOutputN5DatasetName);
+			directoriesToDelete.add(outputN5Path + "/" + tempOutputN5DatasetName);
 			
 			sc.close();
 		}
@@ -774,6 +769,19 @@ public class SparkConnectedComponents {
 		//Remove temporary files
 		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 		logMemory("Stage 4 complete");
+
+	}
+	
+	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
+
+		final Options options = new Options(args);
+
+		if (!options.parsedSuccessfully)
+			return;
+
+		final SparkConf conf = new SparkConf().setAppName("SparkConnectedComponents");
+		
+		standardConnectedComponentAnalysisWorkflow(conf, options.getInputN5DatasetName(), options.getInputN5Path(), options.getMaskN5Path(), options.getOutputN5Path(), options.getOutputN5DatasetSuffix(), options.getThresholdDistance(), options.getMinimumVolumeCutoff(), options.getOnlyKeepLargestComponent());
 
 	}
 }
