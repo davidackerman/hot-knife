@@ -156,9 +156,16 @@ public class SparkCurvature {
 							(a, b) -> { b.set(a.getRealDouble()>0 ? 1 : 0);},
 							new DoubleType());
 			final IntervalView<DoubleType> sourceCropped = Views.offsetInterval(Views.extendZero(sourceConverted), paddedOffset, paddedDimension);
+
 			
-			RandomAccessibleInterval<UnsignedByteType> medialSurface = (RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, inputDatasetName+"_medialSurface");
-			final IntervalView<UnsignedByteType> medialSurfaceCropped = Views.offsetInterval(Views.extendZero(medialSurface),paddedOffset, paddedDimension);
+			RandomAccessibleInterval<UnsignedLongType> medialSurface = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName+"_medialSurface");
+			final RandomAccessibleInterval<UnsignedByteType> medialSurfaceConverted =
+					Converters.convert(
+							source,
+							(a, b) -> { b.set(a.getRealDouble()>0 ? 1 : 0);},
+							new UnsignedByteType());
+			
+			final IntervalView<UnsignedByteType> medialSurfaceCropped = Views.offsetInterval(Views.extendZero(medialSurfaceConverted),paddedOffset, paddedDimension);
 		
 			
 			//Create sheetness output

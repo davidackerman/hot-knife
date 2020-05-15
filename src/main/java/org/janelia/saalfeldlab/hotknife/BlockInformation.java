@@ -5,6 +5,7 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.janelia.saalfeldlab.hotknife.util.Grid;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
@@ -27,6 +28,12 @@ public class BlockInformation implements Serializable {
 	public Map<Long,Long> edgeComponentIDtoVolumeMap;
 	public Map<Long, Long> edgeComponentIDtoRootIDmap;
 	public Map<Long, List<Long>> edgeComponentIDtoOrganelleIDs;//for contact sites
+	public Set<Long> selfContainedMaxVolumeOrganelles;
+	public Long selfContainedMaxVolume;
+	public Set<Long> maxVolumeObjectIDs;
+	public BlockInformation() {
+		
+	}
 	
 	public BlockInformation(long[][] gridBlock, Map<Long,Long> edgeComponentIDs,
 			Map<Long, Long> edgeComponentIDtoRootIDmap) {

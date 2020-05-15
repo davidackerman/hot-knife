@@ -72,6 +72,7 @@ import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 
 import org.janelia.saalfeldlab.hotknife.IOHelper;
+import org.janelia.saalfeldlab.hotknife.ops.*;
 
 /**
  * Connected components for an entire n5 volume
@@ -102,6 +103,9 @@ public class SparkConnectedComponents {
 		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept (nm^3)")
 		private double minimumVolumeCutoff = 20E6;
+		
+		@Option(name = "--onlyKeepLargestComponent", required = false, usage = "Keep only the largest connected component")
+		private boolean onlyKeepLargestComponent = false;
 
 		public Options(final String[] args) {
 
@@ -145,6 +149,10 @@ public class SparkConnectedComponents {
 		
 		public double getMinimumVolumeCutoff() {
 			return minimumVolumeCutoff;
+		}
+		
+		public boolean getOnlyKeepLargestComponent() {
+			return onlyKeepLargestComponent;
 		}
 
 	}
@@ -240,8 +248,9 @@ public class SparkConnectedComponents {
 							),paddedOffset, paddedDimension);
 					
 					final Img<UnsignedByteType> smoothedPredictions =  new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(paddedDimension);	
-
-					Gauss3.gauss(sigma, rawPredictions, smoothedPredictions, 1);
+					SimpleGaussRA<UnsignedByteType> gauss = new SimpleGaussRA<UnsignedByteType>(sigma);
+					gauss.compute(rawPredictions, smoothedPredictions);
+					//Gauss3.gauss(sigma, rawPredictions, smoothedPredictions);
 					/*ImageJ ij = new ImageJ();
 					ImageJFunctions.show(rawPredictions);
 					ImageJFunctions.show(smoothedPredictions);*/
@@ -286,7 +295,7 @@ public class SparkConnectedComponents {
 			// Compute the connected components which returns the components along the block
 			// edges, and update the corresponding blockInformation object
 			int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
-			currentBlockInformation.edgeComponentIDtoVolumeMap = computeConnectedComponents(sourceInterval, output, outputDimensions,
+			currentBlockInformation = computeConnectedComponents(currentBlockInformation, sourceInterval, output, outputDimensions,
 					blockSizeL, offset, thresholdIntensityCutoff, minimumVolumeCutoffInVoxels);
 
 			// Write out output to temporary n5 stack
@@ -396,6 +405,9 @@ public class SparkConnectedComponents {
 
 		// Add block-specific relabel map to the corresponding block information object
 		Map<Long, Long> rootIDtoVolumeMap= new HashMap<Long, Long>();
+		long maxVolume = 0;
+		Set<Long> maxVolumeObjectIDs = new HashSet<Long>();
+		
 		for (BlockInformation currentBlockInformation : blockInformationList) {
 			Map<Long, Long> currentGlobalIDtoRootIDMap = new HashMap<Long, Long>();
 			for (Long currentEdgeComponentID : currentBlockInformation.edgeComponentIDtoVolumeMap.keySet()) {
@@ -406,7 +418,32 @@ public class SparkConnectedComponents {
 				
 			}
 			currentBlockInformation.edgeComponentIDtoRootIDmap = currentGlobalIDtoRootIDMap;
+			
+			if(currentBlockInformation.selfContainedMaxVolume == maxVolume) {
+				maxVolumeObjectIDs.addAll(currentBlockInformation.selfContainedMaxVolumeOrganelles);
+			}
+			else if(currentBlockInformation.selfContainedMaxVolume > maxVolume) {
+				maxVolume = currentBlockInformation.selfContainedMaxVolume;
+				maxVolumeObjectIDs.clear();
+				maxVolumeObjectIDs.addAll(currentBlockInformation.selfContainedMaxVolumeOrganelles);
+			}
+			
 		}
+		
+		for (Entry <Long,Long> e : rootIDtoVolumeMap.entrySet()) {
+			Long rootID = e.getKey();
+			Long volume = e.getValue();
+			if(volume == maxVolume) {
+				maxVolumeObjectIDs.add(rootID);
+			}
+			else if(volume > maxVolume) {
+				maxVolume = volume;
+				maxVolumeObjectIDs.clear();
+				maxVolumeObjectIDs.add(rootID);
+			}
+		}
+		
+		
 		
 		int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
 		for (BlockInformation currentBlockInformation : blockInformationList) {
@@ -416,6 +453,7 @@ public class SparkConnectedComponents {
 				currentBlockInformation.edgeComponentIDtoRootIDmap.put(key, 
 						rootIDtoVolumeMap.get(value) <= minimumVolumeCutoffInVoxels ? 0L : value);
 			}
+			currentBlockInformation.maxVolumeObjectIDs = maxVolumeObjectIDs;
 		}
 		
 		
@@ -439,9 +477,16 @@ public class SparkConnectedComponents {
 	 * @return
 	 * @throws IOException
 	 */
-	@SuppressWarnings("unchecked")
 	public static final <T extends NativeType<T>> void mergeConnectedComponents(final JavaSparkContext sc,
 			final String inputN5Path, final String inputN5DatasetName, final String outputN5DatasetName,
+			final List<BlockInformation> blockInformationList) throws IOException {
+			mergeConnectedComponents(sc,
+				inputN5Path,inputN5DatasetName, outputN5DatasetName, false,
+				blockInformationList);
+	}
+	@SuppressWarnings("unchecked")
+	public static final <T extends NativeType<T>> void mergeConnectedComponents(final JavaSparkContext sc,
+			final String inputN5Path, final String inputN5DatasetName, final String outputN5DatasetName, boolean onlyKeepLargestComponent,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
 		// Set up reader to get n5 attributes
@@ -477,9 +522,22 @@ public class SparkConnectedComponents {
 			while (sourceCursor.hasNext()) {
 				final UnsignedLongType voxel = sourceCursor.next();
 				long currentValue = voxel.getLong();
-				if (currentValue > 0 && edgeComponentIDtoRootIDmap.containsKey(currentValue)) {
-					Long currentRoot = edgeComponentIDtoRootIDmap.get(currentValue);
-					voxel.setLong(currentRoot);
+				if(onlyKeepLargestComponent) {
+					if(currentValue>0) {
+						Long rootID = edgeComponentIDtoRootIDmap.getOrDefault(currentValue, currentValue); //either on edge, or contained internally
+						if (currentBlockInformation.maxVolumeObjectIDs.contains(rootID)) {//then it is on edge
+							voxel.setLong(rootID);	
+						}
+						else {
+							voxel.setLong(0);
+						}
+					}
+				}
+				else {
+					if (currentValue > 0 && edgeComponentIDtoRootIDmap.containsKey(currentValue)) {
+						Long currentRoot = edgeComponentIDtoRootIDmap.get(currentValue);
+						voxel.setLong(currentRoot);
+					}
 				}
 			}
 
@@ -510,8 +568,7 @@ public class SparkConnectedComponents {
 		return blockInformationList;
 	}
 
-	
-	public static Map<Long,Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
+	public static BlockInformation computeConnectedComponents(BlockInformation blockInformation, RandomAccessibleInterval<UnsignedByteType> sourceInterval,
 			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
 			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff) {
 
@@ -582,14 +639,45 @@ public class SparkConnectedComponents {
 		        .collect(Collectors.toMap(Function.identity(), allComponentIDtoVolumeMap::get));
 		
 		o = Views.flatIterable(output).cursor();
+		blockInformation.selfContainedMaxVolume = 0L;
+		blockInformation.selfContainedMaxVolumeOrganelles = new HashSet<Long>();
 		while (o.hasNext()) {
 			final UnsignedLongType tO = o.next();
 			if (selfContainedComponentIDtoVolumeMap.getOrDefault(tO.get(), Long.MAX_VALUE) <= minimumVolumeCutoff){
 				tO.set(0);
 			}
+			else { //large enough to keep or on edge
+				Long objectID = tO.get();
+				if(objectID>0) {
+					long objectVolume = selfContainedComponentIDtoVolumeMap.getOrDefault(objectID,0L);
+					if(objectVolume > blockInformation.selfContainedMaxVolume) {
+						blockInformation.selfContainedMaxVolume = objectVolume;
+						blockInformation.selfContainedMaxVolumeOrganelles.clear();
+						blockInformation.selfContainedMaxVolumeOrganelles.add(objectID);
+					}
+					else if(objectVolume == blockInformation.selfContainedMaxVolume){
+						blockInformation.selfContainedMaxVolumeOrganelles.add(objectID);
+					}
+				}
+			}
 		}
 
-		return edgeComponentIDtoVolumeMap;
+		blockInformation.edgeComponentIDtoVolumeMap = edgeComponentIDtoVolumeMap;
+		
+		return blockInformation;
+	}
+	
+	
+	public static Map<Long,Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
+			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
+			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff) {
+
+		BlockInformation blockInformation = new BlockInformation();
+		blockInformation = computeConnectedComponents(blockInformation, sourceInterval,
+				output,  sourceDimensions,  outputDimensions,
+				offset, thresholdIntensityCutoff, minimumVolumeCutoff);
+
+		return blockInformation.edgeComponentIDtoVolumeMap;
 	}
 	
 	public static final void getGlobalIDsToMerge(RandomAccessibleInterval<UnsignedLongType> hyperSlice1,
@@ -675,8 +763,7 @@ public class SparkConnectedComponents {
 					blockInformationList);
 			logMemory("Stage 2 complete");
 			
-			mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName, finalOutputN5DatasetName,
-					blockInformationList);
+			mergeConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName, finalOutputN5DatasetName, options.getOnlyKeepLargestComponent(),blockInformationList);
 			logMemory("Stage 3 complete");
 
 			directoriesToDelete.add(options.getOutputN5Path() + "/" + tempOutputN5DatasetName);
@@ -690,3 +777,4 @@ public class SparkConnectedComponents {
 
 	}
 }
+

@@ -268,10 +268,15 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 						}
 				}
 			}
+			RandomAccessibleInterval<UnsignedLongType> medialSurfaceRaw = (RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5BlockReader, datasetName+"_medialSurface");
+			final RandomAccessibleInterval<UnsignedByteType> medialSurfaceConverted =
+					Converters.convert(
+							medialSurfaceRaw,
+							(a, b) -> { b.set(a.getRealDouble()>0 ? 1 : 0);},
+							new UnsignedByteType());
+
+			final RandomAccessibleInterval<UnsignedByteType> medialSurface = Views.offsetInterval(Views.extendZero(medialSurfaceConverted),paddedBlockMin, paddedBlockSize);
 			
-			final RandomAccessibleInterval<UnsignedByteType> medialSurface = Views.offsetInterval(Views.extendZero(
-					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, datasetName+"_medialSurface")
-					),paddedBlockMin, paddedBlockSize);
 			if(show) ImageJFunctions.show(medialSurface,"ms");
 
 			
