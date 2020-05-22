@@ -92,7 +92,7 @@ public class SparkProcessLightData {
 		private String outputN5DatasetSuffix = "_cc";
 
 		@Option(name = "--thresholdIntensity", required = true, usage = "Intesnity for thresholding (positive inside, negative outside) (nm)")
-		private double thresholdIntensity = 0;
+		private String thresholdIntensity = "0,0";
 		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept (nm^3)")
 		private double minimumVolumeCutoff = 20E6;
@@ -134,8 +134,9 @@ public class SparkProcessLightData {
 			}
 		}
 
-		public double getThresholdIntensityCutoff() {
-			return thresholdIntensity;
+		public double[] getThresholdIntensityCutoff() {
+			String[] thresholdIntensitiesAsString = thresholdIntensity.split(",");
+			return new double[] {Double.parseDouble(thresholdIntensitiesAsString[0]), Double.parseDouble(thresholdIntensitiesAsString[1])};
 		}
 		
 		public double getMinimumVolumeCutoff() {
@@ -355,6 +356,7 @@ public class SparkProcessLightData {
 
 	
 		List<String> directoriesToDelete = new ArrayList<String>();
+		double[] thresholdIntensities = options.getThresholdIntensityCutoff();
 		for(int i=0; i<organelles.length;i++) {
 			List<BlockInformation> blockInformationList = SparkConnectedComponents.buildBlockInformationList(options.getInputN5Path(), organelles[i]);
 			JavaSparkContext sc = new JavaSparkContext(conf);
@@ -365,7 +367,7 @@ public class SparkProcessLightData {
 			blockInformationList = blockwiseConnectedComponents(
 					sc, options.getInputN5Path(), organelles[i],
 					options.getOutputN5Path(), tempOutputN5DatasetName,
-					options.getThresholdIntensityCutoff(), options.getMinimumVolumeCutoff(), blockInformationList); 
+					thresholdIntensities[i], options.getMinimumVolumeCutoff(), blockInformationList); 
 	
 			double minimumVolumeCutoff = options.getMinimumVolumeCutoff();			
 			blockInformationList = SparkConnectedComponents.unionFindConnectedComponents(sc, options.getOutputN5Path(), tempOutputN5DatasetName, minimumVolumeCutoff,

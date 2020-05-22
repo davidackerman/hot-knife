@@ -92,10 +92,13 @@ public class SparkExpandMaskToCleanPredictions {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
-		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
-		private String inputN5Path = null;
+		@Option(name = "--datasetToMaskN5Path", required = true, usage = "dataset to mask n5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		private String datasetToMaskN5Path = null;
+		
+		@Option(name = "--datasetToUseAsMaskN5Path", required = true, usage = "dataset to mask n5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		private String datasetToUseAsMaskN5Path = null;
 
-		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		@Option(name = "--outputN5Path", required = true, usage = "output N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
 		private String outputN5Path = null;
 
 		@Option(name = "--datasetNameToMask", required = false, usage = "N5 dataset, e.g. /mito")
@@ -104,18 +107,23 @@ public class SparkExpandMaskToCleanPredictions {
 		@Option(name = "--datasetNameToUseAsMask", required = false, usage = "N5 dataset, e.g. /mito")
 		private String datasetNameToUseAsMask = null;
 		
+		@Option(name = "--thresholdIntensityCutoff", required = false, usage = "N5 dataset, e.g. /mito")
+		private double thresholdIntensityCutoff = 127;
+		
+		@Option(name = "--onlyKeepLargestComponent", required = false, usage = "Keep only the largest connected component")
+		private boolean onlyKeepLargestComponent = false;
+		
+		@Option(name = "--skipConnectedComponents", required = false, usage = "Keep only the largest connected component")
+		private boolean skipConnectedComponents = false;
+		
 		@Option(name = "--expansion", required = false, usage = "expansion in nm")
-		private double expansion = 160;
+		private Integer expansion = 160;
 
 		public Options(final String[] args) {
 
 			final CmdLineParser parser = new CmdLineParser(this);
 			try {
 				parser.parseArgument(args);
-
-				if (outputN5Path == null)
-					outputN5Path = inputN5Path;
-
 				parsedSuccessfully = true;
 			} catch (final CmdLineException e) {
 				System.err.println(e.getMessage());
@@ -123,8 +131,12 @@ public class SparkExpandMaskToCleanPredictions {
 			}
 		}
 
-		public String getInputN5Path() {
-			return inputN5Path;
+		public String getDatasetToMaskN5Path() {
+			return datasetToMaskN5Path;
+		}
+		
+		public String getDatasetToUseAsMaskN5Path() {
+			return datasetToUseAsMaskN5Path;
 		}
 
 		public String getDatasetNameToMask() {
@@ -140,22 +152,34 @@ public class SparkExpandMaskToCleanPredictions {
 			return outputN5Path;
 		}
 		
-		public double getExpansion() {
+		public double getThresholdIntensityCutoff() {
+			return thresholdIntensityCutoff;
+		}
+		
+		public boolean getOnlyKeepLargestComponent() {
+			return onlyKeepLargestComponent;
+		}
+		
+		public Integer getExpansion() {
 			return expansion;
+		}
+		
+		public boolean getSkipConnectedComponents() {
+			return skipConnectedComponents;
 		}
 
 	}
 
 	public static final void expandAndApplyMask(
 			final JavaSparkContext sc,
-			final String n5Path,
+			final String datasetToMaskN5Path,
 			final String datasetNameToUseAsMask,
 			final String datasetNameToMask,
 			final String n5OutputPath,
-			final double expansion,
+			final Integer expansion,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
-		final N5Reader n5Reader = new N5FSReader(n5Path);
+		final N5Reader n5Reader = new N5FSReader(datasetToMaskN5Path);
 
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetNameToMask);
 		final long[] dimensions = attributes.getDimensions();
@@ -164,14 +188,15 @@ public class SparkExpandMaskToCleanPredictions {
 		
 
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		String maskedDatasetName = datasetNameToMask + "_maskedWith_"+datasetNameToUseAsMask+"_expansion_"+Integer.toString(expansion);
 		n5Writer.createDataset(
-				datasetNameToMask + "_masked",
+				maskedDatasetName,
 				dimensions,
 				blockSize,
 				DataType.UINT8,
 				new GzipCompression());
 		double[] pixelResolution = IOHelper.getResolution(n5Reader, datasetNameToMask);
-		n5Writer.setAttribute(datasetNameToMask + "_masked", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		n5Writer.setAttribute(maskedDatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 		final int expansionInVoxels = (int) Math.ceil(expansion/pixelResolution[0]);
 		/*
 		 * grid block size for parallelization to minimize double loading of
@@ -183,14 +208,13 @@ public class SparkExpandMaskToCleanPredictions {
 			final long [] offset= blockInformation.gridBlock[0];
 			final long [] dimension = blockInformation.gridBlock[1];
 			final N5Reader n5MaskReader = new N5FSReader(n5OutputPath);
-			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			final N5Reader n5BlockReader = new N5FSReader(datasetToMaskN5Path);
 			final long [] paddedBlockMin =  new long [] {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			final long [] paddedBlockSize =  new long [] {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			
-			final RandomAccessibleInterval<UnsignedLongType> maskDataPreExpansion = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5MaskReader, datasetNameToUseAsMask)), paddedBlockMin, paddedBlockSize);
 			final RandomAccessibleInterval<UnsignedByteType> dataToMask = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, datasetNameToMask)), offset, dimension);
-
 			
+			final RandomAccessibleInterval<UnsignedLongType> maskDataPreExpansion = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5MaskReader, datasetNameToUseAsMask)), paddedBlockMin, paddedBlockSize);
 			final RandomAccessibleInterval<NativeBoolType> maskDataPreExpansionConverted = Converters.convert(
 					maskDataPreExpansion,
 					(a, b) -> {
@@ -222,7 +246,7 @@ public class SparkExpandMaskToCleanPredictions {
 			}
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
-			N5Utils.saveBlock(dataToMask, n5BlockWriter, datasetNameToMask + "_masked", blockInformation.gridBlock[2]);
+			N5Utils.saveBlock(dataToMask, n5BlockWriter, maskedDatasetName, blockInformation.gridBlock[2]);
 		
 		});
 	}
@@ -267,15 +291,21 @@ public class SparkExpandMaskToCleanPredictions {
 			return;
 		
 		final SparkConf conf = new SparkConf().setAppName("SparkExpandMaskToCleanPredictions");
-		List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(), options.getDatasetNameToUseAsMask());
+		List<BlockInformation> blockInformationList = buildBlockInformationList(options.getDatasetToUseAsMaskN5Path(), options.getDatasetNameToUseAsMask());
 
-		SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToUseAsMask(), options.getInputN5Path(), null, options.getOutputN5Path(), "_largestComponent", 0, -1, true);
+		double x = (options.getThresholdIntensityCutoff() - 127)/128;
+		double thresholdDistance = 50 * 0.5*Math.log ((1.0 + x)/ (1.0 - x) );
 		
+		String suffix = options.getOnlyKeepLargestComponent() ? "_largestComponent" :  "_cc";
+		//SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToUseAsMask(), options.getDatasetToUseAsMaskN5Path(), null, options.getOutputN5Path(), "_largestComponent", 0, -1, true);
+		if(!options.getSkipConnectedComponents()) {
+			SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToUseAsMask(), options.getDatasetToUseAsMaskN5Path(), null, options.getOutputN5Path(), suffix, thresholdDistance, -1, options.getOnlyKeepLargestComponent());
+		}
 		JavaSparkContext sc = new JavaSparkContext(conf);
 		expandAndApplyMask(
 				sc,
-				options.getInputN5Path(),
-				options.getDatasetNameToUseAsMask()+"_largestComponent",
+				options.getDatasetToMaskN5Path(),
+				options.getDatasetNameToUseAsMask()+suffix,
 				options.getDatasetNameToMask(),
 				options.getOutputN5Path(),
 				options.getExpansion(),

@@ -95,7 +95,7 @@ public class SparkConnectedComponents {
 		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be organelle_cc")
 		private String outputN5DatasetSuffix = "_cc";
 
-		@Option(name = "--maskN5Path", required = true, usage = "mask N5 path, e.g. /path/to/input/mask.n5")
+		@Option(name = "--maskN5Path", required = false, usage = "mask N5 path, e.g. /path/to/input/mask.n5")
 		private String maskN5Path = null;
 
 		@Option(name = "--thresholdDistance", required = false, usage = "Distance for thresholding (positive inside, negative outside) (nm)")

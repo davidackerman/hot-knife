@@ -3,6 +3,7 @@ package org.janelia.saalfeldlab.hotknife;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,7 +33,8 @@ public class BlockInformation implements Serializable {
 	public Long selfContainedMaxVolume;
 	public Set<Long> maxVolumeObjectIDs;
 	public BlockInformation() {
-		
+		this.selfContainedMaxVolume =0L;
+		this.selfContainedMaxVolumeOrganelles = new HashSet<Long>();
 	}
 	
 	public BlockInformation(long[][] gridBlock, Map<Long,Long> edgeComponentIDs,
@@ -40,6 +42,9 @@ public class BlockInformation implements Serializable {
 		this.edgeComponentIDtoVolumeMap = edgeComponentIDs;
 		this.edgeComponentIDtoRootIDmap = edgeComponentIDtoRootIDmap;
 		this.gridBlock = gridBlock;
+		this.selfContainedMaxVolume =0L;
+		this.selfContainedMaxVolumeOrganelles = new HashSet<Long>();
+
 	}
 	
 	public BlockInformation(long[][] gridBlock, long[][] paddedGridBlock, long[] padding, Map<Long,Long> edgeComponentIDs,
@@ -53,6 +58,7 @@ public class BlockInformation implements Serializable {
 		this.needToThinAgainCurrent = true;
 		this.isIndependent = false;
 		this.areObjectsTouching = true;
+		this.selfContainedMaxVolume =0L;
 	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
