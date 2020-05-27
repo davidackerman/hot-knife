@@ -188,6 +188,18 @@ public class SparkConnectedComponents {
 				thresholdIntensityCutoff, minimumVolumeCutoff, blockInformationList, false, true);	
 	}
 	
+	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
+			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
+			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
+			final double thresholdIntensityCutoff, double minimumVolumeCutoff, boolean smooth, List<BlockInformation> blockInformationList) throws IOException {
+		
+		//Do not find holes unless explicitly called for
+		return blockwiseConnectedComponents(
+				sc, inputN5Path, inputN5DatasetName,
+				outputN5Path,  outputN5DatasetName,maskN5PathName,
+				thresholdIntensityCutoff, minimumVolumeCutoff, blockInformationList, false, smooth);	
+	}
+	
 	@SuppressWarnings("unchecked")
 	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
@@ -715,6 +727,10 @@ public class SparkConnectedComponents {
 	}
 	
 	public static void standardConnectedComponentAnalysisWorkflow(SparkConf conf, String inputN5DatasetName, String inputN5Path, String maskN5Path, String outputN5Path, String outputN5DatasetSuffix, double thresholdDistance, double minimumVolumeCutoff, boolean onlyKeepLargestComponent ) throws IOException {
+			standardConnectedComponentAnalysisWorkflow(conf, inputN5DatasetName, inputN5Path, maskN5Path, outputN5Path, outputN5DatasetSuffix, thresholdDistance, minimumVolumeCutoff, onlyKeepLargestComponent, true );
+		}
+	
+	public static void standardConnectedComponentAnalysisWorkflow(SparkConf conf, String inputN5DatasetName, String inputN5Path, String maskN5Path, String outputN5Path, String outputN5DatasetSuffix, double thresholdDistance, double minimumVolumeCutoff, boolean onlyKeepLargestComponent, boolean smooth ) throws IOException {
 		// Get all organelles
 		String[] organelles = { "" };
 		double thresholdIntensityCutoff = 	128 * Math.tanh(thresholdDistance / 50) + 127;
@@ -751,7 +767,7 @@ public class SparkConnectedComponents {
 			}
 			blockInformationList = blockwiseConnectedComponents(sc, inputN5Path, currentOrganelle,
 					outputN5Path, tempOutputN5DatasetName, maskN5Path,
-					thresholdIntensityCutoff, minimumVolumeCutoff, blockInformationList);
+					thresholdIntensityCutoff, minimumVolumeCutoff, smooth, blockInformationList);
 			logMemory("Stage 1 complete");
 			
 			blockInformationList = unionFindConnectedComponents(sc, outputN5Path, tempOutputN5DatasetName, minimumVolumeCutoff,
