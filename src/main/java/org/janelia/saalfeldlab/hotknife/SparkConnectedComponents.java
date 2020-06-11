@@ -107,6 +107,9 @@ public class SparkConnectedComponents {
 		@Option(name = "--onlyKeepLargestComponent", required = false, usage = "Keep only the largest connected component")
 		private boolean onlyKeepLargestComponent = false;
 
+		@Option(name = "--skipSmoothing", required = false, usage = "Keep only the largest connected component")
+		private boolean skipSmoothing = false;
+		
 		public Options(final String[] args) {
 
 			final CmdLineParser parser = new CmdLineParser(this);
@@ -154,7 +157,10 @@ public class SparkConnectedComponents {
 		public boolean getOnlyKeepLargestComponent() {
 			return onlyKeepLargestComponent;
 		}
-
+		
+		public boolean getSkipSmoothing() {
+			return skipSmoothing;
+		}
 	}
 
 	
@@ -796,8 +802,8 @@ public class SparkConnectedComponents {
 			return;
 
 		final SparkConf conf = new SparkConf().setAppName("SparkConnectedComponents");
-		
-		standardConnectedComponentAnalysisWorkflow(conf, options.getInputN5DatasetName(), options.getInputN5Path(), options.getMaskN5Path(), options.getOutputN5Path(), options.getOutputN5DatasetSuffix(), options.getThresholdDistance(), options.getMinimumVolumeCutoff(), options.getOnlyKeepLargestComponent());
+		boolean smooth = ! options.getSkipSmoothing();
+		standardConnectedComponentAnalysisWorkflow(conf, options.getInputN5DatasetName(), options.getInputN5Path(), options.getMaskN5Path(), options.getOutputN5Path(), options.getOutputN5DatasetSuffix(), options.getThresholdDistance(), options.getMinimumVolumeCutoff(), options.getOnlyKeepLargestComponent(), smooth);
 
 	}
 }

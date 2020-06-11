@@ -103,11 +103,14 @@ public class SparkCustomMask {
 		@Option(name = "--datasetToUseAsMaskN5Path", required = false, usage = "dataset to mask n5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
 		private String datasetToUseAsMaskN5Path = null;
 
-		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		@Option(name = "--inputN5Path", required = false, usage = "input N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
 		private String inputN5Path = null;
 		
-		@Option(name = "--datasetNameToThin", required = true, usage = "input N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		@Option(name = "--datasetNameToThin", required = false, usage = "input N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
 		private String datasetNameToThin = null;
+		
+		@Option(name = "--nucleusID", required = false, usage = "input N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		private Long nucleusID = null;
 		
 		@Option(name = "--outputN5Path", required = true, usage = "output N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
 		private String outputN5Path = null;
@@ -193,6 +196,10 @@ public class SparkCustomMask {
 		public boolean getDoStage1() {
 			return doStage1;
 		}
+		
+		public Long getNucleusID() {
+			return nucleusID;
+		}
 
 	}
 
@@ -267,7 +274,7 @@ public class SparkCustomMask {
 		});
 	}
 
-	public static final List<BlockInformation> convertDataset(final JavaSparkContext sc,final String n5Path,  final String datasetName, long nucelusID, final List<BlockInformation> blockInformationList) throws IOException {
+	public static final Map<List<Long>,Boolean> convertDataset(final JavaSparkContext sc,final String n5Path,  final String datasetName, long nucelusID, final List<BlockInformation> blockInformationList) throws IOException {
 		String outputName = datasetName+"_converted";
 		final N5Reader n5Reader = new N5FSReader(n5Path);
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
@@ -284,7 +291,7 @@ public class SparkCustomMask {
 		n5Writer.setAttribute(outputName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 	
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
-		JavaRDD<Set<List<Long>>> javaRDDsets = rdd.map(blockInformation -> {
+		JavaRDD<Map<List<Long>,Boolean>> javaRDDsets = rdd.map(blockInformation -> {
 			final long [] offset= blockInformation.gridBlock[0];
 			final long [] dimension = blockInformation.gridBlock[1];
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
@@ -298,43 +305,57 @@ public class SparkCustomMask {
 					},
 					new UnsignedByteType());
 			
-			Set<List<Long>> blocksToCheck = getBlocksToCheck(ccConverted, blockInformation.gridBlock[2]);
+			Map<List<Long>,Boolean> blocksToCheck = getBlocksToCheck(ccConverted, blockInformation.gridBlock[2], false);
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5Path);
 			N5Utils.saveBlock(ccConverted, n5BlockWriter, outputName, blockInformation.gridBlock[2]);
 			
 			return blocksToCheck;
 		});
-		Set<List<Long>> blocksToCheck = javaRDDsets.reduce((a,b) -> {a.addAll(b); return a; });
 		
-		int numBlocks  = blockInformationList.size()-1;
-		for(int blockIndex = numBlocks; blockIndex>=0; blockIndex--) {
-			BlockInformation currentBlock = blockInformationList.get(blockIndex);
-			if(!blocksToCheck.contains(Arrays.asList(currentBlock.gridBlock[2][0],currentBlock.gridBlock[2][1],currentBlock.gridBlock[2][2]))) {
-				blockInformationList.remove(blockIndex);
-			}
-
-		}
-		return blockInformationList;
+		Map<List<Long>,Boolean> blocksToCheck = javaRDDsets.reduce((a,b) -> {
+			return combineBlocksToCheck(a,b);
+			});
+		
+		return blocksToCheck;
+		
 	}
 	
-	public static Set<List<Long>> getBlocksToCheck(RandomAccessibleInterval<UnsignedByteType> rai, long [] grid){
+	public static Map<List<Long>, Boolean> getBlocksToCheck(RandomAccessibleInterval<UnsignedByteType> rai, long [] grid, boolean isDoneAlready){
 		IterableInterval<UnsignedByteType> raiFlatIterable = Views.flatIterable(rai);
 		boolean containsNucleus = false;
-		
-		Cursor<UnsignedByteType> raiFlatIterableCursor = raiFlatIterable.cursor();
-		while(raiFlatIterableCursor.hasNext() && !containsNucleus) {
-			if(raiFlatIterableCursor.next().get()>0) {
-				containsNucleus = true;
+		boolean isAllNucleus = true;
+		if(isDoneAlready) {
+			containsNucleus = true;
+			isAllNucleus = true;
+		}
+		else {
+			Cursor<UnsignedByteType> raiFlatIterableCursor = raiFlatIterable.cursor();
+			while(raiFlatIterableCursor.hasNext()) {
+				if(raiFlatIterableCursor.next().get()>0) {
+					containsNucleus = true;
+				}
+				else {
+					isAllNucleus = false;
+				}
+				
+				if(containsNucleus && !isAllNucleus) {
+					break;
+				}
 			}
 		}
-		Set<List<Long>> blocksToCheck = new HashSet<List<Long>>();
+		Map<List<Long>,Boolean> blocksToCheck = new HashMap<List<Long>,Boolean>();
 
 		if(containsNucleus) {
 			for(long dx=-1; dx<=1; dx++) {
 				for(long dy=-1; dy<=1;dy++) {
 					for(long dz=-1; dz<=1; dz++) {
-						blocksToCheck.add(Arrays.asList(grid[0]+dx, grid[1]+dy,grid[2]+dz));
+						if(dx==0 &&  dy==0 && dz==0) {
+							blocksToCheck.put(Arrays.asList(grid[0]+dx, grid[1]+dy,grid[2]+dz),containsNucleus && isAllNucleus);//then this block is completed
+						}
+						else {
+							blocksToCheck.put(Arrays.asList(grid[0]+dx, grid[1]+dy,grid[2]+dz),false); //don't yet know if this block is completed
+						}
 					}
 				}
 			}
@@ -343,9 +364,16 @@ public class SparkCustomMask {
 		return blocksToCheck;
 	}
 	
-	public static final void expandDataset(final JavaSparkContext sc,final String n5Path,  final String datasetName, long nucleusID, final List<BlockInformation> blockInformationList) throws IOException {
-		String outputName = datasetName+"_expanded2000";
-		final String convertedDatasetName = datasetName+ "_converted";
+	public static Map<List<Long>,Boolean> combineBlocksToCheck(Map<List<Long>,Boolean> a, Map<List<Long>,Boolean> b){
+		for ( List<Long> key : b.keySet() ) {
+			a.put(key, a.getOrDefault(key, false) || b.get(key)); //true if block is complete
+		}
+		return a;
+	}
+	
+	public static final Map<List<Long>,Boolean> expandDataset(final JavaSparkContext sc,final String n5Path,  final String datasetName, double expandDistance,long nucleusID,  int iteration, final Map<List<Long>, Boolean> blocksToCheck, final List<BlockInformation> blockInformationList) throws IOException {
+		String outputName = iteration==3 ? datasetName+"_expanded2000" : datasetName+"_expanded2000_iteration"+Integer.toString(iteration);
+		final String inputDatasetName = iteration==0 ? datasetName+ "_converted" : datasetName+"_expanded2000_iteration"+Integer.toString(iteration-1);
 		final N5Reader n5Reader = new N5FSReader(n5Path);
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
 		final long[] dimensions = attributes.getDimensions();
@@ -355,9 +383,120 @@ public class SparkCustomMask {
 				outputName,
 				dimensions,
 				blockSize,
-				DataType.UINT64,
+				iteration==3 ? DataType.UINT64 : DataType.UINT8,
 				new GzipCompression());
-		double[] pixelResolution = IOHelper.getResolution(n5Reader, convertedDatasetName);
+		double[] pixelResolution = IOHelper.getResolution(n5Reader, inputDatasetName);
+		n5Writer.setAttribute(outputName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		JavaRDD<Map<List<Long>,Boolean>> javaRDDsets = rdd.map(blockInformation -> {
+			final long [] offset= blockInformation.gridBlock[0];
+			final long [] dimension = blockInformation.gridBlock[1];
+			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			final N5FSWriter n5BlockWriter = new N5FSWriter(n5Path);
+
+			
+			long[] grid = blockInformation.gridBlock[2];
+			if(blocksToCheck.getOrDefault(Arrays.asList(grid[0],grid[1],grid[2]),false)) {//then this block is done so can just write it out	
+				RandomAccessibleInterval<UnsignedByteType> output = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, inputDatasetName)), offset, dimension);
+				if(iteration!=3) {//4 iterations for 2000 nm
+					N5Utils.saveBlock(output, n5BlockWriter, outputName, blockInformation.gridBlock[2]);
+					return getBlocksToCheck(output,grid, true);
+				}
+				else {
+					RandomAccessibleInterval<UnsignedLongType> outputConverted = Converters.convert(
+							output,
+							(a, b) -> {
+								if(a.get()>0) {//less than 200nm, shrink it
+									b.set(nucleusID);
+								}
+								else {
+									b.set(0);
+								}
+							},
+							new UnsignedLongType());
+					N5Utils.saveBlock(outputConverted, n5BlockWriter, outputName, blockInformation.gridBlock[2]);
+					return new HashMap<List<Long>,Boolean>();
+					}
+			}
+			else {
+				double expandDistanceInVoxels = expandDistance/pixelResolution[0];
+				long padding = (long) (1+expandDistanceInVoxels); //200 nm shrinking, need to ensure 200 nm from edge, add 2 for buffer
+				long [] paddedOffset = new long [] {offset[0]-padding,offset[1]-padding,offset[2]-padding};
+				long [] paddedDimension = new long [] {dimension[0]+2*padding,dimension[1]+2*padding,dimension[2]+2*padding};
+				
+				final RandomAccessibleInterval<NativeBoolType> nucleusCC = Converters.convert(
+						(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, inputDatasetName),
+						(a, b) -> {
+							b.set(a.get() >0);
+						},
+						new NativeBoolType());
+				
+				RandomAccessibleInterval<NativeBoolType> nucleusCCConverted = Views.offsetInterval(Views.extendZero(nucleusCC), paddedOffset, paddedDimension);
+	
+	
+				RandomAccessibleInterval<FloatType> distanceTransform = ArrayImgs.floats(paddedDimension);
+				DistanceTransform.binaryTransform(nucleusCCConverted, distanceTransform, DISTANCE_TYPE.EUCLIDIAN);
+				distanceTransform = Views.offsetInterval(distanceTransform,new long [] {padding, padding, padding}, dimension);
+				double distanceCutoff = expandDistanceInVoxels*expandDistanceInVoxels;
+				if(iteration!=3) {
+					RandomAccessibleInterval<UnsignedByteType> output = Converters.convert(
+							distanceTransform,
+							(a, b) -> {
+								if(a.get()<=distanceCutoff) {//less than 200nm, shrink it
+									b.set(1);
+								}
+								else {
+									b.set(0);
+								}
+							},
+							new UnsignedByteType());
+		
+					N5Utils.saveBlock(output, n5BlockWriter, outputName, blockInformation.gridBlock[2]);
+					return getBlocksToCheck(output,grid, false);
+				}
+				else {
+					RandomAccessibleInterval<UnsignedLongType> output = Converters.convert(
+							distanceTransform,
+							(a, b) -> {
+								if(a.get()<=distanceCutoff) {//less than 200nm, shrink it
+									b.set(nucleusID);
+								}
+								else {
+									b.set(0);
+								}
+							},
+							new UnsignedLongType());
+		
+					N5Utils.saveBlock(output, n5BlockWriter, outputName, blockInformation.gridBlock[2]);
+					return new HashMap<List<Long>,Boolean>();
+				}
+			}
+			//write it out
+		});
+		
+		Map<List<Long>,Boolean> updatedBlocksToCheck = javaRDDsets.reduce((a,b) -> {
+			return combineBlocksToCheck(a,b);
+			});
+		
+		return updatedBlocksToCheck;
+	}
+	
+	public static final void distanceTransform(final JavaSparkContext sc,final String n5Path,  final String datasetName,  final int expandDistance, final List<BlockInformation> blockInformationList) throws IOException {
+		String outputName = datasetName+"_distanceTransform";
+		final String inputDatasetName = datasetName+ "_converted";
+		final N5Reader n5Reader = new N5FSReader(n5Path);
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputDatasetName);
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		final N5Writer n5Writer = new N5FSWriter(n5Path);
+		n5Writer.createDataset(
+				outputName,
+				dimensions,
+				blockSize,
+				DataType.FLOAT32,
+				new GzipCompression());
+		double[] pixelResolution = IOHelper.getResolution(n5Reader, inputDatasetName);
 		n5Writer.setAttribute(outputName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
@@ -365,44 +504,99 @@ public class SparkCustomMask {
 			final long [] offset= blockInformation.gridBlock[0];
 			final long [] dimension = blockInformation.gridBlock[1];
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
-			
-			//smooth
-			double expandDistanceInVoxels = 2000/pixelResolution[0];
-			long padding = (long) (1+expandDistanceInVoxels); //200 nm shrinking, need to ensure 200 nm from edge, add 2 for buffer
-			long [] paddedOffset = new long [] {offset[0]-padding,offset[1]-padding,offset[2]-padding};
-			long [] paddedDimension = new long [] {dimension[0]+2*padding,dimension[1]+2*padding,dimension[2]+2*padding};
-			
-			final RandomAccessibleInterval<NativeBoolType> nucleusCC = Converters.convert(
-					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, convertedDatasetName),
-					(a, b) -> {
-						b.set(a.get() >0);
-					},
-					new NativeBoolType());
-			
-			RandomAccessibleInterval<NativeBoolType> nucleusCCConverted = Views.offsetInterval(Views.extendZero(nucleusCC), paddedOffset, paddedDimension);
-
-
-			RandomAccessibleInterval<FloatType> distanceTransform = ArrayImgs.floats(paddedDimension);
-			DistanceTransform.binaryTransform(nucleusCCConverted, distanceTransform, DISTANCE_TYPE.EUCLIDIAN);
-			distanceTransform = Views.offsetInterval(distanceTransform,new long [] {padding, padding, padding}, dimension);
-			double distanceCutoff = expandDistanceInVoxels*expandDistanceInVoxels;
-			RandomAccessibleInterval<UnsignedLongType> output = Converters.convert(
-					distanceTransform,
-					(a, b) -> {
-						if(a.get()<=distanceCutoff) {//less than 200nm, shrink it
-							b.set(1L);
-						}
-						else {
-							b.set(0);
-						}
-					},
-					new UnsignedLongType());
-
-
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5Path);
-			N5Utils.saveBlock(output, n5BlockWriter, outputName, blockInformation.gridBlock[2]);
+
+			
+			long[] grid = blockInformation.gridBlock[2];
+			
+				double expandDistanceInVoxels = expandDistance/pixelResolution[0];
+				long padding = (long) (1+expandDistanceInVoxels); //200 nm shrinking, need to ensure 200 nm from edge, add 2 for buffer
+				long [] paddedOffset = new long [] {offset[0]-padding,offset[1]-padding,offset[2]-padding};
+				long [] paddedDimension = new long [] {dimension[0]+2*padding,dimension[1]+2*padding,dimension[2]+2*padding};
+				
+				final RandomAccessibleInterval<NativeBoolType> nucleusCC = Converters.convert(
+						(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, inputDatasetName),
+						(a, b) -> {
+							b.set(a.get() >0);
+						},
+						new NativeBoolType());
+				
+				RandomAccessibleInterval<NativeBoolType> nucleusCCConverted = Views.offsetInterval(Views.extendZero(nucleusCC), paddedOffset, paddedDimension);
+	
+	
+				RandomAccessibleInterval<FloatType> distanceTransform = ArrayImgs.floats(paddedDimension);
+				DistanceTransform.binaryTransform(nucleusCCConverted, distanceTransform, DISTANCE_TYPE.EUCLIDIAN);
+				distanceTransform = Views.offsetInterval(distanceTransform,new long [] {padding, padding, padding}, dimension);
+				double distanceCutoff = expandDistanceInVoxels*expandDistanceInVoxels;
+				RandomAccessibleInterval<FloatType> output = Converters.convert(
+						distanceTransform,
+						(a, b) -> {
+							if(a.get()<=distanceCutoff) {//less than 200nm, shrink it
+								b.set((float)(Math.sqrt(a.get())*pixelResolution[0]));
+							}
+							else {
+								b.set(0);
+							}
+						},
+						new FloatType());
+	
+				N5Utils.saveBlock(output, n5BlockWriter, outputName, blockInformation.gridBlock[2]);
+			
 			//write it out
 		});
+				
+	}
+		
+	public static final void combineAndConvert(final JavaSparkContext sc,final String n5Path, final List<BlockInformation> blockInformationList) throws IOException {
+		//String outputName = "mito_membrane_maskedWith_nucleusExpanded_minus_nucleusAndECS";
+		String outputName = "mask_combined_converted";
+		final N5Reader n5Reader = new N5FSReader(n5Path);
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes("nucleus_largestComponent077");
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		final N5Writer n5Writer = new N5FSWriter(n5Path);
+		n5Writer.createDataset(
+				outputName,
+				dimensions,
+				blockSize,
+				DataType.UINT8,
+				new GzipCompression());
+		double[] pixelResolution = IOHelper.getResolution(n5Reader, "nucleus_largestComponent077");
+		n5Writer.setAttribute(outputName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+	
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		rdd.foreach(blockInformation -> {
+			final long [] offset= blockInformation.gridBlock[0];
+			final long [] dimension = blockInformation.gridBlock[1];
+			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			
+			Cursor<UnsignedByteType> nucleus200Cursor = Views.flatIterable(Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, "nucleus_200_thinned200_cc_converted")),offset, dimension)).cursor();	
+			Cursor<FloatType> nucleusDistanceTransformCursor = Views.flatIterable(Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<FloatType>) N5Utils.open(n5BlockReader, "nucleus_200_thinned200_cc_distanceTransform")),offset, dimension)).cursor();	
+			Cursor<UnsignedLongType> nucleusLargestComponent077Cursor = Views.flatIterable(Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5BlockReader, "nucleus_largestComponent077")),offset, dimension)).cursor();	
+			Cursor<UnsignedLongType> ecsLargestComponent077Cursor = Views.flatIterable(Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5BlockReader, "ecs_largestComponent077")),offset, dimension)).cursor();	
+
+			final Img<UnsignedByteType> output =  new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(dimension);	
+			Cursor<UnsignedByteType> outputCursor = output.cursor();
+
+			while(nucleus200Cursor.hasNext()) {				
+				nucleus200Cursor.next();
+				nucleusLargestComponent077Cursor.next();
+				nucleusDistanceTransformCursor.next();
+				ecsLargestComponent077Cursor.next();
+				outputCursor.next();
+				if((nucleusLargestComponent077Cursor.get().get()>0 || ecsLargestComponent077Cursor.get().get()>0)  //best ecs mask is by combining these two, but then you still have nucleus
+						&& !((nucleusDistanceTransformCursor.get().get()<=300 && nucleusDistanceTransformCursor.get().get()>0) || nucleus200Cursor.get().get()>0)) {
+					outputCursor.get().set(255);
+				}
+				
+			}
+			
+			
+			final N5FSWriter n5BlockWriter = new N5FSWriter(n5Path);
+			N5Utils.saveBlock(output, n5BlockWriter, outputName, blockInformation.gridBlock[2]);
+			
+		});
+		
 	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
@@ -437,6 +631,18 @@ public class SparkCustomMask {
 		System.out.println(ts + " " + msg);
 	}
 	
+	public static List<BlockInformation> updateBlockInformationList(List<BlockInformation> blockInformationList, Map<List<Long>,Boolean> blocksToCheck){
+		int numBlocks  = blockInformationList.size()-1;
+		for(int blockIndex = numBlocks; blockIndex>=0; blockIndex--) {
+			BlockInformation currentBlock = blockInformationList.get(blockIndex);
+			if(!blocksToCheck.getOrDefault(Arrays.asList(currentBlock.gridBlock[2][0],currentBlock.gridBlock[2][1],currentBlock.gridBlock[2][2]), false)) {//remove if block is full
+				blockInformationList.remove(blockIndex);
+			}
+	
+		}
+		return blockInformationList;
+	}
+	
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 
 		final Options options = new Options(args);
@@ -452,9 +658,31 @@ public class SparkCustomMask {
 			sc.close();
 			SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToThin()+"_200_thinned200", options.getOutputN5Path(), null, options.getOutputN5Path(), "_cc", 0, 0, false,false);
 		}
-		long nucleusID = 137029;
-		blockInformationList = convertDataset(sc, options.getOutputN5Path(), options.getDatasetNameToThin()+"_200_thinned200_cc", nucleusID, blockInformationList);
-		expandDataset(sc, options.getOutputN5Path(), options.getDatasetNameToThin()+"_200_thinned200_cc", nucleusID, blockInformationList);
+		//long nucleusID = options.getNucleusID();
+		//Map<List<Long>, Boolean> blocksToCheck = convertDataset(sc, options.getOutputN5Path(), options.getDatasetNameToThin()+"_200_thinned200_cc", nucleusID, blockInformationList);
+		//List<BlockInformation> updatedBlockInformationList = updateBlockInformationList(blockInformationList, blocksToCheck);
+		//distanceTransform(sc, options.getOutputN5Path(), options.getDatasetNameToThin()+"_200_thinned200_cc", 500, blockInformationList);
+		combineAndConvert(sc, options.getOutputN5Path(), blockInformationList);
+		distanceTransform(sc, options.getOutputN5Path(), "mask_combined",600, blockInformationList);
+		ArrayList<String> directoriesToDelete = new ArrayList<String>();
+		//directoriesToDelete.add(options.getOutputN5Path() + "/" + options.getDatasetNameToThin()+"_200_thinned200_cc_converted");
+		/*for(int iteration=0; iteration<4; iteration++) {
+			long tic = System.currentTimeMillis();
+			blocksToCheck = expandDataset(sc, options.getOutputN5Path(), options.getDatasetNameToThin()+"_200_thinned200_cc", 500, nucleusID, iteration, blocksToCheck, blockInformationList);
+			System.out.println((System.currentTimeMillis()-tic)/1000);
+			if(iteration!=3) {
+				
+				directoriesToDelete.add(options.getOutputN5Path() + "/" + options.getDatasetNameToThin()+"_200_thinned200_cc"+"_expanded2000_iteration"+Integer.toString(iteration));
+			}
+		}*/
+		
+		
+		
+		sc.close();
+
+		//Remove temporary files
+		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
+	
 		//nuclues at 77 largest component
 		//ecs at 77 largestComponent
 		

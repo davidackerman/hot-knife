@@ -74,8 +74,8 @@ public class SparkGeneralCosemObjectInformation {
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
 		private String inputN5DatasetName = null;
 		
-		@Option(name = "--doContactSites", required = false, usage = "Get general information for contact sites")
-		private boolean doContactSites = true;
+		@Option(name = "--skipContactSites", required = false, usage = "Get general information for contact sites")
+		private boolean skipContactSites = false;
 
 		public Options(final String[] args) {
 			final CmdLineParser parser = new CmdLineParser(this);
@@ -102,8 +102,8 @@ public class SparkGeneralCosemObjectInformation {
 			return outputDirectory;
 		}
 		
-		public boolean getDoContactSites() {
-			return doContactSites;
+		public boolean getSkipContactSites() {
+			return skipContactSites;
 		}
 		
 	}
@@ -417,7 +417,7 @@ public class SparkGeneralCosemObjectInformation {
 			sc.close();
 		}
 		
-		if (options.getDoContactSites()) {
+		if (!options.getSkipContactSites()) {
 			for (int i=0; i<organelles.length; i++) {
 				for(int j=i; j<organelles.length;j++) {
 					String [] datasetNames = {organelles[i],i==j ? organelles[j] : organelles[j]+"_pairs",organelles[i]+"_to_"+organelles[j]+"_cc"};

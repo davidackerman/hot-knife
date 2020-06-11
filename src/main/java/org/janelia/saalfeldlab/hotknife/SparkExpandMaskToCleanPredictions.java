@@ -118,6 +118,9 @@ public class SparkExpandMaskToCleanPredictions {
 		
 		@Option(name = "--expansion", required = false, usage = "expansion in nm")
 		private Integer expansion = 160;
+		
+		@Option(name = "--skipSmoothing", required = false, usage = "expansion in nm")
+		private boolean skipSmoothing = false;
 
 		public Options(final String[] args) {
 
@@ -167,6 +170,10 @@ public class SparkExpandMaskToCleanPredictions {
 		public boolean getSkipConnectedComponents() {
 			return skipConnectedComponents;
 		}
+		
+		public boolean getSkipSmoothing() {
+			return skipSmoothing;
+		}
 
 	}
 
@@ -212,7 +219,15 @@ public class SparkExpandMaskToCleanPredictions {
 			final long [] paddedBlockMin =  new long [] {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			final long [] paddedBlockSize =  new long [] {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			
-			final RandomAccessibleInterval<UnsignedByteType> dataToMask = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, datasetNameToMask)), offset, dimension);
+			final RandomAccessibleInterval<UnsignedByteType> dataToMask;
+			try {
+				dataToMask = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, datasetNameToMask)), offset, dimension);
+			} catch (Exception e) {
+				System.out.println(datasetToMaskN5Path+" "+datasetNameToMask);
+				System.out.println(Arrays.toString(offset));
+				System.out.println(Arrays.toString(dimension));
+				throw e;
+			}
 			
 			final RandomAccessibleInterval<UnsignedLongType> maskDataPreExpansion = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5MaskReader, datasetNameToUseAsMask)), paddedBlockMin, paddedBlockSize);
 			final RandomAccessibleInterval<NativeBoolType> maskDataPreExpansionConverted = Converters.convert(
@@ -299,7 +314,8 @@ public class SparkExpandMaskToCleanPredictions {
 		String suffix = options.getOnlyKeepLargestComponent() ? "_largestComponent" :  "_cc";
 		//SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToUseAsMask(), options.getDatasetToUseAsMaskN5Path(), null, options.getOutputN5Path(), "_largestComponent", 0, -1, true);
 		if(!options.getSkipConnectedComponents()) {
-			SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToUseAsMask(), options.getDatasetToUseAsMaskN5Path(), null, options.getOutputN5Path(), suffix, thresholdDistance, -1, options.getOnlyKeepLargestComponent());
+			boolean smooth = !options.getSkipSmoothing();
+			SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToUseAsMask(), options.getDatasetToUseAsMaskN5Path(), null, options.getOutputN5Path(), suffix, thresholdDistance, -1, options.getOnlyKeepLargestComponent(), smooth);
 		}
 		JavaSparkContext sc = new JavaSparkContext(conf);
 		expandAndApplyMask(
