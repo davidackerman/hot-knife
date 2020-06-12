@@ -412,7 +412,8 @@ public class Skeletonize3D_ implements PlugInFilter
 					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
 					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
-					if(!isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					//if(!(isSurfaceEndPoint(neighborhood))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					if(!(isSurfaceEndPoint(neighborhood) || isOneVoxelThickAndDone(neighborhood, x, y, z))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
 		}
@@ -423,7 +424,8 @@ public class Skeletonize3D_ implements PlugInFilter
 					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
 					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
-					if(!isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					//if(!(isSurfaceEndPoint(neighborhood))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					if(!(isSurfaceEndPoint(neighborhood) || isOneVoxelThickAndDone(neighborhood, x, y, z))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
 		}
@@ -434,7 +436,8 @@ public class Skeletonize3D_ implements PlugInFilter
 					if (getPixelNoCheck(outputImageRandomAccess,x,y,z)==0) continue; //Background
 					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
-					if(!isSurfaceEndPoint(neighborhood)) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					//if(!(isSurfaceEndPoint(neighborhood))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
+					if(!(isSurfaceEndPoint(neighborhood) || isOneVoxelThickAndDone(neighborhood, x, y, z))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
 		}
@@ -487,6 +490,19 @@ public class Skeletonize3D_ implements PlugInFilter
 		if(numberOfNeighbors(neighborhood) == 2 && !isSimplePoint(neighborhood) && !isEulerInvariant(neighborhood, eulerLUT)) {
 			return true;
 		}
+		return false;
+	}
+	
+	boolean isOneVoxelThickAndDone(byte[] neighborhood, int x, int y, int z) {
+		byte[] inverseNeighborhood = neighborhood;
+		for(int i=0; i<27; i++) {
+			inverseNeighborhood[i]=(byte) (1-inverseNeighborhood[i]);
+		}
+		
+		if(numberOfNeighbors(neighborhood) == 8 && !isSimplePoint(inverseNeighborhood)) { //then it is a plane or L shape sheet
+			return true;
+		}
+		
 		return false;
 	}
 	
@@ -1340,6 +1356,8 @@ public class Skeletonize3D_ implements PlugInFilter
 		//return label-2; in [Lee94] if the number of connected components would be needed
 		return true;
 	}
+	
+	
 	/* -----------------------------------------------------------------------*/
 	/**
 	 * This is a recursive method that calculates the number of connected

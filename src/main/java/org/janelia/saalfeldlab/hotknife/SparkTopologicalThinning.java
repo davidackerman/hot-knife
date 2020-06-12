@@ -173,7 +173,11 @@ public class SparkTopologicalThinning {
 			long [] paddedOffset = blockInformation.paddedGridBlock[0];
 			long [] paddedDimension = blockInformation.paddedGridBlock[1];
 			long [] padding = blockInformation.padding;
-			
+			if(blockInformation.isIndependent) {
+				paddedOffset = offset;
+				paddedDimension = dimension;
+				padding = new long[] {0,0,0};
+			}
 			//Input source is now the previously completed iteration image, and output is initialized to that
 			String currentInputDatasetName;
 			if(iteration==0) {
@@ -195,15 +199,15 @@ public class SparkTopologicalThinning {
 			//For skeletonization and medial surface:
 			//All blocks start off dependent, so it will only be independent after it made it through one iteration, ensuring all blocks are checked.
 			//Perform thinning, then check if block is independent. If so, complete the block.
-			if(!blockInformation.isIndependent) {
+			//if(!blockInformation.isIndependent) {
 				//Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
 				//if(iteration==0){		//TODO: The below fix for touching objects by thinning them independently, therebey producing indpependent skeletons will fail in some extreme cases like if the objects are already thin/touching or still touching after an iteration because on the next iteration, they will be treated as one object
 				blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching	
-				if(blockInformation.isIndependent) {//then can finish it
-					while(blockInformation.needToThinAgainCurrent) 
-						blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching
-				}
-			}
+				//if(blockInformation.isIndependent) {//then can finish it
+					//while(blockInformation.needToThinAgainCurrent) 
+					//	blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching
+				//}
+			//}
 			IntervalView<UnsignedLongType> croppedOutputImage = Views.offsetInterval(thinningResultCropped, padding, dimension);
 //			}
 
@@ -318,11 +322,15 @@ public class SparkTopologicalThinning {
 			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(current, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
 			if(doMedialSurface) {
 				blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeMedialSurfaceIteration();
-				blockInformation.isIndependent &= skeletonize3D.isMedialSurfaceBlockIndependent();
+				if(!blockInformation.isIndependent) {
+					blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
+				}
 			}
 			else {
 				blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeSkeletonIteration();
-				blockInformation.isIndependent &= skeletonize3D.isSkeletonBlockIndependent();
+				if(!blockInformation.isIndependent) {
+					blockInformation.isIndependent = skeletonize3D.isSkeletonBlockIndependent();
+				}
 			}
 			
 			//update output
@@ -366,11 +374,15 @@ public class SparkTopologicalThinning {
 		Skeletonize3D_ skeletonize3D = new Skeletonize3D_(current, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
 		if(doMedialSurface) {
 			blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeMedialSurfaceIteration();
-			blockInformation.isIndependent &= skeletonize3D.isMedialSurfaceBlockIndependent();
+			if(!blockInformation.isIndependent) {
+				blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
+			}
 		}
 		else {
 			blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeSkeletonIteration();
-			blockInformation.isIndependent &= skeletonize3D.isSkeletonBlockIndependent();
+			if(!blockInformation.isIndependent) {
+				blockInformation.isIndependent = skeletonize3D.isSkeletonBlockIndependent();
+			}
 		}
 		
 		//update output
