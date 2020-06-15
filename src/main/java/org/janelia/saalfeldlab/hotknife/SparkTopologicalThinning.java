@@ -292,7 +292,7 @@ public class SparkTopologicalThinning {
 	
 	private static BlockInformation thinEachObjectIndependently(IntervalView<UnsignedLongType> thinningResult, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ){
 		blockInformation.needToThinAgainCurrent = false;
-		blockInformation.isIndependent = true;
+		//blockInformation.isIndependent = true;
 		
 		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.cursor();
 		thinningResultCursor.reset();
@@ -353,7 +353,7 @@ public class SparkTopologicalThinning {
 	
 	private static BlockInformation thinEverythingTogether(IntervalView<UnsignedLongType> thinningResult, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ){
 		blockInformation.needToThinAgainCurrent = false;
-		blockInformation.isIndependent = true;
+		//blockInformation.isIndependent = true;
 		
 		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.cursor();
 		thinningResultCursor.reset();
