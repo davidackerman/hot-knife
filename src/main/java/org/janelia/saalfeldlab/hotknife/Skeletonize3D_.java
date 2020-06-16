@@ -425,7 +425,6 @@ public class Skeletonize3D_ implements PlugInFilter
 					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
 					if(!(isSurfaceEndPoint(neighborhood))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
-					//if(!(isSurfaceEndPoint(neighborhood) || isOneVoxelThickAndDone(neighborhood, x, y, z))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
 		}
@@ -437,7 +436,6 @@ public class Skeletonize3D_ implements PlugInFilter
 					if (!isAnyBorder(outputImageRandomAccess,x,y,z)) return false; //Then it is not a border point, so unclear whether it is finished
 					final byte[] neighborhood = getNeighborhood(outputImageRandomAccess, x, y, z);
 					if(!(isSurfaceEndPoint(neighborhood))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
-				//	if(!(isSurfaceEndPoint(neighborhood) || isOneVoxelThickAndDone(neighborhood, x, y, z))) return false; //Then it is not a surface point, so isn't done. Surface endpoints can't revert from being surface endpoints? But simple/euler invariant cant switch?
 				}
 			}
 		}

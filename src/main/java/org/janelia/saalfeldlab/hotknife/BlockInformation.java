@@ -20,6 +20,7 @@ public class BlockInformation implements Serializable {
 	private static final long serialVersionUID = 1L;
 	public long[][] gridBlock;
 	public long[][] paddedGridBlock;
+	public boolean[][][] thinningLocations;
 	public long[] padding;
 	public boolean needToThinAgainPrevious;
 	public boolean needToThinAgainCurrent;
@@ -59,6 +60,7 @@ public class BlockInformation implements Serializable {
 		this.isIndependent = false;
 		this.areObjectsTouching = true;
 		this.selfContainedMaxVolume =0L;
+		this.thinningLocations = new boolean[3][3][3];
 	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,

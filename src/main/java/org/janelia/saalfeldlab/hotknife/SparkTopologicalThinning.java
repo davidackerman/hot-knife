@@ -25,6 +25,7 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -161,10 +162,18 @@ public class SparkTopologicalThinning {
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, org.janelia.saalfeldlab.n5.DataType.UINT64, new GzipCompression());
 		n5Writer.setAttribute(outputDatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, originalInputDatasetName)));
-
 		
-		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
-		JavaRDD<BlockInformation> updatedBlockInformation = rdd.map(blockInformation -> {
+		List<BlockInformation> blockInformationListThinningRequired = new LinkedList<BlockInformation>();
+		for(BlockInformation currentBlockInformation : blockInformationList) {
+			if(currentBlockInformation.needToThinAgainCurrent || iteration<=1) {//need two iterations to complete to ensure block is in _even and _odd
+				blockInformationListThinningRequired.add(currentBlockInformation);
+			}
+		}
+		
+		long tic = System.currentTimeMillis();
+
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationListThinningRequired);
+		JavaRDD<BlockInformation> updatedBlockInformationThinningRequired = rdd.map(blockInformation -> {
 			
 			//Get relevant block informtation
 			final long[][] gridBlock = blockInformation.gridBlock;
@@ -199,17 +208,8 @@ public class SparkTopologicalThinning {
 			//For skeletonization and medial surface:
 			//All blocks start off dependent, so it will only be independent after it made it through one iteration, ensuring all blocks are checked.
 			//Perform thinning, then check if block is independent. If so, complete the block.
-			//if(!blockInformation.isIndependent) {
-				//Skeletonize3D_ skeletonize3D = new Skeletonize3D_(outputImage, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
-				//if(iteration==0){		//TODO: The below fix for touching objects by thinning them independently, therebey producing indpependent skeletons will fail in some extreme cases like if the objects are already thin/touching or still touching after an iteration because on the next iteration, they will be treated as one object
-				blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching	
-				//if(blockInformation.isIndependent) {//then can finish it
-					//while(blockInformation.needToThinAgainCurrent) 
-					//	blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching
-				//}
-			//}
+			blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching	
 			IntervalView<UnsignedLongType> croppedOutputImage = Views.offsetInterval(thinningResultCropped, padding, dimension);
-//			}
 
 			//Write out current thinned block and return block information updated with whether it needs to be thinned again
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
@@ -222,9 +222,10 @@ public class SparkTopologicalThinning {
 		
 		//Figure out whether another thinning iteration is needed. Update blockInformationList
 		boolean needToThinAgain = false;
-		blockInformationList  = new LinkedList<BlockInformation>(updatedBlockInformation.collect());
-		for(int i=blockInformationList.size()-1; i>=0; i--) {
-			BlockInformation currentBlockInformation = blockInformationList.get(i);
+		LinkedList<BlockInformation> updatedBlockInformationThinningRequiredList = new LinkedList<BlockInformation>(updatedBlockInformationThinningRequired.collect());
+		/*for(int i=updatedBlockInformationThinningRequiredList.size()-1; i>=0; i--) {
+			BlockInformation currentBlockInformation = updatedBlockInformationThinningRequiredList.get(i);
+			
 			
 			//If a block is completed it needs to appear in both the _even and _odd outputs, otherwise update it and process again
 			if(currentBlockInformation.isIndependent && (!currentBlockInformation.needToThinAgainPrevious && !currentBlockInformation.needToThinAgainCurrent)) {// if current block is independent and had no need to thin over two iterations, then can stop processing it since it will be identical in even/odd outputs
@@ -233,16 +234,74 @@ public class SparkTopologicalThinning {
 			else {
 				needToThinAgain |= currentBlockInformation.needToThinAgainCurrent;
 				currentBlockInformation.needToThinAgainPrevious = currentBlockInformation.needToThinAgainCurrent;
-				blockInformationList.set(i,currentBlockInformation);
+				updatedBlockInformationThinningRequiredList.set(i,currentBlockInformation);
 			}
 			
+		}*/
+		
+		DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
+		Date date = new Date();
+		System.out.println(dateFormat.format(date)+" Timing: "+(System.currentTimeMillis()-tic)/1000.0+" Number of Remaining Blocks: "+blockInformationListThinningRequired.size()+", Full iteration complete: "+iteration);
+		
+		
+		HashMap<List<Long>,BlockInformation> blockWasThinnedInPreviousIterationMap = new HashMap<List<Long>,BlockInformation>();
+		for(int i=0; i<updatedBlockInformationThinningRequiredList.size(); i++) {
+			BlockInformation currentBlockInformation = updatedBlockInformationThinningRequiredList.get(i);
+			needToThinAgain |= currentBlockInformation.needToThinAgainCurrent;
+			currentBlockInformation.needToThinAgainPrevious = currentBlockInformation.needToThinAgainCurrent;
+			updatedBlockInformationThinningRequiredList.set(i,currentBlockInformation);
+			blockWasThinnedInPreviousIterationMap.put(Arrays.asList(currentBlockInformation.gridBlock[0][0], currentBlockInformation.gridBlock[0][1], currentBlockInformation.gridBlock[0][2]), currentBlockInformation);
 		}
 		
-			if(!needToThinAgain)
+		for(int i=0; i<blockInformationList.size(); i++) {
+			BlockInformation currentBlockInformation = blockInformationList.get(i);
+			long[] currentBlockOffset = currentBlockInformation.gridBlock[0];
+			currentBlockInformation = blockWasThinnedInPreviousIterationMap.getOrDefault(Arrays.asList(currentBlockOffset[0],currentBlockOffset[1],currentBlockOffset[2]),currentBlockInformation);
+			
+			if(!currentBlockInformation.needToThinAgainCurrent && !currentBlockInformation.isIndependent) { //then only need to check this round if any of its 26 neighbors changed in the appropriate places
+				outerloop:
+				for(int deltaX = -1; deltaX <= 1; deltaX++) {
+					for(int deltaY = -1; deltaY <= 1; deltaY++) {
+						for(int deltaZ = -1; deltaZ <= 1; deltaZ++) {
+							List<Long> neighboringBlockOffset = Arrays.asList(currentBlockOffset[0]+deltaX*blockSize[0], 
+									currentBlockOffset[1]+deltaY*blockSize[1],
+									currentBlockOffset[2]+deltaZ*blockSize[2]);
+							
+							//convert detlaX to index to check in neighboring block to see if need to thin again
+							List<Integer> xIndices = 1-deltaX==1 ? Arrays.asList(0,1,2) : Arrays.asList(1-deltaX);
+							List<Integer> yIndices = 1-deltaY==1 ? Arrays.asList(0,1,2) : Arrays.asList(1-deltaY);
+							List<Integer> zIndices = 1-deltaZ==1 ? Arrays.asList(0,1,2) : Arrays.asList(1-deltaZ);
+							
+							boolean[][][] thinningLocations = blockWasThinnedInPreviousIterationMap.containsKey(neighboringBlockOffset) ? 
+									blockWasThinnedInPreviousIterationMap.get(neighboringBlockOffset).thinningLocations
+									: new boolean[3][3][3];
+							for(int xIndex: xIndices) {
+								for(int yIndex: yIndices) {
+									for(int zIndex: zIndices) {
+										if(thinningLocations[xIndex][yIndex][zIndex]) {
+											currentBlockInformation.needToThinAgainCurrent = true;
+											break outerloop;
+										}
+									}
+								}
+							}
+							
+							
+						}
+					}
+				}
+			}
+			
+			blockInformationList.set(i,currentBlockInformation);
+
+		}
+		
+		if(!needToThinAgain)
 			blockInformationList = new LinkedList<BlockInformation>();
 		
 		return blockInformationList;
 	}
+	
 	
 	private static boolean areObjectsTouching(IntervalView<UnsignedLongType> thinningResult, long[] paddedDimension) {
 		RandomAccess<UnsignedLongType> thinningResultRandomAccess = thinningResult.randomAccess();
@@ -277,6 +336,7 @@ public class SparkTopologicalThinning {
 	}
 
 	private static BlockInformation updateThinningResult(IntervalView<UnsignedLongType> thinningResult, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ) {
+		blockInformation.thinningLocations = new boolean[3][3][3];
 		if(blockInformation.areObjectsTouching) {//check if objects are still touching
 			blockInformation.areObjectsTouching = areObjectsTouching(thinningResult, paddedDimension);
 		}
@@ -294,7 +354,7 @@ public class SparkTopologicalThinning {
 		blockInformation.needToThinAgainCurrent = false;
 		//blockInformation.isIndependent = true;
 		
-		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.cursor();
+		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.localizingCursor();
 		thinningResultCursor.reset();
 		
 		Set<Long> objectIDsInBlock = new HashSet<Long>();
@@ -341,6 +401,7 @@ public class SparkTopologicalThinning {
 				thinningResultCursor.next();
 				if(currentCursor.get().get() ==0) {
 					if (thinningResultCursor.get().get() == objectID) {
+						blockInformation = updateBlockInformationThinningLocations(thinningResultCursor, padding, paddedDimension, blockInformation);
 						thinningResultCursor.get().set(0);//Then this voxel was thinned out
 					}
 				}
@@ -355,7 +416,7 @@ public class SparkTopologicalThinning {
 		blockInformation.needToThinAgainCurrent = false;
 		//blockInformation.isIndependent = true;
 		
-		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.cursor();
+		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.localizingCursor();
 		thinningResultCursor.reset();
 		
 		IntervalView<UnsignedByteType> current = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension); //need this as unsigned byte type
@@ -392,6 +453,9 @@ public class SparkTopologicalThinning {
 			currentCursor.next();
 			thinningResultCursor.next();
 			if(currentCursor.get().get() == 0) {
+				if(thinningResultCursor.get().get()>0) {
+					blockInformation = updateBlockInformationThinningLocations(thinningResultCursor, padding, paddedDimension, blockInformation);
+				}
 				thinningResultCursor.get().set(0);//Then this voxel was thinned out
 			}
 		}
@@ -399,9 +463,28 @@ public class SparkTopologicalThinning {
 		//previous thinning result should now equal the current thinning result
 		return blockInformation;
 	}
+	
+	public static BlockInformation updateBlockInformationThinningLocations(	Cursor<UnsignedLongType> thinningResultCursor, long[] padding, long [] paddedDimension, BlockInformation blockInformation) {		
+		//in the case that this block is independent, then it doesnt matter because it will not have any effect since its edge doesnt change.
+		int xIndex = getThinningLocationsIndex(0, thinningResultCursor, padding, paddedDimension);
+		int yIndex = getThinningLocationsIndex(1, thinningResultCursor, padding, paddedDimension);
+		int zIndex = getThinningLocationsIndex(2, thinningResultCursor, padding, paddedDimension);
+		blockInformation.thinningLocations[xIndex][yIndex][zIndex] = true;
+		
+		return blockInformation;
+	}
 
+	public static int getThinningLocationsIndex(int d, Cursor<UnsignedLongType> thinningResultCursor, long[] padding, long[] paddedDimension){
+		int pos = thinningResultCursor.getIntPosition(d);
+		int idx;
+		if(pos>=padding[d] && pos<2*padding[d]) idx=0;
+		else if(pos>paddedDimension[d]-2*padding[d] && pos<=paddedDimension[d]-padding[d]) idx = 2;
+		else idx =1;
+		
+		return idx;
+	}
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
-			final String inputN5DatasetName) throws IOException {
+			final String inputN5DatasetName) throws Exception {
 		// Get block attributes
 		N5Reader n5Reader = new N5FSReader(inputN5Path);
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
@@ -413,6 +496,9 @@ public class SparkTopologicalThinning {
 		List<BlockInformation> blockInformationList = new LinkedList<BlockInformation>();
 		for (int i = 0; i < gridBlockList.size(); i++) {
 			long pad = 50;//I think for doing 6 borders (N,S,E,W,U,B) where we do the 8 indpendent iterations, the furthest a voxel in a block can be affected is from something 48 away, so add 2 more just as extra border
+			if(pad>=blockSize[0] || pad>=blockSize[1] || pad>=blockSize[2]) {
+				throw new Exception("Padding is bigger than block size...");
+			}
 			long[][] currentGridBlock = gridBlockList.get(i);
 			long[][] paddedGridBlock = { {currentGridBlock[0][0]-pad, currentGridBlock[0][1]-pad, currentGridBlock[0][2]-pad}, //initialize padding
 										{currentGridBlock[1][0]+2*pad, currentGridBlock[1][1]+2*pad, currentGridBlock[1][2]+2*pad}};
@@ -421,10 +507,9 @@ public class SparkTopologicalThinning {
 		}
 		return blockInformationList;
 	}
-
 	
 
-	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
+	public static final void main(final String... args) throws Exception {
 
 		final Options options = new Options(args);
 
@@ -457,14 +542,11 @@ public class SparkTopologicalThinning {
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			int fullIterations = 0;
-			DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
 						
 			while(blockInformationList.size()>0){ //Thin until block information list is empty
 				blockInformationList = performTopologicalThinningIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
 							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList, fullIterations);
 				fullIterations++;
-				Date date = new Date();
-				System.out.println(dateFormat.format(date)+" Number of Remaining Blocks: "+blockInformationList.size()+", Full iteration complete: "+fullIterations);
 			}
 			
 			String finalFileName = finalOutputN5DatasetName + '_'+ ((fullIterations-1)%2==0 ? "even" : "odd");
