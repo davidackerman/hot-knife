@@ -69,7 +69,7 @@ public class Skeletonize3D_ implements PlugInFilter
 	
 	/** number of iterations thinning took */
 	private int iterations;
-	private int[] padding;
+	private int[][] padding;
 	private int[] paddedOffset;
 	
 	private int currentBorder;
@@ -77,7 +77,7 @@ public class Skeletonize3D_ implements PlugInFilter
 	private int[] eulerLUT;
 	private int[] pointsLUT;
 	
-	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, int[] padding, int[] paddedOffset) {
+	public Skeletonize3D_(IntervalView<UnsignedByteType> inputImage, int[][] padding, long[] paddedOffset) {
 		this.inputImage = inputImage;
 		this.width = (int) this.inputImage.dimension(0);
 		this.height = (int) this.inputImage.dimension(1);
@@ -85,7 +85,7 @@ public class Skeletonize3D_ implements PlugInFilter
 		this.padding = padding; 
 		
 		//just in case it's negative padding
-		this.paddedOffset = paddedOffset;
+		this.paddedOffset = new int[] {(int) paddedOffset[0], (int) paddedOffset[1], (int)paddedOffset[2]};
 		this.paddedOffset[0]=Math.abs(this.paddedOffset[0]);
 		this.paddedOffset[1]=Math.abs(this.paddedOffset[1]);
 		this.paddedOffset[2]=Math.abs(this.paddedOffset[2]);
@@ -402,10 +402,13 @@ public class Skeletonize3D_ implements PlugInFilter
 	}
 	
 	public boolean isMedialSurfaceBlockIndependent() {
-		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();		
-		List<Integer> xEdges = Arrays.asList(padding[0], width-padding[0]-1);
-		List<Integer> yEdges = Arrays.asList(padding[1], height-padding[1]-1);
-		List<Integer> zEdges = Arrays.asList(padding[2], depth-padding[2]-1);
+		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();	
+		
+		int[] paddingNeg = padding[0];
+		int[] paddingPos = padding[1];
+		List<Integer> xEdges = Arrays.asList(paddingNeg[0], width-paddingPos[0]-1);
+		List<Integer> yEdges = Arrays.asList(paddingNeg[1], height-paddingPos[1]-1);
+		List<Integer> zEdges = Arrays.asList(paddingNeg[2], depth-paddingPos[2]-1);
 		for(int x : xEdges) {
 			for(int y=yEdges.get(0); y<=yEdges.get(1); y++) {
 				for(int z=zEdges.get(0); z<=zEdges.get(1); z++) {
@@ -446,9 +449,12 @@ public class Skeletonize3D_ implements PlugInFilter
 	
 	public boolean isSkeletonBlockIndependent() {
 		RandomAccess<UnsignedByteType> outputImageRandomAccess = inputImage.randomAccess();		
-		List<Integer> xEdges = Arrays.asList(padding[0], width-padding[0]-1);
-		List<Integer> yEdges = Arrays.asList(padding[1], height-padding[1]-1);
-		List<Integer> zEdges = Arrays.asList(padding[2], depth-padding[2]-1);
+		
+		int[] paddingNeg = padding[0];
+		int[] paddingPos = padding[1];
+		List<Integer> xEdges = Arrays.asList(paddingNeg[0], width-paddingPos[0]-1);
+		List<Integer> yEdges = Arrays.asList(paddingNeg[1], height-paddingPos[1]-1);
+		List<Integer> zEdges = Arrays.asList(paddingNeg[2], depth-paddingPos[2]-1);
 		for(int x : xEdges) {
 			for(int y=yEdges.get(0); y<=yEdges.get(1); y++) {
 				for(int z=zEdges.get(0); z<=zEdges.get(1); z++) {

@@ -25,7 +25,6 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -50,13 +49,18 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 import ij.ImageJ;
+import net.imglib2.type.NativeType;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.converter.Converters;
+import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImg;
+import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.LongArray;
 import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.type.numeric.NumericType;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
@@ -66,9 +70,7 @@ import net.imglib2.view.Views;
  *
  * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
-public class SparkTopologicalThinning {
-	public static final int pad = 50;//I think for doing 6 borders (N,S,E,W,U,B) where we do the 8 indpendent iterations, the furthest a voxel in a block can be affected is from something 48 away, so add 2 more just as extra border
-	
+public class SparkTopologicalThinning_convert {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
@@ -160,35 +162,24 @@ public class SparkTopologicalThinning {
 		}
 		final long[] dimensions = attributes.getDimensions();
 		final int[] blockSize = attributes.getBlockSize();
+		final DataType dataType = attributes.getDataType();
 		
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
-		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, org.janelia.saalfeldlab.n5.DataType.UINT64, new GzipCompression());
+		
+		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, dataType, new GzipCompression());
 		n5Writer.setAttribute(outputDatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, originalInputDatasetName)));
 		
-		List<BlockInformation> blockInformationListThinningRequired = new LinkedList<BlockInformation>();
-		for(BlockInformation currentBlockInformation : blockInformationList) {
-			if(currentBlockInformation.needToThinAgainCurrent || iteration<=1) {//need two iterations to complete to ensure block is in _even and _odd
-				blockInformationListThinningRequired.add(currentBlockInformation);
-			}
-		}
-		
-		long tic = System.currentTimeMillis();
-
-		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationListThinningRequired);
-		JavaRDD<BlockInformation> updatedBlockInformationThinningRequired = rdd.map(blockInformation -> {
+		boolean objectsAreTouching = areObjectsTouching(blockInformationList);
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		JavaRDD<BlockInformation> updatedBlockInformation = rdd.map(blockInformation -> {
 			
 			//Get relevant block informtation
 			final long[][] gridBlock = blockInformation.gridBlock;
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
-			//long [] paddedOffset = blockInformation.paddedGridBlock[0];
-			//long [] paddedDimension = blockInformation.paddedGridBlock[1];
-			int [][] padding = blockInformation.padding;
-			int [] paddingNeg = padding[0];
-			int [] paddingPos = padding[1];
-			long [] paddedOffset = new long[] {offset[0]-paddingNeg[0], offset[1]-paddingNeg[1], offset[2]-paddingNeg[2]};
-			long [] paddedDimension = new long[] {dimension[0]+(paddingNeg[0]+paddingPos[0]), dimension[1]+(paddingNeg[1]+paddingPos[1]), dimension[2]+(paddingNeg[2]+paddingPos[2])};
-
+			long [] paddedOffset = blockInformation.paddedGridBlock[0];
+			long [] paddedDimension = blockInformation.paddedGridBlock[1];
+			long [] padding = blockInformation.padding[0];
 			
 			//Input source is now the previously completed iteration image, and output is initialized to that
 			String currentInputDatasetName;
@@ -199,21 +190,42 @@ public class SparkTopologicalThinning {
 				currentInputDatasetName = inputDatasetName;
 			}
 			N5FSReader n5BlockReader = new N5FSReader(n5OutputPath);
-			final RandomAccessibleInterval<UnsignedLongType> previousThinningResult = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, currentInputDatasetName);
-			IntervalView<UnsignedLongType> thinningResultCropped = Views.offsetInterval(Views.extendValue(previousThinningResult, new UnsignedLongType(0)), paddedOffset, paddedDimension);
-
-			//IntervalView<UnsignedLongType> outputImage = Views.offsetInterval(Views.extendValue(previousThinningResult, new UnsignedLongType(0)), paddedOffset, paddedDimension);
-			//IntervalView<UnsignedLongType> outputImage = Views.offsetInterval(ArrayImgs.unsignedLongs(paddedDimension),new long[]{0,0,0}, paddedDimension);
 			
+			RandomAccessibleInterval previousThinningResult = null;
+			IntervalView thinningResultCropped = null;
+			IntervalView croppedOutputImage = null;
+			if(dataType == org.janelia.saalfeldlab.n5.DataType.UINT8) {
+				previousThinningResult = (RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, currentInputDatasetName);
+				thinningResultCropped = Views.offsetInterval(Views.extendValue(previousThinningResult, new UnsignedByteType(0)), paddedOffset, paddedDimension);
+			}
+			else if(dataType == org.janelia.saalfeldlab.n5.DataType.UINT64){
+				previousThinningResult = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, currentInputDatasetName);
+				thinningResultCropped = Views.offsetInterval(Views.extendValue(previousThinningResult, new UnsignedLongType(0)), paddedOffset, paddedDimension);
+			}
 			
 			//Assume we don't need to thin again and that the output image to write is the appropriately cropped version of outputImage
 			
 			//For skeletonization and medial surface:
 			//All blocks start off dependent, so it will only be independent after it made it through one iteration, ensuring all blocks are checked.
 			//Perform thinning, then check if block is independent. If so, complete the block.
-			blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching	
-			IntervalView<UnsignedLongType> croppedOutputImage = Views.offsetInterval(thinningResultCropped, new long[] {paddingNeg[0],paddingNeg[1],paddingNeg[2]}, dimension);
-
+			
+			//if(!blockInformation.isIndependent) {
+				if(!objectsAreTouching) { //then do it as 8 bit
+					blockInformation = performThinningOnUnsignedByteTypeData(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching	
+			/*		if(blockInformation.isIndependent) {//then can finish it
+						while(blockInformation.needToThinAgainCurrent) 
+							blockInformation = performThinningOnUnsignedByteTypeData(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching
+					}*/
+				}
+				else {
+					blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching	
+					/*if(blockInformation.isIndependent) {//then can finish it
+						while(blockInformation.needToThinAgainCurrent) 
+							blockInformation = updateThinningResult(thinningResultCropped, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation ); //to prevent one skeleton being created for two distinct objects that are touching
+					}*/
+				}
+		//	}
+			croppedOutputImage = Views.offsetInterval(thinningResultCropped, padding, dimension);
 			//Write out current thinned block and return block information updated with whether it needs to be thinned again
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 			N5Utils.saveBlock(croppedOutputImage, n5BlockWriter, outputDatasetName, gridBlock[2]);
@@ -225,10 +237,9 @@ public class SparkTopologicalThinning {
 		
 		//Figure out whether another thinning iteration is needed. Update blockInformationList
 		boolean needToThinAgain = false;
-		LinkedList<BlockInformation> updatedBlockInformationThinningRequiredList = new LinkedList<BlockInformation>(updatedBlockInformationThinningRequired.collect());
-		/*for(int i=updatedBlockInformationThinningRequiredList.size()-1; i>=0; i--) {
-			BlockInformation currentBlockInformation = updatedBlockInformationThinningRequiredList.get(i);
-			
+		blockInformationList  = new LinkedList<BlockInformation>(updatedBlockInformation.collect());
+		for(int i=blockInformationList.size()-1; i>=0; i--) {
+			BlockInformation currentBlockInformation = blockInformationList.get(i);
 			
 			//If a block is completed it needs to appear in both the _even and _odd outputs, otherwise update it and process again
 			if(currentBlockInformation.isIndependent && (!currentBlockInformation.needToThinAgainPrevious && !currentBlockInformation.needToThinAgainCurrent)) {// if current block is independent and had no need to thin over two iterations, then can stop processing it since it will be identical in even/odd outputs
@@ -237,83 +248,16 @@ public class SparkTopologicalThinning {
 			else {
 				needToThinAgain |= currentBlockInformation.needToThinAgainCurrent;
 				currentBlockInformation.needToThinAgainPrevious = currentBlockInformation.needToThinAgainCurrent;
-				updatedBlockInformationThinningRequiredList.set(i,currentBlockInformation);
+				blockInformationList.set(i,currentBlockInformation);
 			}
 			
-		}*/
-		
-		DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
-		Date date = new Date();
-		System.out.println(dateFormat.format(date)+" Timing: "+(System.currentTimeMillis()-tic)/1000.0+" Number of Remaining Blocks: "+blockInformationListThinningRequired.size()+", Full iteration complete: "+iteration);
-		
-		
-		HashMap<List<Long>,BlockInformation> blockWasThinnedInPreviousIterationMap = new HashMap<List<Long>,BlockInformation>();
-		for(int i=0; i<updatedBlockInformationThinningRequiredList.size(); i++) {
-			BlockInformation currentBlockInformation = updatedBlockInformationThinningRequiredList.get(i);
-			needToThinAgain |= currentBlockInformation.needToThinAgainCurrent;
-			currentBlockInformation.needToThinAgainPrevious = currentBlockInformation.needToThinAgainCurrent;
-			updatedBlockInformationThinningRequiredList.set(i,currentBlockInformation);
-			blockWasThinnedInPreviousIterationMap.put(Arrays.asList(currentBlockInformation.gridBlock[0][0], currentBlockInformation.gridBlock[0][1], currentBlockInformation.gridBlock[0][2]), currentBlockInformation);
 		}
 		
-		for(int i=0; i<blockInformationList.size(); i++) {
-			BlockInformation currentBlockInformation = blockInformationList.get(i);
-			long[] currentBlockOffset = currentBlockInformation.gridBlock[0];
-			currentBlockInformation = blockWasThinnedInPreviousIterationMap.getOrDefault(Arrays.asList(currentBlockOffset[0],currentBlockOffset[1],currentBlockOffset[2]),currentBlockInformation);
-			currentBlockInformation.padding = new int[2][3];
-			if(!currentBlockInformation.isIndependent){ //then only need to check this round if any of its 26 neighbors changed in the appropriate places
-				//outerloop:
-				for(int deltaX = -1; deltaX <= 1; deltaX++) {
-					for(int deltaY = -1; deltaY <= 1; deltaY++) {
-						for(int deltaZ = -1; deltaZ <= 1; deltaZ++) {
-							List<Long> neighboringBlockOffset = Arrays.asList(currentBlockOffset[0]+deltaX*blockSize[0], 
-									currentBlockOffset[1]+deltaY*blockSize[1],
-									currentBlockOffset[2]+deltaZ*blockSize[2]);
-							
-							//convert detlaX to index to check in neighboring block to see if need to thin again
-							List<Integer> xIndices = 1-deltaX==1 ? Arrays.asList(0,1,2) : Arrays.asList(1-deltaX);
-							List<Integer> yIndices = 1-deltaY==1 ? Arrays.asList(0,1,2) : Arrays.asList(1-deltaY);
-							List<Integer> zIndices = 1-deltaZ==1 ? Arrays.asList(0,1,2) : Arrays.asList(1-deltaZ);
-							
-							boolean[][][] thinningLocations = blockWasThinnedInPreviousIterationMap.containsKey(neighboringBlockOffset) ? 
-									blockWasThinnedInPreviousIterationMap.get(neighboringBlockOffset).thinningLocations
-									: new boolean[3][3][3];
-							for(int xIndex: xIndices) {
-								for(int yIndex: yIndices) {
-									for(int zIndex: zIndices) {
-										if(thinningLocations[xIndex][yIndex][zIndex]) {
-											currentBlockInformation.needToThinAgainCurrent = true;
-											if(deltaX == -1) currentBlockInformation.padding[0][0] = pad;
-											else if(deltaX == 1) currentBlockInformation.padding[1][0] = pad;
-											if(deltaY == -1) currentBlockInformation.padding[0][1] = pad;
-											else if(deltaY == 1) currentBlockInformation.padding[1][1] = pad;
-											if(deltaZ == -1) currentBlockInformation.padding[0][2] = pad;
-											else if(deltaZ == 1) currentBlockInformation.padding[1][2] = pad;
-										//	break outerloop;
-										}
-									}
-								}
-							}
-							
-							
-						}
-					}
-				}
-			}
-			if(currentBlockInformation.needToThinAgainCurrent) {
-				System.out.println("0: "+Arrays.toString(currentBlockInformation.padding[0]));
-				System.out.println("1: "+Arrays.toString(currentBlockInformation.padding[1]));
-			}
-			blockInformationList.set(i,currentBlockInformation);
-
-		}
-		
-		if(!needToThinAgain)
+			if(!needToThinAgain)
 			blockInformationList = new LinkedList<BlockInformation>();
 		
 		return blockInformationList;
 	}
-	
 	
 	private static boolean areObjectsTouching(IntervalView<UnsignedLongType> thinningResult, long[] paddedDimension) {
 		RandomAccess<UnsignedLongType> thinningResultRandomAccess = thinningResult.randomAccess();
@@ -346,9 +290,8 @@ public class SparkTopologicalThinning {
 		}
 		return false;
 	}
-
-	private static BlockInformation updateThinningResult(IntervalView<UnsignedLongType> thinningResult, int [][] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ) {
-		blockInformation.thinningLocations = new boolean[3][3][3];
+	
+	private static BlockInformation updateThinningResult(IntervalView<UnsignedLongType> thinningResult, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ) {
 		if(blockInformation.areObjectsTouching) {//check if objects are still touching
 			blockInformation.areObjectsTouching = areObjectsTouching(thinningResult, paddedDimension);
 		}
@@ -362,11 +305,10 @@ public class SparkTopologicalThinning {
 		return blockInformation;
 	}
 	
-	private static BlockInformation thinEachObjectIndependently(IntervalView<UnsignedLongType> thinningResult, int [][] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ){
-		blockInformation.needToThinAgainCurrent = false;
-		//blockInformation.isIndependent = true;
+	
+	private static BlockInformation thinEachObjectIndependently(IntervalView<UnsignedLongType> thinningResult, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ){
 		
-		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.localizingCursor();
+		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.cursor();
 		thinningResultCursor.reset();
 		
 		Set<Long> objectIDsInBlock = new HashSet<Long>();
@@ -391,19 +333,7 @@ public class SparkTopologicalThinning {
 					currentCursor.get().set(1);
 			}
 		
-			Skeletonize3D_ skeletonize3D = new Skeletonize3D_(current, padding, paddedOffset);
-			if(doMedialSurface) {
-				blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeMedialSurfaceIteration();
-				if(!blockInformation.isIndependent) {
-					blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
-				}
-			}
-			else {
-				blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeSkeletonIteration();
-				if(!blockInformation.isIndependent) {
-					blockInformation.isIndependent = skeletonize3D.isSkeletonBlockIndependent();
-				}
-			}
+			blockInformation = performThinningOnUnsignedByteTypeData(current, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
 			
 			//update output
 			currentCursor.reset();
@@ -413,7 +343,6 @@ public class SparkTopologicalThinning {
 				thinningResultCursor.next();
 				if(currentCursor.get().get() ==0) {
 					if (thinningResultCursor.get().get() == objectID) {
-						blockInformation = updateBlockInformationThinningLocations(thinningResultCursor, padding, paddedDimension, blockInformation);
 						thinningResultCursor.get().set(0);//Then this voxel was thinned out
 					}
 				}
@@ -424,11 +353,9 @@ public class SparkTopologicalThinning {
 		return blockInformation;
 	}
 	
-	private static BlockInformation thinEverythingTogether(IntervalView<UnsignedLongType> thinningResult, int [][] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ){
-		blockInformation.needToThinAgainCurrent = false;
-		//blockInformation.isIndependent = true;
+	private static BlockInformation thinEverythingTogether(IntervalView<UnsignedLongType> thinningResult, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ){
 		
-		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.localizingCursor();
+		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.cursor();
 		thinningResultCursor.reset();
 		
 		IntervalView<UnsignedByteType> current = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension); //need this as unsigned byte type
@@ -443,20 +370,7 @@ public class SparkTopologicalThinning {
 			}
 		}
 		
-	
-		Skeletonize3D_ skeletonize3D = new Skeletonize3D_(current, padding, paddedOffset);
-		if(doMedialSurface) {
-			blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeMedialSurfaceIteration();
-			if(!blockInformation.isIndependent) {
-				blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
-			}
-		}
-		else {
-			blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeSkeletonIteration();
-			if(!blockInformation.isIndependent) {
-				blockInformation.isIndependent = skeletonize3D.isSkeletonBlockIndependent();
-			}
-		}
+		blockInformation = performThinningOnUnsignedByteTypeData(current, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
 		
 		//update output
 		currentCursor.reset();
@@ -465,9 +379,6 @@ public class SparkTopologicalThinning {
 			currentCursor.next();
 			thinningResultCursor.next();
 			if(currentCursor.get().get() == 0) {
-				if(thinningResultCursor.get().get()>0) {
-					blockInformation = updateBlockInformationThinningLocations(thinningResultCursor, padding, paddedDimension, blockInformation);
-				}
 				thinningResultCursor.get().set(0);//Then this voxel was thinned out
 			}
 		}
@@ -476,30 +387,25 @@ public class SparkTopologicalThinning {
 		return blockInformation;
 	}
 	
-	public static BlockInformation updateBlockInformationThinningLocations(	Cursor<UnsignedLongType> thinningResultCursor, int[][] padding, long [] paddedDimension, BlockInformation blockInformation) {		
-		//in the case that this block is independent, then it doesnt matter because it will not have any effect since its edge doesnt change.
-		int xIndex = getThinningLocationsIndex(0, thinningResultCursor, padding, paddedDimension);
-		int yIndex = getThinningLocationsIndex(1, thinningResultCursor, padding, paddedDimension);
-		int zIndex = getThinningLocationsIndex(2, thinningResultCursor, padding, paddedDimension);
+	public static BlockInformation performThinningOnUnsignedByteTypeData(IntervalView<UnsignedByteType> current, long [] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ) {
+		blockInformation.needToThinAgainCurrent = false;
+		blockInformation.isIndependent = true;
 		
-		blockInformation.thinningLocations[xIndex][yIndex][zIndex] = true;
+		Skeletonize3D_ skeletonize3D = new Skeletonize3D_(current, new int[]{(int) padding[0], (int) padding[1], (int) padding[2]}, new int[] {(int) paddedOffset[0],(int) paddedOffset[1], (int)paddedOffset[2]});
+		if(doMedialSurface) {
+			blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeMedialSurfaceIteration();
+			blockInformation.isIndependent &= skeletonize3D.isMedialSurfaceBlockIndependent();
+		}
+		else {
+			blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeSkeletonIteration();
+			blockInformation.isIndependent &= skeletonize3D.isSkeletonBlockIndependent();
+		}
+		
 		return blockInformation;
 	}
-
-	public static int getThinningLocationsIndex(int d, Cursor<UnsignedLongType> thinningResultCursor, int[][] padding, long[] paddedDimension){
-		int [] paddingNeg = padding[0];
-		int [] paddingPos = padding[1];
-		
-		int pos = thinningResultCursor.getIntPosition(d);
-		int idx;
-		if(pos>=paddingNeg[d] && pos<(pad+paddingNeg[d])) idx=0;
-		else if(pos>paddedDimension[d]-(pad+paddingPos[d]) && pos<=paddedDimension[d]-paddingPos[d]) idx = 2;
-		else idx =1;
-		
-		return idx;
-	}
+	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
-			final String inputN5DatasetName) throws Exception {
+			final String inputN5DatasetName) throws IOException {
 		// Get block attributes
 		N5Reader n5Reader = new N5FSReader(inputN5Path);
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
@@ -510,22 +416,119 @@ public class SparkTopologicalThinning {
 		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
 		List<BlockInformation> blockInformationList = new LinkedList<BlockInformation>();
 		for (int i = 0; i < gridBlockList.size(); i++) {
-			//int pad = 50;//I think for doing 6 borders (N,S,E,W,U,B) where we do the 8 indpendent iterations, the furthest a voxel in a block can be affected is from something 48 away, so add 2 more just as extra border
-			if(pad>=blockSize[0] || pad>=blockSize[1] || pad>=blockSize[2]) {
-				throw new Exception("Padding is bigger than block size...");
-			}
+			long pad = 50;//I think for doing 6 borders (N,S,E,W,U,B) where we do the 8 indpendent iterations, the furthest a voxel in a block can be affected is from something 48 away, so add 2 more just as extra border
 			long[][] currentGridBlock = gridBlockList.get(i);
 			long[][] paddedGridBlock = { {currentGridBlock[0][0]-pad, currentGridBlock[0][1]-pad, currentGridBlock[0][2]-pad}, //initialize padding
 										{currentGridBlock[1][0]+2*pad, currentGridBlock[1][1]+2*pad, currentGridBlock[1][2]+2*pad}};
-			int [][] padding = {{pad,pad, pad},
-					{pad,pad, pad}};
+			long [][] padding = {{pad, pad, pad},{pad,pad,pad}};
 			blockInformationList.add(new BlockInformation(currentGridBlock, paddedGridBlock, padding, null, null));
 		}
 		return blockInformationList;
 	}
-	
 
-	public static final void main(final String... args) throws Exception {
+	
+	final static void convertDatasetType(final JavaSparkContext sc, final String n5Path,
+			final String originalInputDatasetName, final String n5OutputPath, String originalOutputDatasetName,
+			List<BlockInformation> blockInformationList,final DataType dataType, final int iteration) throws IOException {
+
+		//For each iteration, create the correspondingly correct input/output datasets. The reason for this is that we do not want to overwrite data in one block that will be read in by another block that has yet to be processed
+		final String datasetName = originalOutputDatasetName+(iteration%2==0 ? "_even" : "_odd");
+		
+		N5Reader n5Reader = new N5FSReader(n5OutputPath);
+		DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
+		
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		if(dataType==org.janelia.saalfeldlab.n5.DataType.UINT8) {
+			n5Writer.createDataset(datasetName+"_converted", dimensions, blockSize, dataType, new GzipCompression());
+			n5Writer.setAttribute(datasetName+"_converted", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, originalInputDatasetName)));
+			
+			final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+			 rdd.foreach(blockInformation -> {
+				
+				//Get relevant block informtation
+				final long[][] gridBlock = blockInformation.gridBlock;
+				long[] offset = gridBlock[0];
+				long[] dimension = gridBlock[1];
+										
+				N5FSReader n5BlockReader = new N5FSReader(n5OutputPath);
+				final RandomAccessibleInterval<UnsignedLongType> resultAsLong = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, datasetName);
+				IntervalView<UnsignedLongType> resultAsLongCropped = Views.offsetInterval(Views.extendValue(resultAsLong, new UnsignedLongType(0)), offset, dimension);
+				Cursor<UnsignedLongType> resultAsLongCroppedCursor = resultAsLongCropped.cursor();
+				
+				Img<UnsignedByteType> output =  new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(dimension);	
+				Cursor<UnsignedByteType> outputCursor = output.cursor();
+				
+				while(resultAsLongCroppedCursor.hasNext()) {
+					resultAsLongCroppedCursor.next();
+					outputCursor.next();
+					if(resultAsLongCroppedCursor.get().get()>0L) {
+						outputCursor.get().set(1);
+					}
+				}
+
+				final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
+				N5Utils.saveBlock(output, n5BlockWriter, datasetName+"_converted", gridBlock[2]);
+				
+			 });
+		}
+		else {
+			n5Writer.createDataset(datasetName+"_converted", dimensions, blockSize, dataType, new GzipCompression());
+			n5Writer.setAttribute(datasetName+"_converted", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, originalInputDatasetName)));
+			
+			final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+			 rdd.foreach(blockInformation -> {
+				
+				//Get relevant block informtation
+				final long[][] gridBlock = blockInformation.gridBlock;
+				long[] offset = gridBlock[0];
+				long[] dimension = gridBlock[1];
+						
+				N5FSReader n5BlockReaderOriginalData = new N5FSReader(n5Path);
+				IntervalView<UnsignedLongType> originalDataCropped = Views.offsetInterval(Views.extendValue((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReaderOriginalData, originalInputDatasetName), new UnsignedLongType(0)), offset, dimension);
+				Cursor<UnsignedLongType> originalDataCroppedCursor = originalDataCropped.cursor();
+				
+				N5FSReader n5BlockReader = new N5FSReader(n5OutputPath);
+				IntervalView<UnsignedByteType> resultAsIntCropped = Views.offsetInterval(Views.extendValue((RandomAccessibleInterval<UnsignedByteType>)N5Utils.open(n5BlockReader, datasetName), new UnsignedByteType(0)), offset, dimension);
+				Cursor<UnsignedByteType> resultAsIntCroppedCursor = resultAsIntCropped.cursor();
+
+				while(originalDataCroppedCursor.hasNext()) {
+					originalDataCroppedCursor.next();
+					resultAsIntCroppedCursor.next();
+					if(resultAsIntCroppedCursor.get().get()==0) {
+						originalDataCroppedCursor.get().set(0L);
+					}
+				}
+				final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
+				N5Utils.saveBlock(originalDataCropped, n5BlockWriter, datasetName+"_converted", gridBlock[2]);
+				
+			 });
+		}
+		
+		 FileUtils.deleteDirectory(new File(n5OutputPath + "/" + datasetName));
+		 FileUtils.moveDirectory(new File(n5OutputPath + "/" + datasetName+"_converted"), new File(n5OutputPath + "/" + datasetName));
+		
+			
+	}
+	
+	final static void convertToUnsignedLongType(){
+		
+	}
+	
+	final static boolean areObjectsTouching(List<BlockInformation> blockInformationList ) {
+		boolean objectsAreTouching = false;
+		for(BlockInformation blockInformation: blockInformationList) {
+			if(blockInformation.areObjectsTouching) {
+				objectsAreTouching = true;
+				break;
+			}
+		}
+		return objectsAreTouching;
+	}
+
+	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 
 		final Options options = new Options(args);
 
@@ -558,11 +561,31 @@ public class SparkTopologicalThinning {
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			int fullIterations = 0;
-						
+			DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
+			
+			boolean converted = false;
 			while(blockInformationList.size()>0){ //Thin until block information list is empty
+				long tic = System.currentTimeMillis();
 				blockInformationList = performTopologicalThinningIteration(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(),
 							finalOutputN5DatasetName, options.getDoMedialSurface(), blockInformationList, fullIterations);
+				long timeInMillis = (System.currentTimeMillis()-tic)/1000;
+				Date date = new Date();
+				System.out.println(dateFormat.format(date)+". Delta time: "+timeInMillis+". Converted: "+converted+". Number of Remaining Blocks: "+blockInformationList.size()+". Full iteration complete: "+fullIterations);
+				
+				if( !converted && !areObjectsTouching(blockInformationList) ){//then can convert
+					convertDatasetType(sc, options.getInputN5Path(),
+							currentOrganelle, options.getOutputN5Path(), finalOutputN5DatasetName,
+							blockInformationList,org.janelia.saalfeldlab.n5.DataType.UINT8, fullIterations);
+					converted = true;
+				}
 				fullIterations++;
+
+			}
+			if(converted) {//convert back to 64 bit
+				convertDatasetType(sc, options.getInputN5Path(),
+						currentOrganelle, options.getOutputN5Path(), finalOutputN5DatasetName,
+						blockInformationList,org.janelia.saalfeldlab.n5.DataType.UINT64, fullIterations-1);
+		
 			}
 			
 			String finalFileName = finalOutputN5DatasetName + '_'+ ((fullIterations-1)%2==0 ? "even" : "odd");

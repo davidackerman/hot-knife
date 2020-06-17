@@ -21,7 +21,7 @@ public class BlockInformation implements Serializable {
 	public long[][] gridBlock;
 	public long[][] paddedGridBlock;
 	public boolean[][][] thinningLocations;
-	public long[] padding;
+	public int[][] padding;
 	public boolean needToThinAgainPrevious;
 	public boolean needToThinAgainCurrent;
 	public boolean isIndependent;
@@ -48,7 +48,7 @@ public class BlockInformation implements Serializable {
 
 	}
 	
-	public BlockInformation(long[][] gridBlock, long[][] paddedGridBlock, long[] padding, Map<Long,Long> edgeComponentIDs,
+	public BlockInformation(long[][] gridBlock, long[][] paddedGridBlock, int[][] padding, Map<Long,Long> edgeComponentIDs,
 			Map<Long, Long> edgeComponentIDtoRootIDmap) {
 		this.edgeComponentIDtoVolumeMap = edgeComponentIDs;
 		this.edgeComponentIDtoRootIDmap = edgeComponentIDtoRootIDmap;
