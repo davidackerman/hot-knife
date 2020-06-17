@@ -254,15 +254,23 @@ public class SparkTopologicalThinning {
 			currentBlockInformation.needToThinAgainPrevious = currentBlockInformation.needToThinAgainCurrent;
 			updatedBlockInformationThinningRequiredList.set(i,currentBlockInformation);
 			blockWasThinnedInPreviousIterationMap.put(Arrays.asList(currentBlockInformation.gridBlock[0][0], currentBlockInformation.gridBlock[0][1], currentBlockInformation.gridBlock[0][2]), currentBlockInformation);
+			if(updatedBlockInformationThinningRequiredList.size()<=10) {
+				if(currentBlockInformation.needToThinAgainCurrent) {
+					System.out.println(Arrays.toString(currentBlockInformation.gridBlock[0])+" "+currentBlockInformation.isIndependent+" "+Arrays.toString(currentBlockInformation.padding[0]));
+					System.out.println(Arrays.toString(currentBlockInformation.gridBlock[0])+" "+currentBlockInformation.isIndependent+" "+Arrays.toString(currentBlockInformation.padding[1]));
+				}
+			}
 		}
 		
 		for(int i=0; i<blockInformationList.size(); i++) {
 			BlockInformation currentBlockInformation = blockInformationList.get(i);
 			long[] currentBlockOffset = currentBlockInformation.gridBlock[0];
 			currentBlockInformation = blockWasThinnedInPreviousIterationMap.getOrDefault(Arrays.asList(currentBlockOffset[0],currentBlockOffset[1],currentBlockOffset[2]),currentBlockInformation);
-			currentBlockInformation.padding = new int[2][3];
-			if(!currentBlockInformation.isIndependent){ //then only need to check this round if any of its 26 neighbors changed in the appropriate places
+			if(currentBlockInformation.isIndependent) {
+				currentBlockInformation.padding = new int[2][3];
+			}if(!currentBlockInformation.isIndependent){ //then only need to check this round if any of its 26 neighbors changed in the appropriate places
 				//outerloop:
+				currentBlockInformation.padding = new int[][] {{1,1,1},{1,1,1}};//need at least a +1 padding in every direction since start thinning at 1 in
 				for(int deltaX = -1; deltaX <= 1; deltaX++) {
 					for(int deltaY = -1; deltaY <= 1; deltaY++) {
 						for(int deltaZ = -1; deltaZ <= 1; deltaZ++) {
@@ -300,10 +308,7 @@ public class SparkTopologicalThinning {
 					}
 				}
 			}
-			if(currentBlockInformation.needToThinAgainCurrent) {
-				System.out.println("0: "+Arrays.toString(currentBlockInformation.padding[0]));
-				System.out.println("1: "+Arrays.toString(currentBlockInformation.padding[1]));
-			}
+		
 			blockInformationList.set(i,currentBlockInformation);
 
 		}
