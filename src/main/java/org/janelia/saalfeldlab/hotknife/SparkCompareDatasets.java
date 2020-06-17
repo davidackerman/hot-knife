@@ -139,7 +139,7 @@ public class SparkCompareDatasets {
 		 * blocks
 		 */
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
-		JavaRDD<Boolean> javaRDD = rdd.map(blockInformation -> {
+		JavaRDD<Map<List<Long>,Boolean>> javaRDD = rdd.map(blockInformation -> {
 			final long [][] gridBlock = blockInformation.gridBlock;
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			long[] offset = gridBlock[0];
@@ -161,11 +161,23 @@ public class SparkCompareDatasets {
 					areEqual = false;
 				}
 			}
-			return areEqual;
+			
+			Map<List<Long>, Boolean> mapping = new HashMap<List<Long>,Boolean>();
+			mapping.put(Arrays.asList(offset[0],offset[1],offset[2]), areEqual);
+			return mapping;
 		});
 		
-		Boolean areTheyEqual = javaRDD.reduce((a,b) -> {return a && b;});
-		return areTheyEqual;
+		Map<List<Long>, Boolean> areEqualMap = javaRDD.reduce((a,b) -> {a.putAll(b); return a; });
+		
+		boolean areEqual = true;
+		for(List<Long> key : areEqualMap.keySet()) {
+			if(!areEqualMap.get(key)) {
+				System.out.println(key);
+				areEqual = false;
+			}
+		}
+		
+		return areEqual;
 	}
 
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,

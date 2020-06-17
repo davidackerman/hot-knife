@@ -254,12 +254,13 @@ public class SparkTopologicalThinning {
 			currentBlockInformation.needToThinAgainPrevious = currentBlockInformation.needToThinAgainCurrent;
 			updatedBlockInformationThinningRequiredList.set(i,currentBlockInformation);
 			blockWasThinnedInPreviousIterationMap.put(Arrays.asList(currentBlockInformation.gridBlock[0][0], currentBlockInformation.gridBlock[0][1], currentBlockInformation.gridBlock[0][2]), currentBlockInformation);
-			if(updatedBlockInformationThinningRequiredList.size()<=10) {
-				if(currentBlockInformation.needToThinAgainCurrent) {
+			//if(updatedBlockInformationThinningRequiredList.size()<=10) {
+			/*	if(currentBlockInformation.needToThinAgainCurrent) {
 					System.out.println(Arrays.toString(currentBlockInformation.gridBlock[0])+" "+currentBlockInformation.isIndependent+" "+Arrays.toString(currentBlockInformation.padding[0]));
 					System.out.println(Arrays.toString(currentBlockInformation.gridBlock[0])+" "+currentBlockInformation.isIndependent+" "+Arrays.toString(currentBlockInformation.padding[1]));
 				}
-			}
+				*/
+			//}
 		}
 		
 		for(int i=0; i<blockInformationList.size(); i++) {
@@ -385,6 +386,8 @@ public class SparkTopologicalThinning {
 		
 		IntervalView<UnsignedByteType> current = null;
 		Cursor<UnsignedByteType> currentCursor = null;
+		boolean isIndependent = true;
+
 		for(long objectID : objectIDsInBlock) {
 			thinningResultCursor.reset();
 			current = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
@@ -400,13 +403,13 @@ public class SparkTopologicalThinning {
 			if(doMedialSurface) {
 				blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeMedialSurfaceIteration();
 				if(!blockInformation.isIndependent) {
-					blockInformation.isIndependent = skeletonize3D.isMedialSurfaceBlockIndependent();
+					isIndependent &= skeletonize3D.isMedialSurfaceBlockIndependent();
 				}
 			}
 			else {
 				blockInformation.needToThinAgainCurrent  |= skeletonize3D.computeSkeletonIteration();
 				if(!blockInformation.isIndependent) {
-					blockInformation.isIndependent = skeletonize3D.isSkeletonBlockIndependent();
+					isIndependent &= skeletonize3D.isSkeletonBlockIndependent();
 				}
 			}
 			
@@ -425,6 +428,7 @@ public class SparkTopologicalThinning {
 			}
 		}
 		
+		blockInformation.isIndependent = isIndependent;
 		//previous thinning result should now equal the current thinning result
 		return blockInformation;
 	}
