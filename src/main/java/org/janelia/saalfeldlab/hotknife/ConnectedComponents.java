@@ -62,12 +62,12 @@ public class ConnectedComponents {
 	//	ImagePlus imp = new Opener().openImage( "/groups/cosem/cosem/ackermand/other_skeleton_failed.tif");//failed_skeleton.tif");//jan_skeleton.tif");//HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5/skeletonShortestPathAsRadii.tif" );
 	//	ImagePlus imp = new Opener().openImage("/groups/cosem/cosem/ackermand/HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5/mito_cc_filled_skeletonExtraConditionConversion");
 		//ImagePlus imp = new Opener().openImage("/groups/cosem/cosem/weigela/hela3/original_HeLa_Cell3_4x4x4nm_it650000_plasma_membrane_ccSkipSmoothing_ds8_8bit.tif");
-		ImagePlus imp = new Opener().openImage("/groups/cosem/cosem/weigela/hela3/nuc_HeLa_Cell3_4x4x4nm_it625000_nucleus_ccUnfiltered_8bit.tif");
+		ImagePlus imp = new Opener().openImage("/groups/cosem/cosem/weigela/hela3/mito_HeLa_Cell3_4x4x4nm_setup01_it825000_results_25_0.875_smoothed_filled_8bit.tif");
 		RandomAccessible<UnsignedByteType> wrapImg = ImageJFunctions.wrapByte(imp);
 		//ra = RandomAccessible<>wrapImg;
 		final RandomAccessible<BoolType> thresholded = Converters.convert(wrapImg, (a, b) -> b.set( a.getInteger() > 0), new BoolType());
-		final ArrayImg<UnsignedLongType, LongArray> components = ArrayImgs.unsignedLongs(new long[] {1550,125,1500});//{501,501,501});
-		ConnectedComponentAnalysis.connectedComponents(Views.offsetInterval(thresholded,new long[]{0,0,0},new long[] {1550,125,1500}), components,new RectangleShape(1,false));//{501,501,501}), components,new RectangleShape(1,false));
+		final ArrayImg<UnsignedLongType, LongArray> components = ArrayImgs.unsignedLongs(new long[] {1518,132,1474});//{501,501,501});
+		ConnectedComponentAnalysis.connectedComponents(Views.offsetInterval(thresholded,new long[]{0,0,0},new long[] {1518,132,1474}), components,new RectangleShape(1,false));//{501,501,501}), components,new RectangleShape(1,false));
 		new ImageJ();
 		ImageJFunctions.show(components);
 		

@@ -64,6 +64,7 @@ import net.imglib2.view.Views;
 /**
  * Class to do topological thinning, ie, skeletonization and medial surface finding. Default is skeletonization unless --doMedialSurface is true
  *
+ *
  * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
 public class SparkTopologicalThinning {
@@ -254,13 +255,13 @@ public class SparkTopologicalThinning {
 			currentBlockInformation.needToThinAgainPrevious = currentBlockInformation.needToThinAgainCurrent;
 			updatedBlockInformationThinningRequiredList.set(i,currentBlockInformation);
 			blockWasThinnedInPreviousIterationMap.put(Arrays.asList(currentBlockInformation.gridBlock[0][0], currentBlockInformation.gridBlock[0][1], currentBlockInformation.gridBlock[0][2]), currentBlockInformation);
-			//if(updatedBlockInformationThinningRequiredList.size()<=10) {
-			/*	if(currentBlockInformation.needToThinAgainCurrent) {
+			if(updatedBlockInformationThinningRequiredList.size()<=10) {
+				if(currentBlockInformation.needToThinAgainCurrent) {
 					System.out.println(Arrays.toString(currentBlockInformation.gridBlock[0])+" "+currentBlockInformation.isIndependent+" "+Arrays.toString(currentBlockInformation.padding[0]));
 					System.out.println(Arrays.toString(currentBlockInformation.gridBlock[0])+" "+currentBlockInformation.isIndependent+" "+Arrays.toString(currentBlockInformation.padding[1]));
 				}
-				*/
-			//}
+				
+			}
 		}
 		
 		for(int i=0; i<blockInformationList.size(); i++) {
@@ -269,9 +270,10 @@ public class SparkTopologicalThinning {
 			currentBlockInformation = blockWasThinnedInPreviousIterationMap.getOrDefault(Arrays.asList(currentBlockOffset[0],currentBlockOffset[1],currentBlockOffset[2]),currentBlockInformation);
 			if(currentBlockInformation.isIndependent) {
 				currentBlockInformation.padding = new int[2][3];
-			}if(!currentBlockInformation.isIndependent){ //then only need to check this round if any of its 26 neighbors changed in the appropriate places
-				//outerloop:
-				currentBlockInformation.padding = new int[][] {{1,1,1},{1,1,1}};//need at least a +1 padding in every direction since start thinning at 1 in
+			}
+			else if(!currentBlockInformation.needToThinAgainCurrent){ //then only need to check this round if any of its 26 neighbors changed in the appropriate places
+				currentBlockInformation.padding = new int[][] {{50,50,50},{50,50,50}};//need at least a +1 padding in every direction since start thinning at 1 in
+				outerloop:
 				for(int deltaX = -1; deltaX <= 1; deltaX++) {
 					for(int deltaY = -1; deltaY <= 1; deltaY++) {
 						for(int deltaZ = -1; deltaZ <= 1; deltaZ++) {
@@ -292,13 +294,13 @@ public class SparkTopologicalThinning {
 									for(int zIndex: zIndices) {
 										if(thinningLocations[xIndex][yIndex][zIndex]) {
 											currentBlockInformation.needToThinAgainCurrent = true;
-											if(deltaX == -1) currentBlockInformation.padding[0][0] = pad;
+											/*if(deltaX == -1) currentBlockInformation.padding[0][0] = pad;
 											else if(deltaX == 1) currentBlockInformation.padding[1][0] = pad;
 											if(deltaY == -1) currentBlockInformation.padding[0][1] = pad;
 											else if(deltaY == 1) currentBlockInformation.padding[1][1] = pad;
 											if(deltaZ == -1) currentBlockInformation.padding[0][2] = pad;
-											else if(deltaZ == 1) currentBlockInformation.padding[1][2] = pad;
-										//	break outerloop;
+											else if(deltaZ == 1) currentBlockInformation.padding[1][2] = pad;*/
+											break outerloop;
 										}
 									}
 								}

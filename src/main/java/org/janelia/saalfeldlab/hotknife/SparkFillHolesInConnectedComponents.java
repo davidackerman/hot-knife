@@ -103,7 +103,7 @@ public class SparkFillHolesInConnectedComponents {
 
 		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept")
-		private float minimumVolumeCutoff = 100;
+		private float minimumVolumeCutoff = 20000000;
 
 		public Options(final String[] args) {
 
