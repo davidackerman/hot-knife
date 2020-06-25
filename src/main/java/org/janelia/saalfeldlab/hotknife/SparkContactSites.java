@@ -88,7 +88,7 @@ public class SparkContactSites {
 		private double contactDistance = 10;
 		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Minimum contact site cutoff (nm^3)")
-		private double minimumVolumeCutoff = 6400;
+		private double minimumVolumeCutoff = 35E3;
 
 		public Options(final String[] args) {
 
@@ -176,7 +176,7 @@ public class SparkContactSites {
 		
 		//Get contact distance in voxels
 		final double contactDistanceInVoxels = contactDistance/pixelResolution[0];
-		int contactDistanceInVoxelsCeiling=(int)Math.ceil(contactDistanceInVoxels);
+		int contactDistanceInVoxelsCeiling=(int)Math.round(contactDistanceInVoxels);
 		int contactDistanceInVoxelsCeilingSquared = contactDistanceInVoxelsCeiling*contactDistanceInVoxelsCeiling;
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
@@ -606,6 +606,43 @@ public class SparkContactSites {
 		return voxelsToCheck;
 	}
 	
+	
+	public static final void calculateContactSites(final String [] organelles, final SparkConf conf,final double minimumVolumeCutoff, final String inputN5Path, final String outputN5Path ) throws IOException {
+		List<String> directoriesToDelete = new ArrayList<String>();
+		for (int i = 0; i<organelles.length; i++) {
+			final String organelle1 =organelles[i];
+			for(int j= i; j< organelles.length; j++) {
+				String organelle2 = organelles[j];
+				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(inputN5Path, organelle1);
+				JavaSparkContext sc = new JavaSparkContext(conf);
+				
+				final String organelleContactString = organelle1 + "_to_" + organelle2;
+				final String tempOutputN5ConnectedComponents = organelleContactString + "_cc_blockwise_temp_to_delete";
+				final String finalOutputN5DatasetName = organelleContactString + "_cc";
+				
+				blockInformationList = blockwiseConnectedComponents(
+						sc, outputN5Path,
+						organelle1, organelle2, 
+						outputN5Path,
+						tempOutputN5ConnectedComponents,
+						minimumVolumeCutoff,
+						blockInformationList);
+				
+				HashMap<Long, List<Long>> edgeComponentIDtoOrganelleIDs = new HashMap<Long,List<Long>>();
+				for(BlockInformation currentBlockInformation : blockInformationList) {
+					edgeComponentIDtoOrganelleIDs.putAll(currentBlockInformation.edgeComponentIDtoOrganelleIDs);
+				}
+				blockInformationList = unionFindConnectedComponents(sc, outputN5Path, tempOutputN5ConnectedComponents, minimumVolumeCutoff,edgeComponentIDtoOrganelleIDs, blockInformationList);
+				
+				SparkConnectedComponents.mergeConnectedComponents(sc, outputN5Path, tempOutputN5ConnectedComponents, finalOutputN5DatasetName, blockInformationList);				
+				directoriesToDelete.add(outputN5Path + "/" + tempOutputN5ConnectedComponents);
+				sc.close();
+			}
+		}
+		
+		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
+	}
+	
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 		final Options options = new Options(args);
 		if (!options.parsedSuccessfully)
@@ -637,7 +674,7 @@ public class SparkContactSites {
 		}
 		
 		//For each pair of object classes, calculate the contact sites and get the connected component information
-		List<String> directoriesToDelete = new ArrayList<String>();
+		/*List<String> directoriesToDelete = new ArrayList<String>();
 		for (int i = 0; i<organelles.length; i++) {
 			final String organelle1 =organelles[i];
 			for(int j= i; j< organelles.length; j++) {
@@ -671,7 +708,8 @@ public class SparkContactSites {
 		}
 		
 		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
-		System.out.println("Stage 5 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));
+		System.out.println("Stage 5 Complete: " + new SimpleDateFormat("HH:mm:ss").format(new Date()));*/
+		calculateContactSites(organelles, conf, options.getMinimumVolumeCutoff(), options.getInputN5Path(), options.getOutputN5Path());
 		
 	}
 }

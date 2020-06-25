@@ -421,7 +421,7 @@ public class SparkGeneralCosemObjectInformation {
 			for (int i=0; i<organelles.length; i++) {
 				for(int j=i; j<organelles.length;j++) {
 					String [] datasetNames = {organelles[i],i==j ? organelles[j] : organelles[j]+"_pairs",organelles[i]+"_to_"+organelles[j]+"_cc"};
-					System.out.println(datasetNames[2]);
+					System.out.println(Arrays.toString(datasetNames));
 					
 					JavaSparkContext sc = new JavaSparkContext(conf);
 					List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[2]);

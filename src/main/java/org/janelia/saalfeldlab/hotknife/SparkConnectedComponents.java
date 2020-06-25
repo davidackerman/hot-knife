@@ -256,7 +256,7 @@ public class SparkConnectedComponents {
 			}
 			else {
 				if(smooth) {
-					double [] sigma = new double[] {3,3,3};
+					double [] sigma = new double[] {12.0/pixelResolution[0],12.0/pixelResolution[0],12.0/pixelResolution[0]}; //gives 3 pixel sigma at 4 nm resolution
 					int[] sizes = Gauss3.halfkernelsizes( sigma );
 					long padding = sizes[0];
 					long [] paddedOffset = new long [] {offset[0]-padding,offset[1]-padding,offset[2]-padding};

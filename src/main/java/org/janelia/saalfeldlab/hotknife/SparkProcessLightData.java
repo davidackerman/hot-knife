@@ -17,9 +17,14 @@
 package org.janelia.saalfeldlab.hotknife;
 
 import java.io.File;
+import static java.nio.file.StandardCopyOption.*;
+
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -33,12 +38,16 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.hotknife.util.Grid;
+import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -96,6 +105,9 @@ public class SparkProcessLightData {
 		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept (nm^3)")
 		private double minimumVolumeCutoff = 20E6;
+		
+		@Option(name = "--minimumContactSiteVolumeCutoff", required = false, usage = "Volume above which objects will be kept (nm^3)")
+		private double minimumContactSiteVolumeCutoff = 35E3;
 
 		public Options(final String[] args) {
 
@@ -141,6 +153,10 @@ public class SparkProcessLightData {
 		
 		public double getMinimumVolumeCutoff() {
 			return minimumVolumeCutoff;
+		}
+		
+		public double getMinimumContactSiteVolumeCutoff() {
+			return minimumContactSiteVolumeCutoff;
 		}
 
 	}
@@ -314,6 +330,47 @@ public class SparkProcessLightData {
 		return blockInformationList;
 	}
 
+	public static final void copyN5(
+			final JavaSparkContext sc,
+			final String inputN5Path,
+			final String outputN5Path,
+			final String inputDatasetName,
+			final String outputDatasetName,
+			final List<BlockInformation> blockInformationList) throws IOException {
+
+		final N5Reader n5Reader = new N5FSReader(inputN5Path);
+
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputDatasetName);
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();		
+
+		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
+		n5Writer.createDataset(
+				outputDatasetName,
+				dimensions,
+				blockSize,
+				DataType.UINT64,
+				new GzipCompression());
+		n5Writer.setAttribute(outputDatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputDatasetName)));
+
+		/*
+		 * grid block size for parallelization to minimize double loading of
+		 * blocks
+		 */
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		rdd.foreach(blockInformation -> {
+			final long [][] gridBlock = blockInformation.gridBlock;
+			final N5Reader n5BlockReader = new N5FSReader(inputN5Path);
+			boolean show=false;
+			if(show) new ImageJ();
+			final RandomAccessibleInterval<UnsignedLongType> source = 
+					(RandomAccessibleInterval<UnsignedLongType>)(RandomAccessibleInterval)N5Utils.open(n5BlockReader, inputDatasetName);
+			
+			final N5FSWriter n5BlockWriter = new N5FSWriter(outputN5Path);
+			N5Utils.saveBlock(Views.offsetInterval(Views.extendZero(source), gridBlock[0], gridBlock[1]), n5BlockWriter, outputDatasetName, gridBlock[2]);
+		});
+	}
+
 	
 	
 
@@ -328,6 +385,8 @@ public class SparkProcessLightData {
 		final String ts = new SimpleDateFormat("HH:mm:ss").format(new Date()) + " ";
 		System.out.println(ts + " " + msg);
 	}
+
+	
 	
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 
@@ -362,7 +421,7 @@ public class SparkProcessLightData {
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			
 			//Do connected components of mito and er
-			String finalOutputN5DatasetName = organelles[i]+"_contact_boundary_temp_to_delete";
+			String finalOutputN5DatasetName = organelles[i]+"_cc_contact_boundary_temp_to_delete";
 			String tempOutputN5DatasetName = finalOutputN5DatasetName + "_blockwise_temp_to_delete";
 			blockInformationList = blockwiseConnectedComponents(
 					sc, options.getInputN5Path(), organelles[i],
@@ -376,13 +435,17 @@ public class SparkProcessLightData {
 					blockInformationList);
 			directoriesToDelete.add(options.getOutputN5Path() + "/" + tempOutputN5DatasetName);
 			// done with connected components
+			copyN5(sc, options.getInputN5Path(), options.getOutputN5Path(), finalOutputN5DatasetName, organelles[i]+"_cc_pairs_contact_boundary_temp_to_delete", blockInformationList);
+			copyN5(sc, options.getInputN5Path(), options.getOutputN5Path(), finalOutputN5DatasetName, organelles[i]+"_cc", blockInformationList);
 			sc.close();
 			//Remove temporary files
 			SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 		}
-		
+		organelles[0]+="_cc";
+		organelles[1]+="_cc";
+		SparkContactSites.calculateContactSites(organelles, conf, options.getMinimumContactSiteVolumeCutoff(), options.getInputN5Path(), options.getOutputN5Path());
 		//For each pair of object classes, calculate the contact sites and get the connected component information
-		directoriesToDelete = new ArrayList<String>();
+		/*directoriesToDelete = new ArrayList<String>();
 		for (int i = 0; i<organelles.length; i++) {
 			final String organelle1 =organelles[i];
 			for(int j= i+1; j< organelles.length; j++) {
@@ -414,7 +477,7 @@ public class SparkProcessLightData {
 				sc.close();
 			}
 		}
-		
+		*/
 		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 	}
 }
