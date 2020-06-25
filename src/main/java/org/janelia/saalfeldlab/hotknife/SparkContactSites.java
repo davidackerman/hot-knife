@@ -216,8 +216,8 @@ public class SparkContactSites {
 				final UnsignedLongType voxelOutputPair = extendedOutputPairCursor.next();
 				final float distanceFromObjectsSquared = distanceFromObjectsCursor.next().get();
 				long[] position = {extendedOutputCursor.getLongPosition(0),  extendedOutputCursor.getLongPosition(1),  extendedOutputCursor.getLongPosition(2)};
-				if(distanceFromObjectsSquared>0 && distanceFromObjectsSquared<=contactDistanceInVoxelsCeilingSquared) {//then voxel is within distance
-					long objectID = findAndSetValueToNearestOrganelleID(voxelOutput, distanceFromObjectsSquared, position, segmentedOrganelleRandomAccess);	
+				if( (distanceFromObjectsSquared>0 && distanceFromObjectsSquared<=contactDistanceInVoxelsCeilingSquared) || isSurfaceVoxel(segmentedOrganelleRandomAccess, position)) {//then voxel is within distance
+					long objectID = findAndSetValueToNearestOrganelleID(voxelOutput, distanceFromObjectsSquared, position, segmentedOrganelleRandomAccess);
 					if(objectID>0) {
 						findAndSetValueToOrganellePairID(objectID, distanceFromObjectsSquared, voxelOutputPair, contactDistanceInVoxelsCeilingSquared, position, segmentedOrganelleRandomAccess);	
 					}
@@ -641,6 +641,32 @@ public class SparkContactSites {
 		}
 		
 		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
+	}
+	
+	public static boolean isSurfaceVoxel(final RandomAccess<UnsignedLongType> sourceRandomAccess, long [] position ) {
+		sourceRandomAccess.setPosition(position);
+		long referenceVoxelValue = sourceRandomAccess.get().get();
+		if(referenceVoxelValue==0) {//needs to be inside organelle
+			return false;
+		}
+		else{
+			for(int dx=-1; dx<=1; dx++) {
+				for(int dy=-1; dy<=1; dy++) {
+					for(int dz=-1; dz<=1; dz++) {
+						if(!(dx==0 && dy==0 && dz==0)) {
+							final long testPosition[] = {position[0]+dx, position[1]+dy, position[2]+dz};
+							sourceRandomAccess.setPosition(testPosition);
+							if(sourceRandomAccess.get().get() != referenceVoxelValue) {
+								return true;
+							}
+						}
+					}
+				}
+			}
+	
+			return false;	
+		}
+	
 	}
 	
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {

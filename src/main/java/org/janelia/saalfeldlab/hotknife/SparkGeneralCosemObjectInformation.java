@@ -271,26 +271,7 @@ public class SparkGeneralCosemObjectInformation {
 	}
 	
 	
-	public static boolean isSurfaceVoxel(final RandomAccess<UnsignedLongType> sourceRandomAccess, long outOfBoundsValue ) {
-		long referenceVoxelValue = sourceRandomAccess.get().get();
-		final long sourceRandomAccessPosition[] = {sourceRandomAccess.getLongPosition(0), sourceRandomAccess.getLongPosition(1), sourceRandomAccess.getLongPosition(2)};
-		for(int x=-1; x<=1; x++) {
-			for(int y=-1; y<=1; y++) {
-				for(int z=-1; z<=1; z++) {
-					if(!(x==0 && y==0 && z==0)) {
-						final long currentPosition[] = {sourceRandomAccessPosition[0]+x, sourceRandomAccessPosition[1]+y, sourceRandomAccessPosition[2]+z};
-						sourceRandomAccess.setPosition(currentPosition);
-						if(sourceRandomAccess.get().get() != referenceVoxelValue && sourceRandomAccess.get().get() !=outOfBoundsValue) {
-							return true;
-						}
-					}
-				}
-			}
-		}
-
-		return false;	
 	
-	}
 	
 	public static int getSurfaceAreaContributionOfVoxelInFaces(final RandomAccess<UnsignedLongType> sourceRandomAccess, long outOfBoundsValue, List<long[]> voxelsToCheck) {
 		long referenceVoxelValue = sourceRandomAccess.get().get();
