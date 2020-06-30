@@ -101,6 +101,8 @@ public class SparkFillHolesInConnectedComponents {
 		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
 		private String outputN5DatasetSuffix = "";
 
+		@Option(name = "--skipVolumeFilter", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
+		private boolean skipVolumeFilter = false;
 		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept")
 		private float minimumVolumeCutoff = 20000000;
@@ -129,6 +131,10 @@ public class SparkFillHolesInConnectedComponents {
 			return outputN5DatasetSuffix;
 		}
 		
+		public boolean getSkipVolumeFilter() {
+			return skipVolumeFilter;
+		}
+		
 		public float getMinimumVolumeCutoff() {
 			return minimumVolumeCutoff;
 		}
@@ -136,7 +142,7 @@ public class SparkFillHolesInConnectedComponents {
 
 	}
 	
-	public static final <T extends NativeType<T>> void volumeFilterConnectedComponents(
+	/*public static final <T extends NativeType<T>> void volumeFilterConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, final String outputN5DatasetName, float minimumVolumeCutoff,
 			List<BlockInformation> blockInformationList) throws IOException {
 				// Get attributes of input data set
@@ -208,7 +214,7 @@ public class SparkFillHolesInConnectedComponents {
 					N5Utils.saveBlock(objects, n5WriterLocal, outputN5DatasetName, gridBlock[2]);
 				});
 		
-	}
+	}*/
 
 	/**
 	 * Find connected components on a block-by-block basis and write out to
@@ -458,27 +464,33 @@ public class SparkFillHolesInConnectedComponents {
 
 		System.out.println(Arrays.toString(organelles));
 
-		String tempVolumeFilteredDatasetName = null;
+		String datasetToHoleFill = null;
 		String tempOutputN5DatasetName = null;
 		String finalOutputN5DatasetName = null;
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (String currentOrganelle : organelles) {
 			logMemory(currentOrganelle);
-			tempVolumeFilteredDatasetName = currentOrganelle + "_volumeFilteredTemp";
-			tempOutputN5DatasetName = tempVolumeFilteredDatasetName + "_holes" + "_blockwise_temp_to_delete";
-			finalOutputN5DatasetName = tempVolumeFilteredDatasetName + "_holes";
+
 			
 			// Create block information list
 			List<BlockInformation> blockInformationList = SparkConnectedComponents
 								.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			
-			volumeFilterConnectedComponents(sc, options.getInputN5Path(), currentOrganelle, tempVolumeFilteredDatasetName, options.getMinimumVolumeCutoff(), blockInformationList);
-
+			if(!options.getSkipVolumeFilter()) {
+				String tempVolumeFilteredDatasetName = currentOrganelle + "_volumeFilteredTemp";
+				SparkVolumeFilterConnectedComponents.volumeFilterConnectedComponents(sc, options.getInputN5Path(), currentOrganelle, tempVolumeFilteredDatasetName, options.getMinimumVolumeCutoff(), blockInformationList);
+				directoriesToDelete.add(options.getInputN5Path() + "/" + tempVolumeFilteredDatasetName);
+				datasetToHoleFill = tempVolumeFilteredDatasetName;
+			}
+			
+			tempOutputN5DatasetName = datasetToHoleFill + "_holes" + "_blockwise_temp_to_delete";
+			finalOutputN5DatasetName = datasetToHoleFill + "_holes";
+			
 			// Get connected components of holes in *_holes
 			int minimumVolumeCutoff = 0;
 			blockInformationList = SparkConnectedComponents.blockwiseConnectedComponents(sc, options.getInputN5Path(),
-					tempVolumeFilteredDatasetName, options.getInputN5Path(), tempOutputN5DatasetName, null, 1, minimumVolumeCutoff,
+					datasetToHoleFill, options.getInputN5Path(), tempOutputN5DatasetName, null, 1, minimumVolumeCutoff,
 					blockInformationList, true, false);
 			logMemory("Stage 1 complete");
 
@@ -490,12 +502,11 @@ public class SparkFillHolesInConnectedComponents {
 					finalOutputN5DatasetName, blockInformationList);
 			logMemory("Stage 3 complete");
 
-			directoriesToDelete.add(options.getInputN5Path() + "/" + tempVolumeFilteredDatasetName);
 			directoriesToDelete.add(options.getInputN5Path() + "/" + tempOutputN5DatasetName);
 			directoriesToDelete.add(options.getInputN5Path() + "/" + finalOutputN5DatasetName);
 
-			MapsForFillingHoles mapsForFillingHoles = getMapsForFillingHoles(sc,  options.getInputN5Path(), tempVolumeFilteredDatasetName, blockInformationList);
-			fillHoles(sc, options.getInputN5Path(), tempVolumeFilteredDatasetName, currentOrganelle+options.getOutputN5DatasetSuffix(), mapsForFillingHoles, blockInformationList);
+			MapsForFillingHoles mapsForFillingHoles = getMapsForFillingHoles(sc,  options.getInputN5Path(), datasetToHoleFill, blockInformationList);
+			fillHoles(sc, options.getInputN5Path(), datasetToHoleFill, currentOrganelle+options.getOutputN5DatasetSuffix(), mapsForFillingHoles, blockInformationList);
 			
 			sc.close();
 		}

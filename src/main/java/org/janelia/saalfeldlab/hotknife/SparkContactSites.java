@@ -176,8 +176,8 @@ public class SparkContactSites {
 		
 		//Get contact distance in voxels
 		final double contactDistanceInVoxels = contactDistance/pixelResolution[0];
-		int contactDistanceInVoxelsCeiling=(int)Math.round(contactDistanceInVoxels);
-		int contactDistanceInVoxelsCeilingSquared = contactDistanceInVoxelsCeiling*contactDistanceInVoxelsCeiling;
+		double contactDistanceInVoxelsSquared = contactDistanceInVoxels*contactDistanceInVoxels;//contactDistanceInVoxelsCeiling*contactDistanceInVoxelsCeiling;
+		int contactDistanceInVoxelsCeiling=(int)Math.ceil(contactDistanceInVoxels);
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		rdd.foreach(currentBlockInformation -> {
@@ -216,10 +216,10 @@ public class SparkContactSites {
 				final UnsignedLongType voxelOutputPair = extendedOutputPairCursor.next();
 				final float distanceFromObjectsSquared = distanceFromObjectsCursor.next().get();
 				long[] position = {extendedOutputCursor.getLongPosition(0),  extendedOutputCursor.getLongPosition(1),  extendedOutputCursor.getLongPosition(2)};
-				if( (distanceFromObjectsSquared>0 && distanceFromObjectsSquared<=contactDistanceInVoxelsCeilingSquared) || isSurfaceVoxel(segmentedOrganelleRandomAccess, position)) {//then voxel is within distance
+				if( (distanceFromObjectsSquared>0 && distanceFromObjectsSquared<=contactDistanceInVoxelsSquared) || isSurfaceVoxel(segmentedOrganelleRandomAccess, position)) {//then voxel is within distance
 					long objectID = findAndSetValueToNearestOrganelleID(voxelOutput, distanceFromObjectsSquared, position, segmentedOrganelleRandomAccess);
 					if(objectID>0) {
-						findAndSetValueToOrganellePairID(objectID, distanceFromObjectsSquared, voxelOutputPair, contactDistanceInVoxelsCeilingSquared, position, segmentedOrganelleRandomAccess);	
+						findAndSetValueToOrganellePairID(objectID, distanceFromObjectsSquared, voxelOutputPair, contactDistanceInVoxelsSquared, position, segmentedOrganelleRandomAccess);	
 					}
 				}
 			}
@@ -252,19 +252,19 @@ public class SparkContactSites {
 		return 0;
 	}
 	
-	private static void findAndSetValueToOrganellePairID(long objectID, float distanceFromObjectSquared, UnsignedLongType voxelOutputPair, int contactDistanceInVoxelsCeilingSquared, long [] position, RandomAccess<UnsignedLongType> segmentedOrganelleRandomAccess){
+	private static void findAndSetValueToOrganellePairID(long objectID, float distanceFromObjectSquared, UnsignedLongType voxelOutputPair, double contactDistanceInVoxelsSquared, long [] position, RandomAccess<UnsignedLongType> segmentedOrganelleRandomAccess){
 		//For a given voxel outside an object, find the closest object to it and relabel the voxel with the corresponding object ID
 		int distanceFromObject = (int) Math.floor(Math.sqrt(distanceFromObjectSquared));
 		int distanceFromOrganellePairSquared = Integer.MAX_VALUE;
 		long organellePairID=0;
-		for(int radius = distanceFromObject; radius <= Math.sqrt(contactDistanceInVoxelsCeilingSquared); radius++) {//must be at least as far away as other organelle
+		for(int radius = distanceFromObject; radius <= Math.sqrt(contactDistanceInVoxelsSquared); radius++) {//must be at least as far away as other organelle
 			int radiusSquared = radius*radius;
 			int radiusMinus1Squared = (radius-1)*(radius-1);
 			for(int x=-radius; x<=radius; x++){
 				for(int y=-radius; y<=radius; y++) {
 					for(int z=-radius; z<=radius; z++) {
 						int currentDistanceSquared = x*x+y*y+z*z;
-						if(currentDistanceSquared>radiusMinus1Squared && currentDistanceSquared<=radiusSquared && currentDistanceSquared<=contactDistanceInVoxelsCeilingSquared) {
+						if(currentDistanceSquared>radiusMinus1Squared && currentDistanceSquared<=radiusSquared && currentDistanceSquared<=contactDistanceInVoxelsSquared) {
 							segmentedOrganelleRandomAccess.setPosition(new long[] {position[0]+x,position[1]+y,position[2]+z});
 							long currentObjectID = segmentedOrganelleRandomAccess.get().get();
 							if(currentObjectID > 0 && currentObjectID != objectID) { //then is within contact distance of another organelle
