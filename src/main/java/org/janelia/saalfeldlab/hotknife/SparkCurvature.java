@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import org.apache.spark.SparkConf;
@@ -48,6 +49,7 @@ import org.kohsuke.args4j.Option;
 import it.unimi.dsi.fastutil.doubles.DoubleArrays;
 import it.unimi.dsi.fastutil.doubles.DoubleComparator;
 import net.imglib2.Cursor;
+import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
@@ -133,8 +135,8 @@ public class SparkCurvature {
 
 		//Create output
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);	
-		n5Writer.createDataset(outputDatasetName+"_sheetness", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
-		n5Writer.setAttribute(outputDatasetName+"_sheetness", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		n5Writer.createDataset(outputDatasetName+"_sheetnessTest", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.setAttribute(outputDatasetName+"_sheetnessTest", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		rdd.foreach(blockInformation -> {
@@ -159,25 +161,32 @@ public class SparkCurvature {
 
 			
 			RandomAccessibleInterval<UnsignedLongType> medialSurface = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName+"_medialSurface");
-			final RandomAccessibleInterval<UnsignedByteType> medialSurfaceConverted =
-					Converters.convert(
-							source,
-							(a, b) -> { b.set(a.getRealDouble()>0 ? 1 : 0);},
-							new UnsignedByteType());
 			
-			final IntervalView<UnsignedByteType> medialSurfaceCropped = Views.offsetInterval(Views.extendZero(medialSurfaceConverted),paddedOffset, paddedDimension);
-		
+			final IntervalView<UnsignedLongType> medialSurfaceCropped = Views.offsetInterval(Views.extendZero(medialSurface),paddedOffset, paddedDimension);
+			RandomAccess<UnsignedLongType> medialSurfaceCroppedRA = medialSurfaceCropped.randomAccess();
+			HashSet<long[]> medialSurfaceCoordinates = new HashSet<long []>();
+			for(long x=padding; x<padding+dimension[0]; x++) {
+				for(long y=padding; y<padding+dimension[1]; y++) {
+					for(long z=padding; z<padding+dimension[2]; z++) {
+						long [] pos = new long[] {x,y,z};
+						medialSurfaceCroppedRA.setPosition(pos);
+						if(medialSurfaceCroppedRA.get().get()>0) {
+							medialSurfaceCoordinates.add(pos);
+						}
+					}
+				}
+			}
 			
 			//Create sheetness output
 			IntervalView<DoubleType> sheetness = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
 			
 			
 			//Perform curvature analysis
-			getSheetness(sourceCropped, medialSurfaceCropped, sheetness, new long[]{padding,padding,padding}, dimension, pixelResolution); 
+			getSheetness(sourceCropped, medialSurfaceCoordinates, sheetness, new long[]{padding,padding,padding}, dimension, pixelResolution); 
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 			sheetness = Views.offsetInterval(sheetness,new long[]{padding,padding,padding}, dimension);			
-			N5Utils.saveBlock(sheetness, n5BlockWriter, outputDatasetName+"_sheetness", gridBlock[2]);
+			N5Utils.saveBlock(sheetness, n5BlockWriter, outputDatasetName+"_sheetnessTest", gridBlock[2]);
 						
 		});
 
@@ -211,7 +220,7 @@ public class SparkCurvature {
 		return series;
 	}
 
-	public static void getSheetness(RandomAccessibleInterval<DoubleType> converted, RandomAccessibleInterval<UnsignedByteType> medialSurface, 
+	public static void getSheetness(RandomAccessibleInterval<DoubleType> converted, HashSet<long []> medialSurfaceCoordinates, 
 			RandomAccessibleInterval<DoubleType> sheetness,
 			long[] padding, long[] dimension, double[] resolution) {
 		
@@ -247,7 +256,7 @@ public class SparkCurvature {
 			}
 			
 			//Update sheetness if necessary
-			updateSheetness(converted, gradients, medialSurface, minimumLaplacian, 
+			updateSheetness(converted, gradients, medialSurfaceCoordinates, minimumLaplacian, 
 					sheetness, sigmaSeries[0][i],padding, dimension, i);
 		}
 		
@@ -255,7 +264,7 @@ public class SparkCurvature {
 	
 	private static void updateSheetness(final RandomAccessibleInterval<DoubleType> converted, 
 			final RandomAccessible<DoubleType>[] gradients, 
-			final RandomAccessible<UnsignedByteType> medialSurface, 
+			final HashSet<long []> medialSurfaceCoordinates, 
 			final RandomAccessible<DoubleType> minimumLaplacian, 
 			final RandomAccessible <DoubleType> sheetness,
 			final double[] sigmaSeries, long[] padding, long[] dimension, int scaleStep) {
@@ -276,21 +285,22 @@ public class SparkCurvature {
 			}
 		}
 		
-		final Cursor<DoubleType>[][] a = new Cursor[n][n];
-		final Cursor<DoubleType>[][] b = new Cursor[n][n];
+		final RandomAccess<DoubleType>[][] a = new RandomAccess[n][n];
+		final RandomAccess<DoubleType>[][] b = new RandomAccess[n][n];
 		for (int d = 0; d < n; ++d) {
 			for (int e = d; e < n; ++e) {
-				a[d][e] = Views.flatIterable(Views.interval(gradientsA[d][e], converted)).cursor();
-				b[d][e] = Views.flatIterable(Views.interval(gradientsB[d][e], converted)).cursor();
+				a[d][e] = Views.interval(gradientsA[d][e], converted).randomAccess();
+				b[d][e] = Views.interval(gradientsB[d][e], converted).randomAccess();
 			}
 		}
 			
 		
 		//Create cursors
-		final Cursor<DoubleType> sourceCursor = Views.flatIterable(converted).cursor();
-		final Cursor<DoubleType> sheetnessCursor = Views.flatIterable(Views.interval(sheetness, converted)).cursor();
-		final Cursor<UnsignedByteType> medialSurfaceCursor = Views.flatIterable(Views.interval(medialSurface, converted)).cursor();
-		final Cursor<DoubleType> minimumLaplacianCursor = Views.flatIterable(Views.interval(minimumLaplacian, converted)).cursor();
+		//final Cursor<DoubleType> sourceCursor = Views.flatIterable(converted).cursor();
+		//final Cursor<UnsignedByteType> medialSurfaceCursor = Views.flatIterable(Views.interval(medialSurface, converted)).cursor();
+
+		final RandomAccess<DoubleType> sheetnessRA = Views.interval(sheetness, converted).randomAccess();
+		final RandomAccess<DoubleType> minimumLaplacianRA = Views.interval(minimumLaplacian, converted).randomAccess();
 
 		//Create necessary info for calculating hessian
 		final DMatrixRMaj hessian = new DMatrixRMaj(n, n);
@@ -300,25 +310,25 @@ public class SparkCurvature {
 		int newCount = 0;
 		int updatedCount = 0;
 		//Loop over source image
-A:		while (sourceCursor.hasNext()) {
+		long tic = System.currentTimeMillis();
+		
+		for (long [] currentMedialSurfaceCoordinate : medialSurfaceCoordinates) {
 			/* TODO Is test if n == 1 and set to 1 meaningful? */
 			//Increment cursors
-			sourceCursor.next();
-			final DoubleType sheetnessVoxel = sheetnessCursor.next();		
-			final UnsignedByteType medialSurfaceVoxel = medialSurfaceCursor.next();
-			final DoubleType minimumLaplacianVoxel = minimumLaplacianCursor.next();
-			
+
 			//Increment cgradients and calculate hessian
 			for (int d = 0; d < n; ++d) {
 				for (int e = d; e < n; ++e) {
-					final double hde = (b[d][e].next().getRealDouble() - a[d][e].next().getRealDouble()) * norms[e];
+					b[d][e].setPosition(currentMedialSurfaceCoordinate);
+					a[d][e].setPosition(currentMedialSurfaceCoordinate);
+					final double hde = (b[d][e].get().getRealDouble() - a[d][e].get().getRealDouble()) * norms[e];
 //					final double hde = (b[d][e].next().getRealDouble() - a[d][e].next().getRealDouble());
 					hessian.set(d, e, hde);
 					hessian.set(e, d, hde);
 				}
 			}
 			
-			if(medialSurfaceVoxel.getRealDouble()>0 && isWithinOutputBlock(new long [] {sourceCursor.getLongPosition(0), sourceCursor.getLongPosition(1), sourceCursor.getLongPosition(2)}, padding, dimension)) {//Only need to evaluate if it is a medial surface and it is within the output block
+			//if(medialSurfaceVoxel.getRealDouble()>0 && isWithinOutputBlock(new long [] {sourceCursor.getLongPosition(0), sourceCursor.getLongPosition(1), sourceCursor.getLongPosition(2)}, padding, dimension)) {//Only need to evaluate if it is a medial surface and it is within the output block
 
 				eigen.decompose(hessian);
 				for (int d = 0; d < n; ++d)
@@ -328,13 +338,15 @@ A:		while (sourceCursor.hasNext()) {
 								 
 				// Based on this paper http://www.cim.mcgill.ca/~shape/publications/miccai05b.pdf
 				if(eigenvalues[2]>0) { //Only calculate if largest magnitude eigenvalue is negative
-					continue A;
+					continue;
 				}
 				
 				//If laplacian at current voxel is the smallest it has been, then update sheetness and laplacian
 				double laplacian = hessian.get(0,0)+ hessian.get(1,1) + hessian.get(2,2);
-				if(laplacian<minimumLaplacianVoxel.getRealDouble()) {
-					if(minimumLaplacianVoxel.getRealDouble()==0) {
+				
+				minimumLaplacianRA.setPosition(currentMedialSurfaceCoordinate);
+				if(laplacian<minimumLaplacianRA.get().getRealDouble()) {
+					if(minimumLaplacianRA.get().getRealDouble()==0) {
 						newCount++;
 					}
 					else {
@@ -348,14 +360,16 @@ A:		while (sourceCursor.hasNext()) {
 					double blobEliminationTerm = 1-Math.exp(-Rblob*Rblob/(2*beta*beta));
 					
 					double equation1 = sheetEnhancementTerm*blobEliminationTerm;
-					minimumLaplacianVoxel.setReal( laplacian);
-					sheetnessVoxel.setReal(equation1);
+					minimumLaplacianRA.get().setReal( laplacian);
+					
+					sheetnessRA.setPosition(currentMedialSurfaceCoordinate);
+					sheetnessRA.get().setReal(equation1);
 					
 				}
-			}		
+			//}		
 		}
-		
-		System.out.println("Scale step: " + scaleStep +". Num new: "+newCount + ", Num updated: "+updatedCount+", Total: "+(newCount+updatedCount));
+	
+		System.out.println("Time: " + (System.currentTimeMillis()-tic)/1000 + ". Scale step: " + scaleStep +". Num new: "+newCount + ", Num updated: "+updatedCount+", Total: "+(newCount+updatedCount));
 	}
 	
 	static DoubleComparator absDoubleComparator = new DoubleComparator() {
@@ -370,14 +384,6 @@ A:		while (sourceCursor.hasNext()) {
 		}
 	};
 	
-	private static boolean isWithinOutputBlock(long [] sourcePosition, long [] padding, long [] dimension) {
-		for(int i =0; i<3; i++) {
-			if( !(sourcePosition[i]>=padding[i] && sourcePosition[i]<padding[i]+dimension[i])) {
-				return false;
-			}
-		}
-		return true;		
-	}
 	
 	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
 			final String inputN5DatasetName) throws IOException {
@@ -431,7 +437,7 @@ A:		while (sourceCursor.hasNext()) {
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
 					currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			 computeCurvature(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(), finalOutputN5DatasetName, blockInformationList);
+			computeCurvature(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(), finalOutputN5DatasetName, blockInformationList);
 
 			sc.close();
 		}
