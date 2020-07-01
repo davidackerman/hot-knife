@@ -100,6 +100,9 @@ public class SparkIDFilter {
 		@Option(name = "--inputN5DatasetName", required = true, usage = "N5 dataset, e.g. /mito")
 		private String inputN5DatasetName = null;
 		
+		@Option(name = "--outputN5DatasetSuffix", required = false, usage = "N5 dataset, e.g. /mito")
+		private String outputN5DatasetSuffix = "_filteredIDs";
+		
 		@Option(name = "--idsToKeep", required = false, usage = "N5 dataset, e.g. /mito")
 		private String idsToKeep = "";
 		
@@ -137,6 +140,10 @@ public class SparkIDFilter {
 
 		public String getInputN5DatasetName() {
 			return inputN5DatasetName;
+		}
+		
+		public String getOutputN5DatasetSuffix() {
+			return outputN5DatasetSuffix;
 		}
 
 		public String getOutputN5Path() {
@@ -227,6 +234,7 @@ public class SparkIDFilter {
 			final String n5OutputPath,
 			final String suffix,
 			final Set<Long> idsToKeep,
+			final Set<Long> idsToDelete,
 			final Map<Long,Long> adjacentIDtoParentID,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
@@ -252,6 +260,9 @@ public class SparkIDFilter {
 		 * blocks
 		 */
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		
+		boolean onlyKeepSubsetOfIDs = idsToKeep.isEmpty() ? false : true;
+		
 		rdd.foreach(blockInformation -> {
 			final long [][] gridBlock = blockInformation.gridBlock;
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
@@ -262,8 +273,13 @@ public class SparkIDFilter {
 				sourceCursor.next();
 				long currentID = sourceCursor.get().get();
 				if(currentID>0) {
-					if(adjacentIDtoParentID.containsKey(currentID)) sourceCursor.get().set(adjacentIDtoParentID.get(currentID));
-					else if(! idsToKeep.contains(currentID)) sourceCursor.get().set(0);
+					if(onlyKeepSubsetOfIDs) {
+						if(adjacentIDtoParentID.containsKey(currentID)) sourceCursor.get().set(adjacentIDtoParentID.get(currentID));
+						else if(! idsToKeep.contains(currentID)) sourceCursor.get().set(0);
+					}
+					else { //then keeping everything except those slated to delete
+						if(idsToDelete.contains(currentID)) sourceCursor.get().set(0);
+					}
 				}
 			}
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
@@ -310,14 +326,12 @@ public class SparkIDFilter {
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkBinarize");
+		final SparkConf conf = new SparkConf().setAppName("SparkIDFiltr");
 
 		String inputN5Path = options.getInputN5Path();
 		String inputN5DatasetName = options.getInputN5DatasetName();
 		String outputN5Path = options.getOutputN5Path();
-		
-		List<String> directoriesToDelete = new ArrayList<String>();
-		
+				
 		//Create block information list
 		List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
 			options.getInputN5DatasetName());
@@ -333,10 +347,12 @@ public class SparkIDFilter {
 		
 		Map<Long,Long> adjacentIDtoParentID = new HashMap<Long,Long>();
 		
-		String suffix = "_filterIDs";
+		String suffix = options.getOutputN5DatasetSuffix(); 
 		if(options.getKeepAdjacentIDs()) {
-			suffix += "_keepAdjacentIDs";
-			adjacentIDtoParentID = getAdjacentIDs(sc, inputN5Path, inputN5DatasetName, outputN5Path, idsToKeep, idsToDelete, blockInformationList);
+			if(!idsToKeep.isEmpty()) { //if idsToKeep is empty, then we should keep everything except those in ids to remove
+				suffix += "_keptAdjacentIDs";
+				adjacentIDtoParentID = getAdjacentIDs(sc, inputN5Path, inputN5DatasetName, outputN5Path, idsToKeep, idsToDelete, blockInformationList);
+			}
 		}
 		
 		filterIDs(
@@ -346,6 +362,7 @@ public class SparkIDFilter {
 				outputN5Path,
 				suffix,
 				idsToKeep,
+				idsToDelete,
 				adjacentIDtoParentID,
 				blockInformationList);
 		
