@@ -23,8 +23,11 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
 import java.util.concurrent.ExecutionException;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -135,8 +138,8 @@ public class SparkCurvature {
 
 		//Create output
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);	
-		n5Writer.createDataset(outputDatasetName+"_sheetnessTest", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
-		n5Writer.setAttribute(outputDatasetName+"_sheetnessTest", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		n5Writer.createDataset(outputDatasetName+"_sheetnessTest3", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.setAttribute(outputDatasetName+"_sheetnessTest3", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		rdd.foreach(blockInformation -> {
@@ -164,29 +167,40 @@ public class SparkCurvature {
 			
 			final IntervalView<UnsignedLongType> medialSurfaceCropped = Views.offsetInterval(Views.extendZero(medialSurface),paddedOffset, paddedDimension);
 			RandomAccess<UnsignedLongType> medialSurfaceCroppedRA = medialSurfaceCropped.randomAccess();
-			HashSet<long[]> medialSurfaceCoordinates = new HashSet<long []>();
+			HashMap<List<Long>,SheetnessInformation> medialSurfaceCoordinatesToSheetnessInformationMap = new HashMap<List<Long>,SheetnessInformation>();
 			for(long x=padding; x<padding+dimension[0]; x++) {
 				for(long y=padding; y<padding+dimension[1]; y++) {
 					for(long z=padding; z<padding+dimension[2]; z++) {
 						long [] pos = new long[] {x,y,z};
 						medialSurfaceCroppedRA.setPosition(pos);
 						if(medialSurfaceCroppedRA.get().get()>0) {
-							medialSurfaceCoordinates.add(pos);
+							medialSurfaceCoordinatesToSheetnessInformationMap.put(Arrays.asList(pos[0],pos[1],pos[2]),new SheetnessInformation());
 						}
 					}
 				}
 			}
 			
 			//Create sheetness output
-			IntervalView<DoubleType> sheetness = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
-			
+			IntervalView<DoubleType> sheetness = null;			
 			
 			//Perform curvature analysis
-			getSheetness(sourceCropped, medialSurfaceCoordinates, sheetness, new long[]{padding,padding,padding}, dimension, pixelResolution); 
+			if(!medialSurfaceCoordinatesToSheetnessInformationMap.isEmpty()) {
+				getSheetness(sourceCropped, medialSurfaceCoordinatesToSheetnessInformationMap, new long[]{padding,padding,padding}, dimension, pixelResolution); 
+				sheetness = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+				RandomAccess<DoubleType> sheetnessRA = sheetness.randomAccess();
+				for(Entry<List<Long>, SheetnessInformation> entry : medialSurfaceCoordinatesToSheetnessInformationMap.entrySet()) {
+					long[] pos = new long[] {entry.getKey().get(0), entry.getKey().get(1), entry.getKey().get(2)};
+					sheetnessRA.setPosition(pos);
+					sheetnessRA.get().set(entry.getValue().sheetness);
+				}
+				sheetness = Views.offsetInterval(sheetness,new long[]{padding,padding,padding}, dimension);
+			}
+			else{
+				sheetness = Views.offsetInterval(ArrayImgs.doubles(dimension),new long[]{0,0,0}, dimension);
+			}
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
-			sheetness = Views.offsetInterval(sheetness,new long[]{padding,padding,padding}, dimension);			
-			N5Utils.saveBlock(sheetness, n5BlockWriter, outputDatasetName+"_sheetnessTest", gridBlock[2]);
+			N5Utils.saveBlock(sheetness, n5BlockWriter, outputDatasetName+"_sheetnessTest3", gridBlock[2]);
 						
 		});
 
@@ -220,8 +234,7 @@ public class SparkCurvature {
 		return series;
 	}
 
-	public static void getSheetness(RandomAccessibleInterval<DoubleType> converted, HashSet<long []> medialSurfaceCoordinates, 
-			RandomAccessibleInterval<DoubleType> sheetness,
+	public static void getSheetness(RandomAccessibleInterval<DoubleType> converted, HashMap<List<Long>, SheetnessInformation> medialSurfaceCoordinatesToSheetnessInformationMap, 
 			long[] padding, long[] dimension, double[] resolution) {
 		
 		//Define scale steps and octave steps
@@ -232,9 +245,8 @@ public class SparkCurvature {
 		//Create required images for calculating sheetness
 		ExtendedRandomAccessibleInterval<DoubleType, RandomAccessibleInterval<DoubleType>> source = Views.extendZero(converted);
 		IntervalView<DoubleType> smoothed = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
-		IntervalView<DoubleType> minimumLaplacian = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);		
 		final RandomAccessible<DoubleType>[] gradients = new RandomAccessible[converted.numDimensions()];
-	
+			
 		//Loop over scale steps to calculate smoothed image
 		final double[][][] sigmaSeries = sigmaSeries(resolution, octaveSteps, scaleSteps);
 		for (int i = 0; i < scaleSteps; ++i) {
@@ -256,51 +268,56 @@ public class SparkCurvature {
 			}
 			
 			//Update sheetness if necessary
-			updateSheetness(converted, gradients, medialSurfaceCoordinates, minimumLaplacian, 
-					sheetness, sigmaSeries[0][i],padding, dimension, i);
+			updateSheetness(converted, gradients, medialSurfaceCoordinatesToSheetnessInformationMap, 
+					sigmaSeries[0][i],padding, dimension, i);
 		}
 		
 	}
 	
 	private static void updateSheetness(final RandomAccessibleInterval<DoubleType> converted, 
 			final RandomAccessible<DoubleType>[] gradients, 
-			final HashSet<long []> medialSurfaceCoordinates, 
-			final RandomAccessible<DoubleType> minimumLaplacian, 
-			final RandomAccessible <DoubleType> sheetness,
+			final HashMap<List<Long>, SheetnessInformation> medialSurfaceCoordinatesToSheetnessInformationMap, 
 			final double[] sigmaSeries, long[] padding, long[] dimension, int scaleStep) {
 
 		//Create gradients
 		final int n = gradients[0].numDimensions();
-		final RandomAccessible<DoubleType>[][] gradientsA = new RandomAccessible[n][n];
-		final RandomAccessible<DoubleType>[][] gradientsB = new RandomAccessible[n][n];
 		
 		double[] norms = new double[n];
 		for (int d = 0; d < n; ++d) {
 			norms[d] = 2.0 / sigmaSeries[d];//sigmas[d] / 2.0;
+		}
+		
+		RandomAccess<DoubleType> gradientA_RA = null;
+		RandomAccess<DoubleType> gradientB_RA = null;
+		for (int d = 0; d < n; ++d) {
 			final long[] offset = new long[n];
 			offset[d] = -1;
 			for (int e = d; e < n; ++e) {
-				gradientsA[d][e] = Views.offset(gradients[e], offset);
-				gradientsB[d][e] = Views.translate(gradients[e], offset);
+				gradientA_RA = Views.offset(gradients[e], offset).randomAccess();
+				gradientB_RA = Views.translate(gradients[e], offset).randomAccess();
+				for(Entry<List<Long>, SheetnessInformation> entry : medialSurfaceCoordinatesToSheetnessInformationMap.entrySet()) {
+					List<Long> pos = entry.getKey();
+					SheetnessInformation sheetnessInformation = entry.getValue();
+					long [] pos_array = new long[] {pos.get(0),pos.get(1),pos.get(2)};
+					gradientA_RA.setPosition(pos_array);
+					gradientB_RA.setPosition(pos_array);
+					sheetnessInformation.b_minus_a_normalized[d][e] = (gradientB_RA.get().get() - gradientA_RA.get().get())*norms[e];			
+					medialSurfaceCoordinatesToSheetnessInformationMap.put(pos,sheetnessInformation);
+				}
 			}
 		}
 		
-		final RandomAccess<DoubleType>[][] a = new RandomAccess[n][n];
-		final RandomAccess<DoubleType>[][] b = new RandomAccess[n][n];
-		for (int d = 0; d < n; ++d) {
+		/*for (int d = 0; d < n; ++d) {
 			for (int e = d; e < n; ++e) {
 				a[d][e] = Views.interval(gradientsA[d][e], converted).randomAccess();
 				b[d][e] = Views.interval(gradientsB[d][e], converted).randomAccess();
 			}
-		}
+		}*/
 			
 		
 		//Create cursors
 		//final Cursor<DoubleType> sourceCursor = Views.flatIterable(converted).cursor();
 		//final Cursor<UnsignedByteType> medialSurfaceCursor = Views.flatIterable(Views.interval(medialSurface, converted)).cursor();
-
-		final RandomAccess<DoubleType> sheetnessRA = Views.interval(sheetness, converted).randomAccess();
-		final RandomAccess<DoubleType> minimumLaplacianRA = Views.interval(minimumLaplacian, converted).randomAccess();
 
 		//Create necessary info for calculating hessian
 		final DMatrixRMaj hessian = new DMatrixRMaj(n, n);
@@ -312,16 +329,20 @@ public class SparkCurvature {
 		//Loop over source image
 		long tic = System.currentTimeMillis();
 		
-		for (long [] currentMedialSurfaceCoordinate : medialSurfaceCoordinates) {
+		for ( Entry<List<Long>,SheetnessInformation>entry : medialSurfaceCoordinatesToSheetnessInformationMap.entrySet()) {
 			/* TODO Is test if n == 1 and set to 1 meaningful? */
 			//Increment cursors
-
+			List<Long> currentMedialSurfaceCoordinate = entry.getKey();
+			long [] currentMedialSurfaceCoordinateArray = new long[] {currentMedialSurfaceCoordinate.get(0),currentMedialSurfaceCoordinate.get(1),currentMedialSurfaceCoordinate.get(2)};
 			//Increment cgradients and calculate hessian
+			SheetnessInformation sheetnessInformation = entry.getValue();
 			for (int d = 0; d < n; ++d) {
 				for (int e = d; e < n; ++e) {
-					b[d][e].setPosition(currentMedialSurfaceCoordinate);
-					a[d][e].setPosition(currentMedialSurfaceCoordinate);
-					final double hde = (b[d][e].get().getRealDouble() - a[d][e].get().getRealDouble()) * norms[e];
+					//b[d][e].setPosition(currentMedialSurfaceCoordinate);
+					//a[d][e].setPosition(currentMedialSurfaceCoordinate);
+					final double hde = sheetnessInformation.b_minus_a_normalized[d][e];
+
+//					final double hde = (b[d][e].get().getRealDouble() - a[d][e].get().getRealDouble()) * norms[e];
 //					final double hde = (b[d][e].next().getRealDouble() - a[d][e].next().getRealDouble());
 					hessian.set(d, e, hde);
 					hessian.set(e, d, hde);
@@ -344,9 +365,8 @@ public class SparkCurvature {
 				//If laplacian at current voxel is the smallest it has been, then update sheetness and laplacian
 				double laplacian = hessian.get(0,0)+ hessian.get(1,1) + hessian.get(2,2);
 				
-				minimumLaplacianRA.setPosition(currentMedialSurfaceCoordinate);
-				if(laplacian<minimumLaplacianRA.get().getRealDouble()) {
-					if(minimumLaplacianRA.get().getRealDouble()==0) {
+				if(laplacian<sheetnessInformation.minimumLaplacian) {
+					if(sheetnessInformation.minimumLaplacian==0) {
 						newCount++;
 					}
 					else {
@@ -360,10 +380,10 @@ public class SparkCurvature {
 					double blobEliminationTerm = 1-Math.exp(-Rblob*Rblob/(2*beta*beta));
 					
 					double equation1 = sheetEnhancementTerm*blobEliminationTerm;
-					minimumLaplacianRA.get().setReal( laplacian);
 					
-					sheetnessRA.setPosition(currentMedialSurfaceCoordinate);
-					sheetnessRA.get().setReal(equation1);
+					sheetnessInformation.minimumLaplacian = laplacian;
+					sheetnessInformation.sheetness = equation1;
+					medialSurfaceCoordinatesToSheetnessInformationMap.put(currentMedialSurfaceCoordinate, sheetnessInformation);
 					
 				}
 			//}		
@@ -442,5 +462,19 @@ public class SparkCurvature {
 			sc.close();
 		}
 
+	}
+}
+
+class SheetnessInformation implements Serializable{
+	//use map to associate object ID with radii, edges etc
+	public double[][] b_minus_a_normalized;
+	public double minimumLaplacian;
+	public double sheetness; 
+	
+	public SheetnessInformation() 
+	{ 
+		this.b_minus_a_normalized = new double[3][3];
+		this.minimumLaplacian = 0;
+		this.sheetness = 0;
 	}
 }
