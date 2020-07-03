@@ -180,8 +180,9 @@ public class SparkExpandMaskToCleanPredictions {
 	public static final void expandAndApplyMask(
 			final JavaSparkContext sc,
 			final String datasetToMaskN5Path,
-			final String datasetNameToUseAsMask,
 			final String datasetNameToMask,
+			final String datasetToUseAsMaskN5Path,
+			final String datasetNameToUseAsMask,
 			final String n5OutputPath,
 			final Integer expansion,
 			final List<BlockInformation> blockInformationList) throws IOException {
@@ -214,7 +215,7 @@ public class SparkExpandMaskToCleanPredictions {
 			int padding = expansionInVoxels+1;
 			final long [] offset= blockInformation.gridBlock[0];
 			final long [] dimension = blockInformation.gridBlock[1];
-			final N5Reader n5MaskReader = new N5FSReader(n5OutputPath);
+			final N5Reader n5MaskReader = new N5FSReader(datasetToUseAsMaskN5Path);
 			final N5Reader n5BlockReader = new N5FSReader(datasetToMaskN5Path);
 			final long [] paddedBlockMin =  new long [] {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			final long [] paddedBlockSize =  new long [] {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
@@ -306,23 +307,31 @@ public class SparkExpandMaskToCleanPredictions {
 			return;
 		
 		final SparkConf conf = new SparkConf().setAppName("SparkExpandMaskToCleanPredictions");
-		List<BlockInformation> blockInformationList = buildBlockInformationList(options.getDatasetToUseAsMaskN5Path(), options.getDatasetNameToUseAsMask());
 
 		double x = (options.getThresholdIntensityCutoff() - 127)/128;
 		double thresholdDistance = 50 * 0.5*Math.log ((1.0 + x)/ (1.0 - x) );
 		
-		String suffix = options.getOnlyKeepLargestComponent() ? "_largestComponent" :  "_cc";
 		//SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToUseAsMask(), options.getDatasetToUseAsMaskN5Path(), null, options.getOutputN5Path(), "_largestComponent", 0, -1, true);
+		String datasetToUseAsMaskN5Path = options.getDatasetToUseAsMaskN5Path();
+		String suffix = "";
+		
+		List<BlockInformation> blockInformationList;
 		if(!options.getSkipConnectedComponents()) {
+			blockInformationList = buildBlockInformationList(options.getDatasetToUseAsMaskN5Path(), options.getDatasetNameToUseAsMask());
+			suffix = options.getOnlyKeepLargestComponent() ? "_largestComponent" :  "_cc";
 			boolean smooth = !options.getSkipSmoothing();
 			SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToUseAsMask(), options.getDatasetToUseAsMaskN5Path(), null, options.getOutputN5Path(), suffix, thresholdDistance, -1, options.getOnlyKeepLargestComponent(), smooth);
+			datasetToUseAsMaskN5Path = options.getOutputN5Path();
 		}
+		
+		blockInformationList = buildBlockInformationList(options.getDatasetToMaskN5Path(), options.getDatasetNameToMask());
 		JavaSparkContext sc = new JavaSparkContext(conf);
 		expandAndApplyMask(
 				sc,
 				options.getDatasetToMaskN5Path(),
-				options.getDatasetNameToUseAsMask()+suffix,
 				options.getDatasetNameToMask(),
+				datasetToUseAsMaskN5Path,
+				options.getDatasetNameToUseAsMask()+suffix,
 				options.getOutputN5Path(),
 				options.getExpansion(),
 				blockInformationList) ;

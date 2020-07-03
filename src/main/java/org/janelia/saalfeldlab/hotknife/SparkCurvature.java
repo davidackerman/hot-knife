@@ -138,8 +138,8 @@ public class SparkCurvature {
 
 		//Create output
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);	
-		n5Writer.createDataset(outputDatasetName+"_sheetnessTest3", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
-		n5Writer.setAttribute(outputDatasetName+"_sheetnessTest3", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		n5Writer.createDataset(outputDatasetName+"_sheetness", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.setAttribute(outputDatasetName+"_sheetness", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		rdd.foreach(blockInformation -> {
@@ -200,7 +200,7 @@ public class SparkCurvature {
 			}
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
-			N5Utils.saveBlock(sheetness, n5BlockWriter, outputDatasetName+"_sheetnessTest3", gridBlock[2]);
+			N5Utils.saveBlock(sheetness, n5BlockWriter, outputDatasetName+"_sheetness", gridBlock[2]);
 						
 		});
 
