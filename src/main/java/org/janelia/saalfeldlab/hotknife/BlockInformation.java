@@ -29,6 +29,7 @@ public class BlockInformation implements Serializable {
 	
 	public Map<Long,Long> edgeComponentIDtoVolumeMap;
 	public Map<Long, Long> edgeComponentIDtoRootIDmap;
+	public Map<Long, long[][]> objectIDtoBoundingBoxMap;
 	public Map<Long, List<Long>> edgeComponentIDtoOrganelleIDs;//for contact sites
 	public Set<Long> selfContainedMaxVolumeOrganelles;
 	public Long selfContainedMaxVolume;

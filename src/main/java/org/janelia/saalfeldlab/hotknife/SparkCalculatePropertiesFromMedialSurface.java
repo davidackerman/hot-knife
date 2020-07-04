@@ -132,6 +132,7 @@ public class SparkCalculatePropertiesFromMedialSurface {
 
 	}
 
+	/*
 	public static final ObjectwiseSkeletonInformation getObjectwiseSkeletonInformation(
 			final JavaSparkContext sc,
 			final String n5Path,
@@ -146,10 +147,6 @@ public class SparkCalculatePropertiesFromMedialSurface {
 		final int n = dimensions.length;
 		
 		
-		/*
-		 * grid block size for parallelization to minimize double loading of
-		 * blocks
-		 */
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		JavaRDD<ObjectwiseSkeletonInformation> javaRDDBlockwiseSkeletonInformation = rdd.map(blockInformation -> {
 			final long [][] gridBlock = blockInformation.gridBlock;
@@ -162,10 +159,12 @@ public class SparkCalculatePropertiesFromMedialSurface {
 			RandomAccessibleInterval<UnsignedLongType> connectedComponents = (RandomAccessibleInterval)N5Utils.open(n5BlockReader, datasetName);
 			
 			NativeImg<FloatType, ?> distanceTransform = null;
+			
 			long [] padding = getCorrectlyPaddedDistanceTransform(connectedComponents, distanceTransform, offset, dimension);
 			//final IntervalView<FloatType> insideBlock = Views.offsetInterval(Views.extendZero(distanceTransform), minInside, dimensionsInside);
 
 			//now distance transform is sufficient, but we still may have a situation where the closest medial surface requires crossing out of the object, so need to check.
+			
 			updateDistanceTransformToPreventCrossingObjectBoundary(connectedComponents, distanceTransform, offset, dimension, padding);
 			
 			final IntervalView<UnsignedLongType> connectedComponentsCropped = Views.offsetInterval(Views.extendZero(connectedComponents), paddedOffset, paddedDimension);
@@ -209,7 +208,7 @@ public class SparkCalculatePropertiesFromMedialSurface {
 		}
 		return objectwiseSkeletonInformation;
 	}
-	
+	*/
 	public static long [] getCorrectlyPaddedDistanceTransform(RandomAccessibleInterval<UnsignedLongType> source, NativeImg<FloatType, ?> distanceTransform, long[] offset, long[] dimension){
 		long[] sourceDimensions = {0,0,0};
 		source.dimensions(sourceDimensions);
@@ -294,6 +293,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 				}
 			}
 		}
+		return surfaceVoxels;
 	}
 	
 	public static <T extends NativeType<T>> T raSetGet(RandomAccess<T> ra, long [] pos){
@@ -402,7 +402,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 	}
 	
 	
-	public static boolean mustCrossObjectBoundary(RandomAccess<UnsignedLongType> fromRA, RandomAccess<UnsignedLongType> toRA, long[] currentSurfaceVoxelPosition, Set<List<Integer>> deltas) {
+	public static boolean mustCrossObjectBoundary(RandomAccess<UnsignedLongType> fromRA, RandomAccess<UnsignedLongType> toRA, long[] currentSurfaceVoxelPosition, Set<List<Integer>> deltas) throws Exception {
 		boolean allLinesCrossObjectBoundary = true;
 		boolean foundObjectAtDistance = false;
 		for(List<Integer> currentDelta : deltas) {
@@ -420,7 +420,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		return allLinesCrossObjectBoundary;
 	}
 	
-	public static boolean anySurfaceVoxelPathsMustCrossBoundary(RandomAccess<UnsignedLongType> fromRA, RandomAccess<FloatType> distanceTransformRA, RandomAccess<UnsignedLongType> toRA, List<long[]> surfaceVoxels) {
+	public static boolean anySurfaceVoxelPathsMustCrossBoundary(RandomAccess<UnsignedLongType> fromRA, RandomAccess<FloatType> distanceTransformRA, RandomAccess<UnsignedLongType> toRA, List<long[]> surfaceVoxels) throws Exception {
 		boolean needToExpand = false;
 		int numberOfSurfaceVoxelsChecked = 0;
 		for(long[] currentSurfaceVoxelPosition : surfaceVoxels) {
@@ -440,7 +440,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		return needToExpand;
 	}
 	
-	public static void updateDistanceTransformToPreventCrossingObjectBoundary(RandomAccessibleInterval<UnsignedLongType> from, IntervalView<FloatType> distanceTransform, RandomAccessibleInterval<UnsignedLongType> to, long[] offset, long[] dimension, long[] padding){
+	public static void updateDistanceTransformToPreventCrossingObjectBoundary(RandomAccessibleInterval<UnsignedLongType> from, IntervalView<FloatType> distanceTransform, RandomAccessibleInterval<UnsignedLongType> to, long[] offset, long[] dimension, long[] padding) throws Exception{
 		RandomAccess<UnsignedLongType> fromRA = from.randomAccess();	
 		RandomAccess<FloatType> distanceTransformRA = distanceTransform.randomAccess();
 		RandomAccess<UnsignedLongType> toRA = to.randomAccess();	
@@ -518,21 +518,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 				currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			
-			ObjectwiseSkeletonInformation objectwiseSkeletonInformation = getObjectwiseSkeletonInformation(
-					sc,
-					options.getInputN5Path(),
-					options.getInputN5DatasetName(),
-					blockInformationList);
 			
-			DataForWritingImages dataForWritingImages = calculateObjectwiseLengthAndThickness(sc, objectwiseSkeletonInformation, options.getInputN5Path(), currentOrganelle, options.getMinimumBranchLength(), options.getOutputDirectory());
-			Broadcast<DataForWritingImages> broadcastedDataForWritingImages = sc.broadcast(dataForWritingImages);
-
-			writeLongestShortestPathsToN5(
-					sc,
-					options.getInputN5Path(),
-					options.getInputN5DatasetName(),
-					broadcastedDataForWritingImages,
-					blockInformationList);
 			
 			sc.close();
 		}
