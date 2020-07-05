@@ -706,7 +706,12 @@ public class SparkContactSites {
 					HashSet<List<Long>> allNearestSurfaceVoxelPairs = new HashSet<List<Long>>();
 					getAllNearestSurfaceVoxelPairs(organelle1SurfaceVoxels, organelle2SurfaceVoxels, contactDistanceInVoxelsSquared, paddedDimension, allNearestSurfaceVoxelPairs);
 					getAllNearestSurfaceVoxelPairs(organelle2SurfaceVoxels, organelle1SurfaceVoxels, contactDistanceInVoxelsSquared, paddedDimension, allNearestSurfaceVoxelPairs);
-
+					List<long[]> temp = new ArrayList<long[]>();
+					temp.add(new long[] {0,1});
+					boolean test = temp.contains(new long[] {0,1});
+					
+							
+					
 					Set<List<Long>> allContactSiteVoxels = new HashSet<List<Long>>();
 					for(List<Long> nearestSurfaceVoxelPair : allNearestSurfaceVoxelPairs) {
 						long[] organelle1SurfaceVoxel = convertIDtoPosition(nearestSurfaceVoxelPair.get(0),paddedDimension);
@@ -1355,9 +1360,9 @@ public class SparkContactSites {
 					options.getOutputN5Path(),
 					options.getContactDistance(), options.getDoSelfContacts(), blockInformationList);
 			sc.close();
-		}
+		}*/
 		System.out.println("finished boundaries");
-		*/
+		
 		calculateContactSites(conf, organelles,  options.getMinimumVolumeCutoff(), options.getContactDistance(), options.getInputN5Path(), options.getOutputN5Path());
 		System.out.println("finished contact sites");
 		
