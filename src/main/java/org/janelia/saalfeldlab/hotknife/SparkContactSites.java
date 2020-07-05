@@ -723,28 +723,55 @@ public class SparkContactSites {
 //								 if(!CollectionUtils.containsAny(nonEndpointVoxels,allSurfaceVoxels)) {//then the line doesnt cross through any objects
 							 for(long[] validVoxel : voxelsToCheck) {
 								long [] correctedPosition = new long[] {validVoxel[0]-padding, validVoxel[1]-padding,validVoxel[2]-padding};
-								if(correctedPosition[0]>=0 && correctedPosition[1]>=0 && correctedPosition[2]>=0 &&
+								/*if(correctedPosition[0]>=0 && correctedPosition[1]>=0 && correctedPosition[2]>=0 &&
 										correctedPosition[0]<dimension[0] && correctedPosition[1]<dimension[1] && correctedPosition[2]<dimension[2]) {
 									allContactSiteVoxels.add(Arrays.asList(correctedPosition[0],correctedPosition[1],correctedPosition[2]));
-								}
+								}*/
+								allContactSiteVoxels.add(Arrays.asList(validVoxel[0],validVoxel[1],validVoxel[2]));
 							}
 						}
 					}
 					
-				
+					//fill in neighbors:
+					List<Long> potentialVoxel = new ArrayList<Long>();
+					Set<List<Long>> voxelsToAddForFilling = new HashSet<List<Long>>();
+					for(long dx=-1; dx<=1;dx++) {
+						for(long dy=-1; dy<=1; dy++) {
+							for(long dz=-1; dz<=1; dz++) {
+								for(List<Long> currentContactSiteVoxel : allContactSiteVoxels ) {
+									long x = currentContactSiteVoxel.get(0)+dx;
+									long y = currentContactSiteVoxel.get(1)+dy;
+									long z = currentContactSiteVoxel.get(2)+dz;
+									potentialVoxel = Arrays.asList(x,y,z);
+									if(!allContactSiteVoxels.contains(potentialVoxel) &&
+											x>=0 && y>=0 && z>=0 && x<paddedDimension[0] && y<paddedDimension[1] && z<paddedDimension[2]) {
+										organelle1DataRA.setPosition(new long[] {x,y,z});
+										if(organelle1DataRA.get().get()==0) {
+											organelle2DataRA.setPosition(new long[] {x,y,z});
+											if(organelle2DataRA.get().get()==0) {
+												voxelsToAddForFilling.add(potentialVoxel);
+											}
+										}
+									}
+								}
+								
+							}
+						}
+					}
+					allContactSiteVoxels.addAll(voxelsToAddForFilling);
 					if(!allContactSiteVoxels.isEmpty()) {
-						currentPairBinarized = new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(dimension);
+						currentPairBinarized = new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(paddedDimension);
 						RandomAccess<UnsignedByteType> currentPairBinarizedRA = currentPairBinarized.randomAccess();
 						for(List<Long> contactSiteVoxel : allContactSiteVoxels) {
 							currentPairBinarizedRA.setPosition(new long[] {contactSiteVoxel.get(0),contactSiteVoxel.get(1),contactSiteVoxel.get(2)});
 							currentPairBinarizedRA.get().set(1);
 						}
-						
+						IntervalView<UnsignedByteType> currentPairBinarizedCropped = Views.offsetInterval(currentPairBinarized,new long[] {padding,padding,padding},dimension);
 						// Compute the connected components which returns the components along the block
 						// edges, and update the corresponding blockInformation object
 						int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
 						
-						Map<Long, Long> currentPairEdgeComponentIDtoVolumeMap = SparkConnectedComponents.computeConnectedComponents(currentPairBinarized, output, outputDimensions,
+						Map<Long, Long> currentPairEdgeComponentIDtoVolumeMap = SparkConnectedComponents.computeConnectedComponents(currentPairBinarizedCropped, output, outputDimensions,
 								blockSizeL, offset, 1, minimumVolumeCutoffInVoxels);
 						currentBlockInformation.edgeComponentIDtoVolumeMap.putAll(currentPairEdgeComponentIDtoVolumeMap);
 						for(Long edgeComponentID : currentPairEdgeComponentIDtoVolumeMap.keySet()) {
