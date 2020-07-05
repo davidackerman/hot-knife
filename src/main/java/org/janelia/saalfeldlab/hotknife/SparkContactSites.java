@@ -31,6 +31,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.Map.Entry;
 import java.util.concurrent.ExecutionException;
+
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -396,9 +398,27 @@ public class SparkContactSites {
 	 * @param blockInformationList
 	 * @throws IOException
 	 */
+	/**
+	 * Find connected components on a block-by-block basis and write out to
+	 * temporary n5.
+	 *
+	 * Takes as input a threshold intensity, above which voxels are used for
+	 * calculating connected components. Parallelization is done using a
+	 * blockInformationList.
+	 *
+	 * @param sc
+	 * @param inputN5Path
+	 * @param inputN5DatasetName
+	 * @param outputN5Path
+	 * @param outputN5DatasetName
+	 * @param maskN5PathName
+	 * @param thresholdIntensity
+	 * @param blockInformationList
+	 * @throws IOException
+	 */
 	
 	@SuppressWarnings("unchecked")
-	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
+	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponentsLM(
 			final JavaSparkContext sc, final String inputN5Path, String organelle1, String organelle2,
 			final String outputN5Path, final String outputN5DatasetName, final double minimumVolumeCutoff,
 			List<BlockInformation> blockInformationList) throws IOException {
@@ -523,6 +543,183 @@ public class SparkContactSites {
 					}
 				}
 				
+			}
+
+			// Write out output to temporary n5 stack
+			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
+			N5Utils.saveBlock(output, n5WriterLocal, outputN5DatasetName, gridBlock[2]);
+
+			return currentBlockInformation;
+		});
+
+		// Run, collect and return blockInformationList
+		blockInformationList = javaRDDsets.collect();
+
+		return blockInformationList;
+	}
+	
+	public static Long convertPositionToID(long[] position, long[] dimensions) {
+		Long ID = dimensions[0] * dimensions[1] * position[2]
+				+ dimensions[0] * position[1] + position[0] + 1;
+		return ID;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponentsEM(
+			final JavaSparkContext sc, final String inputN5Path, String organelle1, String organelle2,
+			final String outputN5Path, final String outputN5DatasetName, final double minimumVolumeCutoff, double contactDistance,
+			List<BlockInformation> blockInformationList) throws IOException {
+		boolean sameOrganelleClassTemp=organelle1.equals(organelle2);
+		
+		final boolean sameOrganelleClass = sameOrganelleClassTemp;
+		final String organelle1ContactBoundaryString = organelle1;
+		final String organelle2ContactBoundaryString = organelle2;
+		// Get attributes of input data set
+		final N5Reader n5Reader = new N5FSReader(inputN5Path);
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(organelle1);
+		final int[] blockSize = attributes.getBlockSize();
+		final long[] blockSizeL = new long[] { blockSize[0], blockSize[1], blockSize[2] };
+		final long[] outputDimensions = attributes.getDimensions();
+		final double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle1);
+		
+		// Create output dataset
+		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
+		n5Writer.createGroup(outputN5DatasetName);
+		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
+				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
+		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+
+		// Set up rdd to parallelize over blockInformation list and run RDD, which will
+		// return updated block information containing list of components on the edge of
+		// the corresponding block
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		
+		//Get contact distance in voxels
+		final double contactDistanceInVoxels = contactDistance/pixelResolution[0];
+		double contactDistanceInVoxelsSquared = contactDistanceInVoxels*contactDistanceInVoxels;//contactDistanceInVoxelsCeiling*contactDistanceInVoxelsCeiling;
+		int contactDistanceInVoxelsCeiling=(int)Math.ceil(contactDistanceInVoxels);
+	
+		JavaRDD<BlockInformation> javaRDDsets = rdd.map(currentBlockInformation -> {
+			// Get information for reading in/writing current block
+			long[][] gridBlock = currentBlockInformation.gridBlock;
+			long[] offset = gridBlock[0];
+			long[] dimension = gridBlock[1];
+			long padding = contactDistanceInVoxelsCeiling+1;
+			long[] paddedOffset = {offset[0]-padding, offset[1]-padding, offset[2] - padding};
+			long[] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
+
+			// Read in source block
+			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
+			
+			final RandomAccessibleInterval<UnsignedLongType>  organelle1Data = Views.offsetInterval(Views.extendZero(
+						(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle1ContactBoundaryString)
+						),paddedOffset, paddedDimension);
+			final RandomAccessibleInterval<UnsignedLongType>  organelle2Data = Views.offsetInterval(Views.extendZero(
+					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle2ContactBoundaryString)
+					),paddedOffset, paddedDimension);
+			
+			RandomAccess<UnsignedLongType> organelle1DataRA = organelle1Data.randomAccess();
+			RandomAccess<UnsignedLongType> organelle2DataRA = organelle2Data.randomAccess();
+			
+			Map<Long,List<long[]>> organelle1ToSurfaceVoxels = new HashMap<Long,List<long[]>>();
+			Map<Long,List<long[]>> organelle2ToSurfaceVoxels = new HashMap<Long,List<long[]>>();
+			Set<Long> allSurfaceVoxelIDs = new HashSet<Long>();
+			
+			boolean surfaceVoxel;
+			for(long x=0; x<paddedDimension[0]; x++) {
+				for(long y=0; y<paddedDimension[1]; y++){
+					for(long z=0; z<paddedDimension[2]; z++) {
+						long [] pos = new long[] {x,y,z};
+						surfaceVoxel = false;
+						if(isSurfaceVoxel(organelle1DataRA, pos)) {
+							surfaceVoxel = true;
+							long organelle1ID = organelle1DataRA.get().get();
+							List<long[]> surfaceVoxels = organelle1ToSurfaceVoxels.getOrDefault( organelle1ID,new ArrayList<long[]>());
+							surfaceVoxels.add(pos);
+							organelle1ToSurfaceVoxels.put(organelle1ID,surfaceVoxels);
+						}
+						if(isSurfaceVoxel(organelle2DataRA,pos)) {
+							surfaceVoxel = true;
+							long organelle2ID = organelle2DataRA.get().get();
+							List<long[]> surfaceVoxels = organelle2ToSurfaceVoxels.getOrDefault( organelle2ID,new ArrayList<long[]>());
+							surfaceVoxels.add(pos);
+							organelle2ToSurfaceVoxels.put(organelle2ID,surfaceVoxels);						
+						}
+						if(surfaceVoxel) {
+							Long ID = convertPositionToID(pos,paddedDimension);
+							allSurfaceVoxelIDs.add(ID);
+						}
+					}
+				}
+			}
+			
+			// Create the output based on the current dimensions
+			
+			final Img<UnsignedLongType> output = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType())
+					.create(dimension);
+			
+			Img<UnsignedByteType> currentPairBinarized;
+			currentBlockInformation.edgeComponentIDtoVolumeMap = new HashMap();
+			currentBlockInformation.edgeComponentIDtoOrganelleIDs = new HashMap();
+			
+			for( Entry<Long, List<long[]>> currentOrganelle1ToSurfaceVoxels : organelle1ToSurfaceVoxels.entrySet() ) {
+				for( Entry<Long, List<long[]>> currentOrganelle2ToSurfaceVoxels : organelle2ToSurfaceVoxels.entrySet() ) {
+					long organelle1ID = currentOrganelle1ToSurfaceVoxels.getKey();
+					long organelle2ID = currentOrganelle2ToSurfaceVoxels.getKey();
+					if(sameOrganelleClass && organelle1ID==organelle2ID) break; //then it is an object to itself contact site
+					
+	
+					List<long[]> organelle1SurfaceVoxels = currentOrganelle1ToSurfaceVoxels.getValue();
+					List<long[]> organelle2SurfaceVoxels = currentOrganelle2ToSurfaceVoxels.getValue();
+					
+					Set<List<Long>> allContactSiteVoxels = new HashSet<List<Long>>();
+					for(long [] organelle1SurfaceVoxel : organelle1SurfaceVoxels) {
+						for(long [] organelle2SurfaceVoxel : organelle2SurfaceVoxels) {
+							if(Math.pow(organelle2SurfaceVoxel[0]-organelle1SurfaceVoxel[0],2) + Math.pow(organelle2SurfaceVoxel[1]-organelle1SurfaceVoxel[1],2) + Math.pow(organelle2SurfaceVoxel[2]-organelle1SurfaceVoxel[2],2)<=contactDistanceInVoxelsSquared) { //then could be valid
+								List<long[]> voxelsToCheck = SparkCalculatePropertiesFromMedialSurface.bressenham3D(organelle1SurfaceVoxel,organelle2SurfaceVoxel);
+//								if(!voxelPathEntersObject(organelle1DataRA, organelle2DataRA,voxelsToCheck)) {
+								if(!voxelPathEntersObject(voxelsToCheck, allSurfaceVoxelIDs,paddedDimension)) {
+//								List<long[]> nonEndpointVoxels = voxelsToCheck.subList(1,voxelsToCheck.size()-2);
+//								 if(!CollectionUtils.containsAny(nonEndpointVoxels,allSurfaceVoxels)) {//then the line doesnt cross through any objects
+									 for(long[] validVoxel : voxelsToCheck) {
+										long [] correctedPosition = new long[] {validVoxel[0]-padding, validVoxel[1]-padding,validVoxel[2]-padding};
+										if(correctedPosition[0]>=0 && correctedPosition[1]>=0 && correctedPosition[2]>=0 &&
+												correctedPosition[0]<dimension[0] && correctedPosition[1]<dimension[1] && correctedPosition[2]<dimension[2]) {
+											allContactSiteVoxels.add(Arrays.asList(correctedPosition[0],correctedPosition[1],correctedPosition[2]));
+										}
+									}
+								}
+							}
+						}
+					}
+					
+				
+					if(!allContactSiteVoxels.isEmpty()) {
+						currentPairBinarized = new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(dimension);
+						RandomAccess<UnsignedByteType> currentPairBinarizedRA = currentPairBinarized.randomAccess();
+						for(List<Long> contactSiteVoxel : allContactSiteVoxels) {
+							currentPairBinarizedRA.setPosition(new long[] {contactSiteVoxel.get(0),contactSiteVoxel.get(1),contactSiteVoxel.get(2)});
+							currentPairBinarizedRA.get().set(1);
+						}
+						
+						// Compute the connected components which returns the components along the block
+						// edges, and update the corresponding blockInformation object
+						int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
+						
+						Map<Long, Long> currentPairEdgeComponentIDtoVolumeMap = SparkConnectedComponents.computeConnectedComponents(currentPairBinarized, output, outputDimensions,
+								blockSizeL, offset, 1, minimumVolumeCutoffInVoxels);
+						currentBlockInformation.edgeComponentIDtoVolumeMap.putAll(currentPairEdgeComponentIDtoVolumeMap);
+						for(Long edgeComponentID : currentPairEdgeComponentIDtoVolumeMap.keySet()) {
+							if(sameOrganelleClass) {
+								List<Long> sortedPair = organelle1ID<organelle2ID ? Arrays.asList(organelle1ID,organelle2ID) : Arrays.asList(organelle2ID,organelle1ID);
+								currentBlockInformation.edgeComponentIDtoOrganelleIDs.put(edgeComponentID, sortedPair);
+							}
+							else{
+								currentBlockInformation.edgeComponentIDtoOrganelleIDs.put(edgeComponentID, Arrays.asList(organelle1ID, organelle2ID));
+							}
+						}
+					}
+				}
 			}
 
 			// Write out output to temporary n5 stack
@@ -849,6 +1046,15 @@ public class SparkContactSites {
 		return false;
 	}
 	
+	public static boolean voxelPathEntersObject(List<long[]> voxelsToCheck, Set<Long> allSurfaceVoxelIDs, long[] dimension) {
+		for(int i=1; i<voxelsToCheck.size()-1; i++) { //don't include endpoints
+			Long ID = convertPositionToID(voxelsToCheck.get(i), dimension);
+			if(allSurfaceVoxelIDs.contains(ID)) return true;
+		}		
+		return false;
+	}
+	
+	
 	public static void updateContactSite(RandomAccess<UnsignedLongType> contactSiteRA,List<long[]> voxelsToCheck, long [] offset, long [] originalOffset, long [] originalDimension, long contactSiteID) {
 		for(long [] currentVoxel : voxelsToCheck) {
 			long [] overallPosition = new long[] {currentVoxel[0]+offset[0],currentVoxel[1]+offset[1],currentVoxel[2]+offset[2]};
@@ -993,8 +1199,7 @@ public class SparkContactSites {
 		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 	}
 	
-	
-	public static final void calculateContactSites(final SparkConf conf, final String [] organelles, final double minimumVolumeCutoff, final String inputN5Path, final String outputN5Path ) throws IOException {
+	public static final void calculateContactSites(final SparkConf conf, final String [] organelles, final double minimumVolumeCutoff, final double cutoffDistance, final String inputN5Path, final String outputN5Path ) throws IOException {
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (int i = 0; i<organelles.length; i++) {
 			final String organelle1 =organelles[i];
@@ -1005,15 +1210,27 @@ public class SparkContactSites {
 				
 				final String organelleContactString = organelle1 + "_to_" + organelle2;
 				final String tempOutputN5ConnectedComponents = organelleContactString + "_cc_blockwise_temp_to_delete";
-				final String finalOutputN5DatasetName = organelleContactString + "_cc";
+				final String finalOutputN5DatasetName = organelleContactString + "_cc_corrected";
 				
-				blockInformationList = blockwiseConnectedComponents(
-						sc, outputN5Path,
-						organelle1, organelle2, 
-						outputN5Path,
-						tempOutputN5ConnectedComponents,
-						minimumVolumeCutoff,
-						blockInformationList);
+				if(cutoffDistance==0) {
+					blockInformationList = blockwiseConnectedComponentsLM(
+							sc, outputN5Path,
+							organelle1, organelle2, 
+							outputN5Path,
+							tempOutputN5ConnectedComponents,
+							minimumVolumeCutoff,
+							blockInformationList);
+				}
+				else {
+					blockInformationList = blockwiseConnectedComponentsEM(
+							sc, outputN5Path,
+							organelle1, organelle2, 
+							outputN5Path,
+							tempOutputN5ConnectedComponents,
+							minimumVolumeCutoff, cutoffDistance,
+							blockInformationList);
+				}	
+				
 				
 				HashMap<Long, List<Long>> edgeComponentIDtoOrganelleIDs = new HashMap<Long,List<Long>>();
 				for(BlockInformation currentBlockInformation : blockInformationList) {
@@ -1088,9 +1305,10 @@ public class SparkContactSites {
 			sc.close();
 		}
 		System.out.println("finished boundaries");
-		calculateContactSites(conf, organelles,  options.getMinimumVolumeCutoff(), options.getInputN5Path(), options.getOutputN5Path());
-		System.out.println("finished contact sites");
 		*/
-		limitContactSitesToBetweenRegion(conf, organelles,  options.getInputN5Path());
+		calculateContactSites(conf, organelles,  options.getMinimumVolumeCutoff(), options.getContactDistance(), options.getInputN5Path(), options.getOutputN5Path());
+		System.out.println("finished contact sites");
+		
+		//limitContactSitesToBetweenRegion(conf, organelles,  options.getInputN5Path());
 	}
 }
