@@ -184,6 +184,8 @@ public class SparkConnectedComponents {
 	 * @param blockInformationList
 	 * @throws IOException
 	 */
+	
+	//TODO: add rectangle connected components for blockwise. so far only added it to union find
 	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
@@ -762,17 +764,43 @@ public class SparkConnectedComponents {
 			RandomAccess<UnsignedLongType> hs2RA = hyperSlice2.randomAccess();
 			
 			long [] dimensions = new long [] {hyperSlice1.dimension(0),hyperSlice1.dimension(1),hyperSlice1.dimension(2)};
+			
+			List<Long> xPositions = new ArrayList<Long>();
+			List<Long> yPositions = new ArrayList<Long>();
+			List<Long> zPositions = new ArrayList<Long>();
+			
 			List<Long> deltaX= new ArrayList<Long>();
 			List<Long> deltaY= new ArrayList<Long>();
 			List<Long> deltaZ= new ArrayList<Long>();
-			deltaX = dimensions[0]==1 ? Arrays.asList(0L): Arrays.asList(-1L,0L,1L) ;
-			deltaY = dimensions[1]==1 ? Arrays.asList(0L): Arrays.asList(-1L,0L,1L) ;
-			deltaZ = dimensions[2]==1 ? Arrays.asList(0L): Arrays.asList(-1L,0L,1L) ;
+			
+			//initialize before we know which dimension the plane is along
+			xPositions = Arrays.asList(1L,dimensions[0]-2);
+			yPositions = Arrays.asList(1L,dimensions[1]-2);
+			zPositions = Arrays.asList(1L,dimensions[2]-2);
+
+			deltaX = Arrays.asList(-1L,0L,1L) ;
+			deltaY = Arrays.asList(-1L,0L,1L) ;
+			deltaZ = Arrays.asList(-1L,0L,1L) ;
+			
+			
+			//determine plane we are working on
+			if(dimensions[0]==1) {
+				deltaX = Arrays.asList(0L);
+				xPositions = Arrays.asList(0L,0L);
+			}
+			else if(dimensions[1]==1){
+				deltaY = Arrays.asList(0L);
+				yPositions = Arrays.asList(0L,0L);
+			}
+			else {
+				deltaZ = Arrays.asList(0L);
+				zPositions = Arrays.asList(0L,0L);	
+			}
 
 			long hs1Value, hs2Value;
-			for(long x=1; x<dimensions[0]-1; x++) {
-				for(long y=1; y<dimensions[1]-1; y++) {
-					for(long z=1; z<dimensions[2]-1; z++) {
+			for(long x=xPositions.get(0); x<=xPositions.get(1); x++) {
+				for(long y=yPositions.get(0); y<=yPositions.get(1); y++) {
+					for(long z=zPositions.get(0); z<=zPositions.get(1); z++) {
 						long [] pos = new long[] {x,y,z};
 						hs1RA.setPosition(pos);
 						hs1Value = hs1RA.get().get();
