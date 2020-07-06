@@ -1144,7 +1144,7 @@ public class SparkContactSites {
 				
 				final String organelleContactString = organelle1 + "_to_" + organelle2;
 				final String tempOutputN5ConnectedComponents = organelleContactString + "_cc_blockwise_temp_to_delete";
-				final String finalOutputN5DatasetName = organelleContactString + "_ccNewest";
+				final String finalOutputN5DatasetName = organelleContactString + "_cc";
 				
 				if(cutoffDistance==0) {
 					blockInformationList = blockwiseConnectedComponentsLM(
