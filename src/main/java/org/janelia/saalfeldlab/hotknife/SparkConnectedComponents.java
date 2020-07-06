@@ -56,6 +56,8 @@ import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
+import net.imglib2.algorithm.neighborhood.DiamondShape;
+import net.imglib2.algorithm.neighborhood.Shape;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImg;
@@ -348,7 +350,15 @@ public class SparkConnectedComponents {
 	 */
 	public static final <T extends NativeType<T>> List<BlockInformation> unionFindConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, double minimumVolumeCutoff,
-			List<BlockInformation> blockInformationList) throws IOException {
+			List<BlockInformation> blockInformationList) throws IOException
+	{
+		boolean diamondShape = true;
+		return unionFindConnectedComponents(sc, inputN5Path, inputN5DatasetName, minimumVolumeCutoff, diamondShape, blockInformationList);
+	}
+	
+	public static final <T extends NativeType<T>> List<BlockInformation> unionFindConnectedComponents(
+			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, double minimumVolumeCutoff,
+			boolean diamondShape, List<BlockInformation> blockInformationList) throws IOException {
 
 		// Get attributes of input data set:
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
@@ -376,32 +386,38 @@ public class SparkConnectedComponents {
 			// the corresponding hyperplanes for the x+1 block, y+1 block and z+1 block.
 			RandomAccessibleInterval<UnsignedLongType> xPlane1, yPlane1, zPlane1, xPlane2, yPlane2, zPlane2;
 			xPlane1 = yPlane1 = zPlane1 = xPlane2 = yPlane2 = zPlane2 = null;
-
+						
 			long xOffset = offset[0] + blockSize[0];
 			long yOffset = offset[1] + blockSize[1];
 			long zOffset = offset[2] + blockSize[2];
-			xPlane1 = Views.offsetInterval(Views.extendZero(source), new long[] { xOffset - 1, offset[1], offset[2] },
-					new long[] { 1, dimension[1], dimension[2] });
-			yPlane1 = Views.offsetInterval(Views.extendZero(source), new long[] { offset[0], yOffset - 1, offset[2] },
-					new long[] { dimension[0], 1, dimension[2] });
-			zPlane1 = Views.offsetInterval(Views.extendZero(source), new long[] { offset[0], offset[1], zOffset - 1 },
-					new long[] { dimension[0], dimension[1], 1 });
+			
+			long padding = diamondShape ? 0 : 1; //if using rectangle shape, pad extra of 1 for neighboring block 
+			long[] paddedOffset = new long[]{offset[0]-padding, offset[1]-padding, offset[2]-padding};
+			long[] xPlaneDims = new long[] { 1, dimension[1]+2*padding, dimension[2]+2*padding };
+			long[] yPlaneDims = new long[] { dimension[0]+2*padding, 1, dimension[2]+2*padding };
+			long[] zPlaneDims = new long[] { dimension[0]+2*padding, dimension[1]+2*padding, 1 };
+			xPlane1 = Views.offsetInterval(Views.extendZero(source), new long[] { xOffset - 1, paddedOffset[1], paddedOffset[2] },
+					xPlaneDims);
+			yPlane1 = Views.offsetInterval(Views.extendZero(source), new long[] { paddedOffset[0], yOffset - 1,paddedOffset[2] },
+					yPlaneDims);
+			zPlane1 = Views.offsetInterval(Views.extendZero(source), new long[] { paddedOffset[0], paddedOffset[1], zOffset - 1 },
+					zPlaneDims);
 
 			if (xOffset < sourceDimensions[0])
-				xPlane2 = Views.offsetInterval(Views.extendZero(source), new long[] { xOffset, offset[1], offset[2] },
-						new long[] { 1, dimension[1], dimension[2] });
+				xPlane2 = Views.offsetInterval(Views.extendZero(source), new long[] { xOffset, paddedOffset[1], paddedOffset[2] },
+						xPlaneDims);
 			if (yOffset < sourceDimensions[1])
-				yPlane2 = Views.offsetInterval(Views.extendZero(source), new long[] { offset[0], yOffset, offset[2] },
-						new long[] { dimension[0], 1, dimension[2] });
+				yPlane2 = Views.offsetInterval(Views.extendZero(source), new long[] { paddedOffset[0], yOffset, paddedOffset[2] },
+						yPlaneDims);
 			if (zOffset < sourceDimensions[2])
-				zPlane2 = Views.offsetInterval(Views.extendZero(source), new long[] { offset[0], offset[1], zOffset },
-						new long[] { dimension[0], dimension[1], 1 });
+				zPlane2 = Views.offsetInterval(Views.extendZero(source), new long[] { paddedOffset[0], paddedOffset[1], zOffset },
+						zPlaneDims);
 
 			// Calculate the set of object IDs that are touching and need to be merged
 			Set<List<Long>> globalIDtoGlobalIDSet = new HashSet<>();
-			getGlobalIDsToMerge(xPlane1, xPlane2, globalIDtoGlobalIDSet);
-			getGlobalIDsToMerge(yPlane1, yPlane2, globalIDtoGlobalIDSet);
-			getGlobalIDsToMerge(zPlane1, zPlane2, globalIDtoGlobalIDSet);
+			getGlobalIDsToMerge(xPlane1, xPlane2, globalIDtoGlobalIDSet, diamondShape);
+			getGlobalIDsToMerge(yPlane1, yPlane2, globalIDtoGlobalIDSet, diamondShape);
+			getGlobalIDsToMerge(zPlane1, zPlane2, globalIDtoGlobalIDSet, diamondShape);
 
 			return globalIDtoGlobalIDSet;
 		});
@@ -591,6 +607,13 @@ public class SparkConnectedComponents {
 	public static BlockInformation computeConnectedComponents(BlockInformation blockInformation, RandomAccessibleInterval<UnsignedByteType> sourceInterval,
 			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
 			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff) {
+			return computeConnectedComponents(blockInformation, sourceInterval, output, sourceDimensions, outputDimensions, offset, thresholdIntensityCutoff, minimumVolumeCutoff, new DiamondShape(1));
+
+	}
+	
+	public static BlockInformation computeConnectedComponents(BlockInformation blockInformation, RandomAccessibleInterval<UnsignedByteType> sourceInterval,
+			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
+			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff, Shape shape) {
 
 		// Threshold sourceInterval using thresholdIntensityCutoff
 		final RandomAccessibleInterval<BoolType> thresholded = Converters.convert(sourceInterval,
@@ -599,7 +622,7 @@ public class SparkConnectedComponents {
 		// Run connected component analysis, storing results in components
 		final ArrayImg<UnsignedLongType, LongArray> components = ArrayImgs
 				.unsignedLongs(Intervals.dimensionsAsLongArray(thresholded));
-		ConnectedComponentAnalysis.connectedComponents(thresholded, components);
+		ConnectedComponentAnalysis.connectedComponents(thresholded, components, shape);
 
 		// Cursors over output and components
 		Cursor<UnsignedLongType> o = Views.flatIterable(output).cursor();
@@ -686,21 +709,31 @@ public class SparkConnectedComponents {
 		
 		return blockInformation;
 	}
-	
+	public static Map<Long,Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
+			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
+			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff){
+		
+		return computeConnectedComponents(sourceInterval, output, sourceDimensions, outputDimensions, offset, thresholdIntensityCutoff, minimumVolumeCutoff, new DiamondShape(1));
+	}
 	
 	public static Map<Long,Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
 			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
-			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff) {
+			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff, Shape shape) {
 
 		BlockInformation blockInformation = new BlockInformation();
 		blockInformation = computeConnectedComponents(blockInformation, sourceInterval,
 				output,  sourceDimensions,  outputDimensions,
-				offset, thresholdIntensityCutoff, minimumVolumeCutoff);
+				offset, thresholdIntensityCutoff, minimumVolumeCutoff, shape);
 
 		return blockInformation.edgeComponentIDtoVolumeMap;
 	}
-	
 	public static final void getGlobalIDsToMerge(RandomAccessibleInterval<UnsignedLongType> hyperSlice1,
+			RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Set<List<Long>> globalIDtoGlobalIDSet, boolean diamondShape) {
+		if(diamondShape) getGlobalIDsToMergeDiamondShape(hyperSlice1, hyperSlice2, globalIDtoGlobalIDSet);
+		else {getGlobalIDsToMergeRectangleShape(hyperSlice1, hyperSlice2, globalIDtoGlobalIDSet);}
+	}
+	
+	public static final void getGlobalIDsToMergeDiamondShape(RandomAccessibleInterval<UnsignedLongType> hyperSlice1,
 			RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Set<List<Long>> globalIDtoGlobalIDSet) {
 		// The global IDS that need to be merged are those that are touching along the
 		// hyperplane borders between adjacent blocks
@@ -717,6 +750,51 @@ public class SparkConnectedComponents {
 				}
 			}
 
+		}
+	}
+	
+	public static final void getGlobalIDsToMergeRectangleShape(RandomAccessibleInterval<UnsignedLongType> hyperSlice1,
+			RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Set<List<Long>> globalIDtoGlobalIDSet) {
+		// The global IDS that need to be merged are those that are touching along the
+		// hyperplane borders between adjacent blocks
+		if (hyperSlice1 != null && hyperSlice2 != null) {
+			RandomAccess<UnsignedLongType> hs1RA = hyperSlice1.randomAccess();
+			RandomAccess<UnsignedLongType> hs2RA = hyperSlice2.randomAccess();
+			
+			long [] dimensions = new long [] {hyperSlice1.dimension(0),hyperSlice1.dimension(1),hyperSlice1.dimension(2)};
+			List<Long> deltaX= new ArrayList<Long>();
+			List<Long> deltaY= new ArrayList<Long>();
+			List<Long> deltaZ= new ArrayList<Long>();
+			deltaX = dimensions[0]==1 ? Arrays.asList(0L): Arrays.asList(-1L,0L,1L) ;
+			deltaY = dimensions[1]==1 ? Arrays.asList(0L): Arrays.asList(-1L,0L,1L) ;
+			deltaZ = dimensions[2]==1 ? Arrays.asList(0L): Arrays.asList(-1L,0L,1L) ;
+
+			long hs1Value, hs2Value;
+			for(long x=1; x<dimensions[0]-1; x++) {
+				for(long y=1; y<dimensions[1]-1; y++) {
+					for(long z=1; z<dimensions[2]-1; z++) {
+						long [] pos = new long[] {x,y,z};
+						hs1RA.setPosition(pos);
+						hs1Value = hs1RA.get().get();
+						if(hs1Value>0) {
+							for(long dx : deltaX) {
+								for(long dy : deltaY) {
+									for(long dz : deltaZ) {
+										long [] newPos = new long[] {pos[0]+dx, pos[1]+dy, pos[2]+dz};
+										hs2RA.setPosition(newPos);
+										hs2Value = hs2RA.get().get();
+										if(hs2Value>0) {
+											globalIDtoGlobalIDSet.add(Arrays.asList(hs1Value, hs2Value));// hs1->hs2 pair should always be
+											// distinct since hs1 is unique to
+											// first block
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 

@@ -52,6 +52,8 @@ import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.morphology.distance.DistanceTransform;
 import net.imglib2.algorithm.morphology.distance.DistanceTransform.DISTANCE_TYPE;
+import net.imglib2.algorithm.neighborhood.RectangleNeighborhood;
+import net.imglib2.algorithm.neighborhood.RectangleShape;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImg;
@@ -536,7 +538,7 @@ public class SparkContactSites {
 				int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
 				
 				Map<Long, Long> currentPairEdgeComponentIDtoVolumeMap = SparkConnectedComponents.computeConnectedComponents(currentPairBinarized, output, outputDimensions,
-						blockSizeL, offset, 1, minimumVolumeCutoffInVoxels);
+						blockSizeL, offset, 1, minimumVolumeCutoffInVoxels, new RectangleShape(1,false));
 				currentBlockInformation.edgeComponentIDtoVolumeMap.putAll(currentPairEdgeComponentIDtoVolumeMap);
 				for(Long edgeComponentID : currentPairEdgeComponentIDtoVolumeMap.keySet()) {
 					if(sameOrganelleClass) {
@@ -745,7 +747,7 @@ public class SparkContactSites {
 						// Compute the connected components which returns the components along the block
 						// edges, and update the corresponding blockInformation object
 						int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
-
+						
 						Map<Long, Long> currentPairEdgeComponentIDtoVolumeMap = SparkConnectedComponents.computeConnectedComponents(currentPairBinarized, output, outputDimensions,
 								blockSizeL, offset, 1, minimumVolumeCutoffInVoxels);
 						currentBlockInformation.edgeComponentIDtoVolumeMap.putAll(currentPairEdgeComponentIDtoVolumeMap);
