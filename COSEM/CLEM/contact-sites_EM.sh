@@ -11,7 +11,7 @@ N_NODES=10
 
 ARGV="\
 --inputN5DatasetName 'er_cc,mito_cc_filled' \
---contactDistance 26 \
+--contactDistance 10 \
 --minimumVolumeCutoff 0 \
 --inputN5Path '/groups/cosem/cosem/ackermand/CLEM/imageData/COS7_Cell11.n5'"
 

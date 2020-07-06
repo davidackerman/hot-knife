@@ -96,6 +96,9 @@ public class SparkContactSites {
 		
 		@Option(name = "--doSelfContacts", required = false, usage = "Minimum contact site cutoff (nm^3)")
 		private boolean doSelfContacts = false;
+		
+		@Option(name = "--skipGeneratingContactBoundaries", required = false, usage = "Minimum contact site cutoff (nm^3)")
+		private boolean skipGeneratingContactBoundaries = false;
 
 		public Options(final String[] args) {
 
@@ -140,6 +143,10 @@ public class SparkContactSites {
 		public boolean getDoSelfContacts() {
 			return doSelfContacts;
 		}
+
+		public boolean getSkipGeneratingContactBoundaries() {
+			return skipGeneratingContactBoundaries;
+		}
 	}
 	
 	/**
@@ -162,7 +169,7 @@ public class SparkContactSites {
 			final double contactDistance, final boolean doSelfContactSites, List<BlockInformation> blockInformationList) throws IOException {
 		
 			if(doSelfContactSites) calculateObjectContactBoundariesWithSelfContacts(sc, inputN5Path, organelle, outputN5Path, contactDistance, blockInformationList);	
-			else calculateObjectContactBoundaries(sc, inputN5Path, organelle, outputN5Path, contactDistance, doSelfContactSites, blockInformationList);
+			else calculateObjectContactBoundaries(sc, inputN5Path, organelle, outputN5Path, contactDistance, blockInformationList);
 	}
 	
 	public static final <T extends NativeType<T>> void calculateObjectContactBoundaries(
@@ -226,7 +233,7 @@ public class SparkContactSites {
 						final float distanceFromObjectsSquared = distanceFromObjectsCursor.next().get();
 						long[] position = {extendedOutputCursor.getLongPosition(0),  extendedOutputCursor.getLongPosition(1),  extendedOutputCursor.getLongPosition(2)};
 						if( (distanceFromObjectsSquared>0 && distanceFromObjectsSquared<=contactDistanceInVoxelsSquared) || isSurfaceVoxel(segmentedOrganelleRandomAccess, position)) {//then voxel is within distance
-							long objectID = findAndSetValueToNearestOrganelleID(voxelOutput, distanceFromObjectsSquared, position, segmentedOrganelleRandomAccess);
+							findAndSetValueToNearestOrganelleID(voxelOutput, distanceFromObjectsSquared, position, segmentedOrganelleRandomAccess);
 						}
 					}
 					
@@ -710,8 +717,8 @@ public class SparkContactSites {
 						for(long [] organelle2SurfaceVoxel : organelle2SurfaceVoxels) {
 							if(Math.pow(organelle2SurfaceVoxel[0]-organelle1SurfaceVoxel[0],2) + Math.pow(organelle2SurfaceVoxel[1]-organelle1SurfaceVoxel[1],2) + Math.pow(organelle2SurfaceVoxel[2]-organelle1SurfaceVoxel[2],2)<=contactDistanceInVoxelsSquared) { //then could be valid
 								List<long[]> voxelsToCheck = SparkCalculatePropertiesFromMedialSurface.bressenham3D(organelle1SurfaceVoxel,organelle2SurfaceVoxel);
-//								if(!voxelPathEntersObject(organelle1DataRA, organelle2DataRA,voxelsToCheck)) {
-								if(!voxelPathEntersObject(voxelsToCheck, allSurfaceVoxelIDs,paddedDimension)) {
+								if(!voxelPathEntersObject(organelle1DataRA, organelle2DataRA,voxelsToCheck)) {
+//								if(!voxelPathEntersObject(voxelsToCheck, allSurfaceVoxelIDs,paddedDimension)) {
 //								List<long[]> nonEndpointVoxels = voxelsToCheck.subList(1,voxelsToCheck.size()-2);
 //								 if(!CollectionUtils.containsAny(nonEndpointVoxels,allSurfaceVoxels)) {//then the line doesnt cross through any objects
 									 for(long[] validVoxel : voxelsToCheck) {
@@ -1130,7 +1137,7 @@ public class SparkContactSites {
 		final int[] blockSize = attributes.getBlockSize();
 		final long[] dimensions = attributes.getDimensions();
 		
-		String outputN5DatasetName = contactSiteDatasetName+"_corrected";
+		String outputN5DatasetName = contactSiteDatasetName;
 		final N5Writer n5Writer = new N5FSWriter(inputN5Path);
 		n5Writer.createGroup(outputN5DatasetName);
 		n5Writer.createDataset(outputN5DatasetName, dimensions, blockSize,
@@ -1251,18 +1258,18 @@ public class SparkContactSites {
 		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 	}
 	
-	public static final void calculateContactSites(final SparkConf conf, final String [] organelles, final double minimumVolumeCutoff, final double cutoffDistance, final String inputN5Path, final String outputN5Path ) throws IOException {
+	public static final void calculateContactSites(final SparkConf conf, final String [] organelles, final boolean doSelfContacts, final double minimumVolumeCutoff, final double cutoffDistance, final String inputN5Path, final String outputN5Path ) throws IOException {
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (int i = 0; i<organelles.length; i++) {
 			final String organelle1 =organelles[i];
-			for(int j= i; j< organelles.length; j++) {
+			for(int j= doSelfContacts ? i : i+1; j< organelles.length; j++) {
 				String organelle2 = organelles[j];
 				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(inputN5Path, organelle1);
 				JavaSparkContext sc = new JavaSparkContext(conf);
 				
 				final String organelleContactString = organelle1 + "_to_" + organelle2;
 				final String tempOutputN5ConnectedComponents = organelleContactString + "_cc_blockwise_temp_to_delete";
-				final String finalOutputN5DatasetName = organelleContactString + "_cc_corrected";
+				final String finalOutputN5DatasetName = organelleContactString + "_cc";
 				
 				if(cutoffDistance==0) {
 					blockInformationList = blockwiseConnectedComponentsLM(
@@ -1347,18 +1354,19 @@ public class SparkContactSites {
 		}
 		
 		//First calculate the object contact boundaries
-		
-		/*for (String organelle : organelles) {
-			JavaSparkContext sc = new JavaSparkContext(conf);
-			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), organelle);
-			calculateObjectContactBoundaries(sc, options.getInputN5Path(), organelle,
-					options.getOutputN5Path(),
-					options.getContactDistance(), options.getDoSelfContacts(), blockInformationList);
-			sc.close();
-		}*/
+		if(!options.getSkipGeneratingContactBoundaries()) {
+			for (String organelle : organelles) {
+				JavaSparkContext sc = new JavaSparkContext(conf);
+				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), organelle);
+				calculateObjectContactBoundaries(sc, options.getInputN5Path(), organelle,
+						options.getOutputN5Path(),
+						options.getContactDistance(), options.getDoSelfContacts(), blockInformationList);
+				sc.close();
+			}
+		}
 		System.out.println("finished boundaries");
 		
-		calculateContactSites(conf, organelles,  options.getMinimumVolumeCutoff(), options.getContactDistance(), options.getInputN5Path(), options.getOutputN5Path());
+		calculateContactSites(conf, organelles,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), options.getInputN5Path(), options.getOutputN5Path());
 		System.out.println("finished contact sites");
 		
 		//limitContactSitesToBetweenRegion(conf, organelles,  options.getInputN5Path());

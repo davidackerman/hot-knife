@@ -76,6 +76,9 @@ public class SparkGeneralCosemObjectInformation {
 		
 		@Option(name = "--skipContactSites", required = false, usage = "Get general information for contact sites")
 		private boolean skipContactSites = false;
+		
+		@Option(name = "--skipSelfContacts", required = false, usage = "Get general information for contact sites")
+		private boolean skipSelfContacts = false;
 
 		public Options(final String[] args) {
 			final CmdLineParser parser = new CmdLineParser(this);
@@ -104,6 +107,10 @@ public class SparkGeneralCosemObjectInformation {
 		
 		public boolean getSkipContactSites() {
 			return skipContactSites;
+		}
+		
+		public boolean getSkipSelfContacts() {
+			return skipSelfContacts;
 		}
 		
 	}
@@ -400,8 +407,8 @@ public class SparkGeneralCosemObjectInformation {
 		
 		if (!options.getSkipContactSites()) {
 			for (int i=0; i<organelles.length; i++) {
-				for(int j=i; j<organelles.length;j++) {
-					String [] datasetNames = {organelles[i],i==j ? organelles[j] : organelles[j]+"_pairs",organelles[i]+"_to_"+organelles[j]+"_cc"};
+				for(int j= options.getSkipSelfContacts() ? i+1 : i; j<organelles.length;j++) {
+					String [] datasetNames = {organelles[i],i==j ? organelles[j]+"_pairs" : organelles[j] ,organelles[i]+"_to_"+organelles[j]+"_cc"};
 					System.out.println(Arrays.toString(datasetNames));
 					
 					JavaSparkContext sc = new JavaSparkContext(conf);
