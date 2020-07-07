@@ -101,6 +101,9 @@ public class SparkCellVolume {
 		
 		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /path/to/output/connected_components.n5")
 		private String outputN5Path = null;
+		
+		@Option(name = "--maskN5Path", required = true, usage = "output N5 path, e.g. /path/to/output/connected_components.n5")
+		private String maskN5Path = null;
 
 		@Option(name = "--thresholdDistance", required = false, usage = "Distance for thresholding (positive inside, negative outside) (nm)")
 		private double thresholdDistance = 0;
@@ -154,6 +157,10 @@ public class SparkCellVolume {
 		public boolean getOnlyKeepLargestComponent() {
 			return onlyKeepLargestComponent;
 		}
+		
+		public String getMaskN5Path() {
+			return maskN5Path;
+		}
 	}
 
 	
@@ -179,7 +186,7 @@ public class SparkCellVolume {
 	
 	@SuppressWarnings("unchecked")
 	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
-			final JavaSparkContext sc, final String ecsN5Path,final String plasmaMembraneN5Path,
+			final JavaSparkContext sc, final String ecsN5Path,final String plasmaMembraneN5Path, final String maskN5Path,
 			final String outputN5Path, final String outputN5DatasetName, double minimumVolumeCutoff, List<BlockInformation> blockInformationList) throws IOException {
 
 		// Get attributes of input data set
@@ -196,6 +203,9 @@ public class SparkCellVolume {
 		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
 		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+
+		final N5Reader n5MaskReader = new N5FSReader(maskN5Path);
+		final double [] maskPixelResolution = IOHelper.getResolution(n5MaskReader, "/volumes/masks/foreground");
 
 		// Set up rdd to parallelize over blockInformation list and run RDD, which will
 		// return updated block information containing list of components on the edge of
@@ -253,11 +263,29 @@ public class SparkCellVolume {
 			Cursor<UnsignedLongType> plasmaMembraneCursor = plasmaMembraneData.cursor();
 			Cursor<UnsignedByteType> cellVolumeCursor = cellVolume.cursor();
 			
+			// Read in mask block
+			final N5Reader n5MaskReaderLocal = new N5FSReader(maskN5Path);
+			final RandomAccessibleInterval<UnsignedByteType> mask = N5Utils.open(n5MaskReaderLocal,
+					"/volumes/masks/foreground");
+			double scale = maskPixelResolution[0]/pixelResolution[0];
+			final RandomAccessibleInterval<UnsignedByteType> maskInterval = Views.offsetInterval(Views.extendZero(mask),
+					new long[] { (long) (offset[0] / scale), (long) (offset[1] / scale), (long) (offset[2] / scale) },
+					new long[] { (long) (dimension[0] / scale), (long) (dimension[1] / scale), (long) (dimension[2] / scale) });
+
+			// Mask out appropriate region in source block; need to do it this way rather
+			// than converter since mask is half the size of source
+			RandomAccess<UnsignedByteType> maskRandomAccess = maskInterval.randomAccess();
+			
 			while(distanceFromEcsCursor.hasNext()) {
 				distanceFromEcsCursor.next();
 				plasmaMembraneCursor.next();
 				cellVolumeCursor.next();
-				if(distanceFromEcsCursor.get().get()>expandBySquared && plasmaMembraneCursor.get().get()==0) { //then it is neither pm nor ecs
+				final long[] positionInMask = { (long) Math.floor(distanceFromEcsCursor.getDoublePosition(0) / scale),
+						(long) Math.floor(distanceFromEcsCursor.getDoublePosition(1) / scale),
+						(long) Math.floor(distanceFromEcsCursor.getDoublePosition(2) / scale) };
+				maskRandomAccess.setPosition(positionInMask);
+				
+				if(distanceFromEcsCursor.get().get()>expandBySquared && plasmaMembraneCursor.get().get()==0 && maskRandomAccess.get().get()>0) { //then it is neither pm nor ecs
 					cellVolumeCursor.get().set(255);
 				}
 			}
@@ -304,7 +332,7 @@ public class SparkCellVolume {
 		JavaSparkContext sc = new JavaSparkContext(conf);
 	
 		String outputN5Path = options.getOutputN5Path();
-		blockInformationList = blockwiseConnectedComponents(sc, options.getEcsN5Path(),options.getPlasmaMembraneN5Path(),
+		blockInformationList = blockwiseConnectedComponents(sc, options.getEcsN5Path(),options.getPlasmaMembraneN5Path(), options.getMaskN5Path(),
 				outputN5Path, tempOutputN5DatasetName, options.getMinimumVolumeCutoff(), blockInformationList);
 		
 		blockInformationList = SparkConnectedComponents.unionFindConnectedComponents(sc, outputN5Path, tempOutputN5DatasetName, options.getMinimumVolumeCutoff(),

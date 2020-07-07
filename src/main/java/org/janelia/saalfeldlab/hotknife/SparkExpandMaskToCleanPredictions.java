@@ -121,6 +121,9 @@ public class SparkExpandMaskToCleanPredictions {
 		
 		@Option(name = "--skipSmoothing", required = false, usage = "expansion in nm")
 		private boolean skipSmoothing = false;
+		
+		@Option(name = "--keepWithinMask", required = false, usage = "expansion in nm")
+		private boolean keepWithinMask = false;
 
 		public Options(final String[] args) {
 
@@ -174,6 +177,10 @@ public class SparkExpandMaskToCleanPredictions {
 		public boolean getSkipSmoothing() {
 			return skipSmoothing;
 		}
+		
+		public boolean getKeepWithinMask() {
+			return keepWithinMask;
+		}
 
 	}
 
@@ -185,6 +192,7 @@ public class SparkExpandMaskToCleanPredictions {
 			final String datasetNameToUseAsMask,
 			final String n5OutputPath,
 			final Integer expansion,
+			final boolean keepWithinMask,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
 		final N5Reader n5Reader = new N5FSReader(datasetToMaskN5Path);
@@ -250,10 +258,19 @@ public class SparkExpandMaskToCleanPredictions {
 					for(int z=padding; z<dimension[2]+padding; z++) {
 						long [] pos = new long[] {x, y, z};
 						distanceTransformRA.setPosition(pos);
-						if(distanceTransformRA.get().get() <= expansionInVoxelsSquared) {//then it is within mask, so set it to 0
-							long [] newPos = new long[] {x-padding, y-padding, z-padding};
-							dataToMaskRA.setPosition(newPos);
-							dataToMaskRA.get().set(0);
+						if(distanceTransformRA.get().get() <= expansionInVoxelsSquared ) {
+							if(!keepWithinMask) {//then use mask as regions to set to 0
+								long [] newPos = new long[] {x-padding, y-padding, z-padding};
+								dataToMaskRA.setPosition(newPos);
+								dataToMaskRA.get().set( 0 );
+							}
+						}
+						else { //set region outside mask to 0
+							if(keepWithinMask) {
+								long [] newPos = new long[] {x-padding, y-padding, z-padding};
+								dataToMaskRA.setPosition(newPos);
+								dataToMaskRA.get().set( 0 );
+							}
 						}
 						
 
@@ -334,6 +351,7 @@ public class SparkExpandMaskToCleanPredictions {
 				options.getDatasetNameToUseAsMask()+suffix,
 				options.getOutputN5Path(),
 				options.getExpansion(),
+				options.getKeepWithinMask(),
 				blockInformationList) ;
 
 	}
