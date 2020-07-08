@@ -477,8 +477,9 @@ public class SparkFillHolesInConnectedComponents {
 								.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			
+			datasetToHoleFill = currentOrganelle;
 			if(!options.getSkipVolumeFilter()) {
-				String tempVolumeFilteredDatasetName = currentOrganelle + "_volumeFilteredTemp";
+				String tempVolumeFilteredDatasetName = currentOrganelle + "_volumeFilteredTemp"+options.getOutputN5DatasetSuffix();
 				SparkVolumeFilterConnectedComponents.volumeFilterConnectedComponents(sc, options.getInputN5Path(), currentOrganelle, tempVolumeFilteredDatasetName, options.getMinimumVolumeCutoff(), blockInformationList);
 				directoriesToDelete.add(options.getInputN5Path() + "/" + tempVolumeFilteredDatasetName);
 				datasetToHoleFill = tempVolumeFilteredDatasetName;
