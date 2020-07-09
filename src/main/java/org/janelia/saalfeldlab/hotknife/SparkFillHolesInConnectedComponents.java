@@ -104,6 +104,9 @@ public class SparkFillHolesInConnectedComponents {
 		@Option(name = "--skipVolumeFilter", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
 		private boolean skipVolumeFilter = false;
 		
+		@Option(name = "--skipCreatingHoleDataset", required = false, usage = "N5 suffix, e.g. _cc so output would be /mito_cc")
+		private boolean skipCreatingHoleDataset = false;
+		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept")
 		private float minimumVolumeCutoff = 20000000;
 
@@ -133,6 +136,10 @@ public class SparkFillHolesInConnectedComponents {
 		
 		public boolean getSkipVolumeFilter() {
 			return skipVolumeFilter;
+		}
+		
+		public boolean getSkipCreatingHoleDataset() {
+			return skipCreatingHoleDataset;
 		}
 		
 		public float getMinimumVolumeCutoff() {
@@ -487,24 +494,26 @@ public class SparkFillHolesInConnectedComponents {
 			
 			tempOutputN5DatasetName = datasetToHoleFill + "_holes" + "_blockwise_temp_to_delete";
 			finalOutputN5DatasetName = datasetToHoleFill + "_holes";
-			
-			// Get connected components of holes in *_holes
-			int minimumVolumeCutoff = 0;
-			blockInformationList = SparkConnectedComponents.blockwiseConnectedComponents(sc, options.getInputN5Path(),
-					datasetToHoleFill, options.getInputN5Path(), tempOutputN5DatasetName, null, 1, minimumVolumeCutoff,
-					blockInformationList, true, false);
-			logMemory("Stage 1 complete");
-
-			blockInformationList = SparkConnectedComponents.unionFindConnectedComponents(sc, options.getInputN5Path(),
-					tempOutputN5DatasetName, minimumVolumeCutoff, blockInformationList);
-			logMemory("Stage 2 complete");
-
-			SparkConnectedComponents.mergeConnectedComponents(sc, options.getInputN5Path(), tempOutputN5DatasetName,
-					finalOutputN5DatasetName, blockInformationList);
-			logMemory("Stage 3 complete");
-
 			directoriesToDelete.add(options.getInputN5Path() + "/" + tempOutputN5DatasetName);
 			directoriesToDelete.add(options.getInputN5Path() + "/" + finalOutputN5DatasetName);
+			
+			if(!options.getSkipCreatingHoleDataset()) {
+				// Get connected components of holes in *_holes
+				int minimumVolumeCutoff = 0;
+				blockInformationList = SparkConnectedComponents.blockwiseConnectedComponents(sc, options.getInputN5Path(),
+						datasetToHoleFill, options.getInputN5Path(), tempOutputN5DatasetName, null, 1, minimumVolumeCutoff,
+						blockInformationList, true, false);
+				logMemory("Stage 1 complete");
+	
+				blockInformationList = SparkConnectedComponents.unionFindConnectedComponents(sc, options.getInputN5Path(),
+						tempOutputN5DatasetName, minimumVolumeCutoff, blockInformationList);
+				logMemory("Stage 2 complete");
+	
+				SparkConnectedComponents.mergeConnectedComponents(sc, options.getInputN5Path(), tempOutputN5DatasetName,
+						finalOutputN5DatasetName, blockInformationList);
+				logMemory("Stage 3 complete");
+			}
+			
 
 			MapsForFillingHoles mapsForFillingHoles = getMapsForFillingHoles(sc,  options.getInputN5Path(), datasetToHoleFill, blockInformationList);
 			fillHoles(sc, options.getInputN5Path(), datasetToHoleFill, currentOrganelle+options.getOutputN5DatasetSuffix(), mapsForFillingHoles, blockInformationList);

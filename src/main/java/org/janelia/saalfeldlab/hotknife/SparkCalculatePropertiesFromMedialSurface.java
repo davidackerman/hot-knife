@@ -49,6 +49,7 @@ import org.apache.spark.broadcast.Broadcast;
 import org.janelia.saalfeldlab.hotknife.util.Grid;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -59,6 +60,7 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 import ij.ImageJ;
+import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.morphology.distance.DistanceTransform;
@@ -74,6 +76,7 @@ import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.NativeBoolType;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.integer.*;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
@@ -98,6 +101,10 @@ public class SparkCalculatePropertiesFromMedialSurface {
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
 		private String inputN5DatasetName = null;
 		
+
+		@Option(name = "--outputN5Path", required = false, usage = "N5 dataset, e.g. /mito")
+		private String outputN5Path = null;
+		
 		@Option(name = "--minimumBranchLength", required = false, usage = "Minimum branch length (nm)")
 		private float minimumBranchLength = 80;
 
@@ -105,6 +112,8 @@ public class SparkCalculatePropertiesFromMedialSurface {
 			final CmdLineParser parser = new CmdLineParser(this);
 			try {
 				parser.parseArgument(args);
+				if (outputN5Path == null)
+					outputN5Path = inputN5Path;
 				parsedSuccessfully = true;
 			} catch (final CmdLineException e) {
 				parser.printUsage(System.err);
@@ -125,15 +134,212 @@ public class SparkCalculatePropertiesFromMedialSurface {
 			}
 			return outputDirectory;
 		}
-		
-		public float getMinimumBranchLength() {
-			return minimumBranchLength;
+		public String getOutputN5Path() {
+			return outputN5Path;
 		}
+		
 
 	}
+	public static final void projectCurvatureToSurface(
+			final JavaSparkContext sc,
+			final String n5Path,
+			final String datasetName,
+			final String n5OutputPath,
+			final List<BlockInformation> blockInformationList) throws IOException {
 
-	/*
-	public static final ObjectwiseSkeletonInformation getObjectwiseSkeletonInformation(
+		final N5Reader n5Reader = new N5FSReader(n5Path);
+
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
+		final long[] dimensions = attributes.getDimensions();
+		final int[] blockSize = attributes.getBlockSize();
+		final int n = dimensions.length;
+		double [] pixelResolution = IOHelper.getResolution(n5Reader, datasetName);
+		double voxelVolume = pixelResolution[0]*pixelResolution[1]*pixelResolution[2];
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		n5Writer.createDataset(
+				datasetName + "_sheetnessVolumeAveraged",
+				dimensions,
+				blockSize,
+				DataType.FLOAT32,
+				new GzipCompression());
+		n5Writer.setAttribute(datasetName + "_sheetnessVolumeAveraged", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+
+		/*
+		 * grid block size for parallelization to minimize double loading of
+		 * blocks
+		 */
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		rdd.foreach(blockInformation -> {
+			final long [][] gridBlock = blockInformation.gridBlock;
+			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			boolean show=false;
+			if(show) new ImageJ();
+			final RandomAccessibleInterval<NativeBoolType> source = Converters.convert(
+					(RandomAccessibleInterval<UnsignedLongType>)(RandomAccessibleInterval)N5Utils.open(n5BlockReader, datasetName),
+					(a, b) -> {
+						b.set(a.getIntegerLong()<1);
+					},
+					new NativeBoolType());
+			NativeImg<FloatType, ?> distanceTransform = null;
+			final long[] initialPadding = {16,16,16};
+			long[] padding = initialPadding.clone();
+			final long[] paddedBlockMin = new long[n];
+			final long[] paddedBlockSize = new long[n];
+			final long[] minInside = new long[n];
+			final long[] dimensionsInside = new long[n];
+			
+			int shellPadding = 1;
+
+			//Distance Transform
+A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(padding, i -> padding[i] + initialPadding[i])) {
+
+				paddingIsTooSmall = false;
+	
+				final long maxPadding =  Arrays.stream(padding).max().getAsLong();
+				final long squareMaxPadding = maxPadding * maxPadding;
+	
+				Arrays.setAll(paddedBlockMin, i -> gridBlock[0][i] - padding[i]);
+				Arrays.setAll(paddedBlockSize, i -> gridBlock[1][i] + 2*padding[i]);
+				System.out.println(Arrays.toString(gridBlock[0]) + ", padding = " + Arrays.toString(padding) + ", padded blocksize = " + Arrays.toString(paddedBlockSize));
+				
+				final long maxBlockDimension = Arrays.stream(paddedBlockSize).max().getAsLong();
+				final IntervalView<NativeBoolType> sourceBlock =
+						Views.offsetInterval(
+								Views.extendValue(
+										source,
+										new NativeBoolType(true)),
+								paddedBlockMin,
+								paddedBlockSize);
+				
+				/* make distance transform */				
+				if(show) ImageJFunctions.show(sourceBlock, "sourceBlock");
+				distanceTransform = ArrayImgs.floats(paddedBlockSize);
+				
+				DistanceTransform.binaryTransform(sourceBlock, distanceTransform, DISTANCE_TYPE.EUCLIDIAN);
+				if(show) ImageJFunctions.show(distanceTransform,"dt");
+	
+				Arrays.setAll(minInside, i -> padding[i] );
+				Arrays.setAll(dimensionsInside, i -> gridBlock[1][i] );
+	
+				final IntervalView<FloatType> insideBlock = Views.offsetInterval(Views.extendZero(distanceTransform), minInside, dimensionsInside);
+				if(show) ImageJFunctions.show(insideBlock,"inside");
+	
+				/* test whether distances at inside boundary are smaller than padding */
+				for (int d = 0; d < n; ++d) {
+	
+					final IntervalView<FloatType> topSlice = Views.hyperSlice(insideBlock, d, 1);
+					for (final FloatType t : topSlice)
+						if (t.get() >= squareMaxPadding-shellPadding) { //Subtract one from squareMaxPadding because we want to ensure that if we have a shell in later calculations for finding surface points, we can access valid points
+							paddingIsTooSmall = true;
+							System.out.println("padding too small");
+							continue A;
+						}
+	
+					final IntervalView<FloatType> botSlice = Views.hyperSlice(insideBlock, d, insideBlock.max(d));
+					for (final FloatType t : botSlice)
+						if (t.get() >= squareMaxPadding-shellPadding) {
+							paddingIsTooSmall = true;
+							System.out.println("padding too small");
+							continue A;
+						}
+				}
+			}
+			IntervalView<UnsignedLongType> medialSurface = Views.offsetInterval(Views.extendZero(
+					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5BlockReader, datasetName+"_medialSurface")
+					),paddedBlockMin, paddedBlockSize);
+			
+			if(show) ImageJFunctions.show(medialSurface,"ms");
+
+			
+			RandomAccessibleInterval<DoubleType> sheetness = Views.offsetInterval(Views.extendZero(
+					(RandomAccessibleInterval<DoubleType>) N5Utils.open(n5BlockReader, datasetName+"_sheetness")
+					),paddedBlockMin, paddedBlockSize);
+			
+			final Img<FloatType> output = new ArrayImgFactory<FloatType>(new FloatType())
+					.create(paddedBlockSize);
+			final Img<UnsignedIntType> counts = new ArrayImgFactory<UnsignedIntType>(new UnsignedIntType())
+					.create(paddedBlockSize);
+			
+			Cursor<UnsignedLongType> medialSurfaceCursor = medialSurface.cursor();
+			RandomAccess<FloatType> distanceTransformRandomAccess = distanceTransform.randomAccess();
+			RandomAccess<DoubleType> sheetnessRandomAccess = sheetness.randomAccess();
+			RandomAccess<FloatType> outputRandomAccess = output.randomAccess();
+			RandomAccess<UnsignedIntType> countsRandomAccess = counts.randomAccess();
+			
+			Map<List<Double>,Integer> sheetnessAndThicknessHistogram = new HashMap<List<Double>,Integer>();
+			Map<Double,Double> sheetnessAndSurfaceAreaHistogram = new HashMap<Double,Double>();
+			Map<Double,Double> sheetnessAndVolumeHistogram = new HashMap<Double,Double>();
+			while (medialSurfaceCursor.hasNext()) {
+				final long medialSurfaceValue = medialSurfaceCursor.next().get();
+				if ( medialSurfaceValue >0 ) { // then it is on medial surface
+					int [] pos = {medialSurfaceCursor.getIntPosition(0),medialSurfaceCursor.getIntPosition(1),medialSurfaceCursor.getIntPosition(2) };
+					distanceTransformRandomAccess.setPosition(pos);
+					sheetnessRandomAccess.setPosition(pos);
+
+					float radiusSquared = distanceTransformRandomAccess.get().getRealFloat();
+					double radius = Math.sqrt(radiusSquared);
+					
+					int radiusPlusPadding = (int) Math.ceil(radius);
+					
+					float sheetnessMeasure = sheetnessRandomAccess.get().getRealFloat();					
+					double sheetnessMeasureBin = Math.min(Math.floor(sheetnessMeasure*100)/100.0,99);//bin by 0.01 intervals
+					double thickness = 2*radius;
+					double thicknessBin = Math.min(Math.floor(thickness/2.0),99);
+					
+					List<Double> histogramBinList = Arrays.asList(sheetnessMeasureBin,thicknessBin);
+					int currentHistogramCount = sheetnessAndThicknessHistogram.getOrDefault(histogramBinList,0);
+					sheetnessAndThicknessHistogram.put(histogramBinList,currentHistogramCount+1);
+					
+					for(int x = pos[0]-radiusPlusPadding; x<=pos[0]+radiusPlusPadding; x++) {
+						for(int y = pos[1]-radiusPlusPadding; y<=pos[1]+radiusPlusPadding; y++) {
+							for(int z = pos[2]-radiusPlusPadding; z<=pos[2]+radiusPlusPadding; z++) {
+								int dx = x-pos[0];
+								int dy = y-pos[1];
+								int dz = z-pos[2];
+								
+								if((x>=0 && x<paddedBlockSize[0] && y>=0 && y < paddedBlockSize[1] && z >= 0 && z < paddedBlockSize[2]) && dx*dx+dy*dy+dz*dz<= radiusSquared ) { //then it is in sphere
+									int [] spherePos = {x,y,z};
+										outputRandomAccess.setPosition(spherePos);
+										FloatType outputVoxel = outputRandomAccess.get();
+										outputVoxel.set(outputVoxel.get()+sheetnessMeasure);
+										
+										countsRandomAccess.setPosition(spherePos);
+										UnsignedIntType countsVoxel = countsRandomAccess.get();
+										countsVoxel.set(countsVoxel.get()+1);
+																			
+								}
+							}
+						}
+					}
+					
+				}
+			}
+			
+			medialSurface = null;
+			distanceTransform = null;
+			sheetness = null;
+			
+			for(long x=minInside[0]; x<dimensionsInside[0]+minInside[0];x++) {
+				for(long y=minInside[1]; y<dimensionsInside[1]+minInside[1];y++) {
+					for(long z=minInside[2]; z<dimensionsInside[2]+minInside[2];z++) {
+						long [] pos = new long[]{x,y,z};
+						outputRandomAccess.setPosition(pos);
+						countsRandomAccess.setPosition(pos);
+						if(countsRandomAccess.get().get()>0) {
+							outputRandomAccess.get().set(outputRandomAccess.get().get()/countsRandomAccess.get().get());//take average
+						}
+					}
+				}
+			}
+			//if(show) ImageJFunctions.show(output_0p50,"output");
+			IntervalView<FloatType> outputCropped = Views.offsetInterval(Views.extendZero(output), minInside, dimensionsInside);		
+			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
+			N5Utils.saveBlock(outputCropped, n5BlockWriter, datasetName + "_sheetnessVolumeAveraged", gridBlock[2]);
+		
+		});
+	}
+	
+	/*public static final ObjectwiseSkeletonInformation getObjectwiseSkeletonInformation(
 			final JavaSparkContext sc,
 			final String n5Path,
 			final String datasetName,
@@ -157,21 +363,23 @@ public class SparkCalculatePropertiesFromMedialSurface {
 			boolean show=false;
 			if(show) new ImageJ();
 			RandomAccessibleInterval<UnsignedLongType> connectedComponents = (RandomAccessibleInterval)N5Utils.open(n5BlockReader, datasetName);
-			
+			RandomAccessibleInterval<UnsignedLongType> medialSurface = (RandomAccessibleInterval)N5Utils.open(n5BlockReader, datasetName+"_medialSurface");
+
 			NativeImg<FloatType, ?> distanceTransform = null;
 			
 			long [] padding = getCorrectlyPaddedDistanceTransform(connectedComponents, distanceTransform, offset, dimension);
 			//final IntervalView<FloatType> insideBlock = Views.offsetInterval(Views.extendZero(distanceTransform), minInside, dimensionsInside);
-
-			//now distance transform is sufficient, but we still may have a situation where the closest medial surface requires crossing out of the object, so need to check.
+			IntervalView<FloatType> distanceTransformView = Views.offsetInterval(Views.extendZero(distanceTransform), new long[] {0,0,0}, new long[] {dimension[0]+2*padding[0], dimension[1]+2*padding[1], dimension[2]+2});		
+			distanceTransform = null;
 			
-			updateDistanceTransformToPreventCrossingObjectBoundary(connectedComponents, distanceTransform, offset, dimension, padding);
+			//now distance transform is sufficient, but we still may have a situation where the closest medial surface requires crossing out of the object, so need to check.
+			updateDistanceTransformToPreventCrossingObjectBoundary(connectedComponents, distanceTransformView, medialSurface, offset, dimensions, padding);
+			//updateDistanceTransformToPreventCrossingObjectBoundary(connectedComponents, distanceTransform, offset, dimension, padding);
 			
 			final IntervalView<UnsignedLongType> connectedComponentsCropped = Views.offsetInterval(Views.extendZero(connectedComponents), paddedOffset, paddedDimension);
 			final IntervalView<UnsignedLongType> skeleton = Views.offsetInterval(Views.extendZero(
 					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5BlockReader, datasetName+"_blahblah")
 					),paddedOffset, paddedDimension);
-			IntervalView<FloatType> distanceTransformCropped = Views.offsetInterval(Views.extendZero(distanceTransform), new long[] {minInside[0]-1, minInside[1]-1,minInside[2]-1}, new long[] {dimensionsInside[0]+2, dimensionsInside[1]+2, dimensionsInside[2]+2});		
 			if(show) {
 				ImageJFunctions.show(connectedComponentsCropped);
 				ImageJFunctions.show(skeleton);
@@ -207,8 +415,8 @@ public class SparkCalculatePropertiesFromMedialSurface {
 			
 		}
 		return objectwiseSkeletonInformation;
-	}
-	*/
+	}*/
+	
 	public static long [] getCorrectlyPaddedDistanceTransform(RandomAccessibleInterval<UnsignedLongType> source, NativeImg<FloatType, ?> distanceTransform, long[] offset, long[] dimension){
 		long[] sourceDimensions = {0,0,0};
 		source.dimensions(sourceDimensions);
@@ -491,7 +699,7 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkLengthAndThickness");
+		final SparkConf conf = new SparkConf().setAppName("SparkCalculatePropertiesOfMedialSurface");
 		
 		// Get all organelles
 		String[] organelles = { "" };
@@ -509,7 +717,6 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 
 		System.out.println(Arrays.toString(organelles));
 
-		List<String> directoriesToDelete = new ArrayList<String>();
 		for (String currentOrganelle : organelles) {
 			logMemory(currentOrganelle);	
 			
@@ -517,15 +724,77 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
 				currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			
+			projectCurvatureToSurface(sc, options.getInputN5Path(), options.getInputN5DatasetName(), options.getOutputN5Path(), blockInformationList);
 			
 			
 			sc.close();
 		}
 		//Remove temporary files
-		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 
 	}
 	
 }
+
+class HistogramMaps implements Serializable{
+	public Map<List<Double>,Integer> sheetnessAndThicknessHistogram;
+	public Map<Double,Double> sheetnessAndSurfaceAreaHistogram;
+	public Map<Double,Double> sheetnessAndVolumeHistogram;
+
+	public HistogramMaps(Map<List<Double>,Integer> sheetnessAndThicknessHistogram,Map<Double,Double> sheetnessAndSurfaceAreaHistogram, Map<Double,Double> sheetnessAndVolumeHistogram){
+		this.sheetnessAndThicknessHistogram = sheetnessAndThicknessHistogram;
+		this.sheetnessAndSurfaceAreaHistogram = sheetnessAndSurfaceAreaHistogram;
+		this.sheetnessAndVolumeHistogram = sheetnessAndVolumeHistogram;
+	}
+	
+	public void merge(HistogramMaps newHistogramMaps) {
+		//merge holeIDtoObjectIDMap
+		for(Entry<Long,Long> entry : newMapsForFillingHoles.holeIDtoObjectIDMap.entrySet()) {
+			long holeID = entry.getKey();
+			long objectID = entry.getValue();
+			if(	holeIDtoObjectIDMap.containsKey(holeID) && holeIDtoObjectIDMap.get(holeID)!=objectID) 
+				holeIDtoObjectIDMap.put(holeID, 0L);
+			else 
+				holeIDtoObjectIDMap.put(holeID, objectID);
+		}
+		
+		//merge holeIDtoVolumeMap
+		for(Entry<Long,Long> entry : newMapsForFillingHoles.holeIDtoVolumeMap.entrySet())
+			holeIDtoVolumeMap.put(entry.getKey(), holeIDtoVolumeMap.getOrDefault(entry.getKey(), 0L) + entry.getValue() );
+		
+		//merge objectIDtoVolumeMap
+		for(Entry<Long,Long> entry : newMapsForFillingHoles.objectIDtoVolumeMap.entrySet())
+			objectIDtoVolumeMap.put(entry.getKey(), objectIDtoVolumeMap.getOrDefault(entry.getKey(), 0L) + entry.getValue() );
+	
+	}
+	
+	public void fillHolesForVolume() {
+		for(Entry<Long,Long> entry : holeIDtoObjectIDMap.entrySet()) {
+			long holeID = entry.getKey();
+			long objectID = entry.getValue();
+			if(objectID != 0 ) {
+				long holeVolume = holeIDtoVolumeMap.get(holeID);
+				objectIDtoVolumeMap.put(objectID, objectIDtoVolumeMap.getOrDefault(objectID, 0L) + holeVolume );
+			}
+		}		
+	}
+	
+	public void filterObjectsByVolume(int minimumVolumeCutoff) {
+		fillHolesForVolume();
+		for(Entry<Long,Long> entry : objectIDtoVolumeMap.entrySet()) {
+			long objectID = entry.getKey();
+			long volume = entry.getValue();
+			if(volume<=minimumVolumeCutoff) 
+				objectIDsBelowVolumeFilter.add(objectID);
+		}
+		for(Entry<Long,Long> entry : holeIDtoObjectIDMap.entrySet()) {
+			long holeID = entry.getKey();
+			long objectID = entry.getValue();
+			if ( objectIDsBelowVolumeFilter.contains(objectID) ) //then surrounding object is too small
+				holeIDtoObjectIDMap.put(holeID, 0L);
+		}
+		
+	}
+	
+}
+
 
