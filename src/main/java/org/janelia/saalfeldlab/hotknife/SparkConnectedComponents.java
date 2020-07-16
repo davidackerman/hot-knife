@@ -103,6 +103,9 @@ public class SparkConnectedComponents {
 		@Option(name = "--thresholdDistance", required = false, usage = "Distance for thresholding (positive inside, negative outside) (nm)")
 		private double thresholdDistance = 0;
 		
+		@Option(name = "--thresholdIntensityCutoff", required = false, usage = "Threshold intensinty cutoff")
+		private double thresholdIntensityCutoff = -1;
+		
 		@Option(name = "--minimumVolumeCutoff", required = false, usage = "Volume above which objects will be kept (nm^3)")
 		private double minimumVolumeCutoff = 20E6;
 		
@@ -150,6 +153,10 @@ public class SparkConnectedComponents {
 
 		public double getThresholdDistance() {
 			return thresholdDistance;
+		}
+		
+		public double getThresholdIntensityCutoff() {
+			return thresholdIntensityCutoff;
 		}
 		
 		public double getMinimumVolumeCutoff() {
@@ -845,6 +852,7 @@ public class SparkConnectedComponents {
 	public static void standardConnectedComponentAnalysisWorkflow(SparkConf conf, String inputN5DatasetName, String inputN5Path, String maskN5Path, String outputN5Path, String outputN5DatasetSuffix, double thresholdDistance, double minimumVolumeCutoff, boolean onlyKeepLargestComponent, boolean smooth ) throws IOException {
 		// Get all organelles
 		String[] organelles = { "" };
+		
 		double thresholdIntensityCutoff = 	128 * Math.tanh(thresholdDistance / 50) + 127;
 
 		if (inputN5DatasetName!= null) {
@@ -909,7 +917,14 @@ public class SparkConnectedComponents {
 
 		final SparkConf conf = new SparkConf().setAppName("SparkConnectedComponents");
 		boolean smooth = ! options.getSkipSmoothing();
-		standardConnectedComponentAnalysisWorkflow(conf, options.getInputN5DatasetName(), options.getInputN5Path(), options.getMaskN5Path(), options.getOutputN5Path(), options.getOutputN5DatasetSuffix(), options.getThresholdDistance(), options.getMinimumVolumeCutoff(), options.getOnlyKeepLargestComponent(), smooth);
+		
+		double thresholdDistance = options.getThresholdDistance();
+		if(options.getThresholdIntensityCutoff()!=-1) {
+			double thresholdIntensityCutoff = options.getThresholdIntensityCutoff();
+			double x = (thresholdIntensityCutoff-127)/128.0; //128 * Math.tanh(thresholdDistance / 50) + 127;
+			thresholdDistance = 50*0.5*Math.log( (1.0 + x) / (1.0 - x));
+		}
+		standardConnectedComponentAnalysisWorkflow(conf, options.getInputN5DatasetName(), options.getInputN5Path(), options.getMaskN5Path(), options.getOutputN5Path(), options.getOutputN5DatasetSuffix(), thresholdDistance, options.getMinimumVolumeCutoff(), options.getOnlyKeepLargestComponent(), smooth);
 
 	}
 }

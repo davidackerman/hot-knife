@@ -140,10 +140,11 @@ public class SparkCalculatePropertiesFromMedialSurface {
 		
 
 	}
-	public static final void projectCurvatureToSurface(
+	public static final HistogramMaps projectCurvatureToSurface(
 			final JavaSparkContext sc,
 			final String n5Path,
 			final String datasetName,
+			//final String mitoContactBoundaryDatasetName,
 			final String n5OutputPath,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
@@ -155,12 +156,14 @@ public class SparkCalculatePropertiesFromMedialSurface {
 		final int n = dimensions.length;
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, datasetName);
 		double voxelVolume = pixelResolution[0]*pixelResolution[1]*pixelResolution[2];
+		double voxelFaceArea = pixelResolution[0]*pixelResolution[1];
+
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		n5Writer.createDataset(
 				datasetName + "_sheetnessVolumeAveraged",
 				dimensions,
 				blockSize,
-				DataType.FLOAT32,
+				DataType.UINT8,
 				new GzipCompression());
 		n5Writer.setAttribute(datasetName + "_sheetnessVolumeAveraged", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 
@@ -169,7 +172,7 @@ public class SparkCalculatePropertiesFromMedialSurface {
 		 * blocks
 		 */
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
-		rdd.foreach(blockInformation -> {
+		JavaRDD<HistogramMaps> javaRDDHistogramMaps = rdd.map(blockInformation -> {
 			final long [][] gridBlock = blockInformation.gridBlock;
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			boolean show=false;
@@ -255,20 +258,19 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 					(RandomAccessibleInterval<DoubleType>) N5Utils.open(n5BlockReader, datasetName+"_sheetness")
 					),paddedBlockMin, paddedBlockSize);
 			
-			final Img<FloatType> output = new ArrayImgFactory<FloatType>(new FloatType())
-					.create(paddedBlockSize);
+			final Img<FloatType> sheetnessSum = new ArrayImgFactory<FloatType>(new FloatType())
+					.create(new long[]{blockSize[0]+2,blockSize[1]+2,blockSize[2]+2}); //add an extra 2 because need to check for surface voxels so need extra border of 1
 			final Img<UnsignedIntType> counts = new ArrayImgFactory<UnsignedIntType>(new UnsignedIntType())
-					.create(paddedBlockSize);
+					.create(new long[]{blockSize[0]+2,blockSize[1]+2,blockSize[2]+2});
 			
 			Cursor<UnsignedLongType> medialSurfaceCursor = medialSurface.cursor();
 			RandomAccess<FloatType> distanceTransformRandomAccess = distanceTransform.randomAccess();
 			RandomAccess<DoubleType> sheetnessRandomAccess = sheetness.randomAccess();
-			RandomAccess<FloatType> outputRandomAccess = output.randomAccess();
+			RandomAccess<FloatType> sheetnessSumRandomAccess = sheetnessSum.randomAccess();
 			RandomAccess<UnsignedIntType> countsRandomAccess = counts.randomAccess();
 			
-			Map<List<Double>,Integer> sheetnessAndThicknessHistogram = new HashMap<List<Double>,Integer>();
-			Map<Double,Double> sheetnessAndSurfaceAreaHistogram = new HashMap<Double,Double>();
-			Map<Double,Double> sheetnessAndVolumeHistogram = new HashMap<Double,Double>();
+			Map<List<Integer>,Long> sheetnessAndThicknessHistogram = new HashMap<List<Integer>,Long>();
+			
 			while (medialSurfaceCursor.hasNext()) {
 				final long medialSurfaceValue = medialSurfaceCursor.next().get();
 				if ( medialSurfaceValue >0 ) { // then it is on medial surface
@@ -282,13 +284,18 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 					int radiusPlusPadding = (int) Math.ceil(radius);
 					
 					float sheetnessMeasure = sheetnessRandomAccess.get().getRealFloat();					
-					double sheetnessMeasureBin = Math.min(Math.floor(sheetnessMeasure*100)/100.0,99);//bin by 0.01 intervals
-					double thickness = 2*radius;
-					double thicknessBin = Math.min(Math.floor(thickness/2.0),99);
+					int sheetnessMeasureBin = (int) Math.floor(sheetnessMeasure*256);
 					
-					List<Double> histogramBinList = Arrays.asList(sheetnessMeasureBin,thicknessBin);
-					int currentHistogramCount = sheetnessAndThicknessHistogram.getOrDefault(histogramBinList,0);
-					sheetnessAndThicknessHistogram.put(histogramBinList,currentHistogramCount+1);
+					if(pos[0]>=minInside[0] && pos[0]<minInside[0]+dimensionsInside[0] &&
+							pos[1]>=minInside[1] && pos[1]<minInside[1]+dimensionsInside[1] &&
+							pos[2]>=minInside[2] && pos[2]<minInside[2]+dimensionsInside[2]) {
+						
+						double thickness = radius*2;//convert later
+						int thicknessBin = (int) Math.min(Math.floor(thickness*pixelResolution[0]/8),99); //bin thickness in 8 nm bins
+						
+						List<Integer> histogramBinList = Arrays.asList(sheetnessMeasureBin,thicknessBin);
+						sheetnessAndThicknessHistogram.put(histogramBinList,sheetnessAndThicknessHistogram.getOrDefault(histogramBinList,0L)+1L);
+					}
 					
 					for(int x = pos[0]-radiusPlusPadding; x<=pos[0]+radiusPlusPadding; x++) {
 						for(int y = pos[1]-radiusPlusPadding; y<=pos[1]+radiusPlusPadding; y++) {
@@ -297,15 +304,15 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 								int dy = y-pos[1];
 								int dz = z-pos[2];
 								
-								if((x>=0 && x<paddedBlockSize[0] && y>=0 && y < paddedBlockSize[1] && z >= 0 && z < paddedBlockSize[2]) && dx*dx+dy*dy+dz*dz<= radiusSquared ) { //then it is in sphere
-									int [] spherePos = {x,y,z};
-										outputRandomAccess.setPosition(spherePos);
-										FloatType outputVoxel = outputRandomAccess.get();
-										outputVoxel.set(outputVoxel.get()+sheetnessMeasure);
-										
-										countsRandomAccess.setPosition(spherePos);
-										UnsignedIntType countsVoxel = countsRandomAccess.get();
-										countsVoxel.set(countsVoxel.get()+1);
+								if((x>=minInside[0]-1 && x<=dimensionsInside[0]+minInside[0] && y>=minInside[1]-1 && y <= dimensionsInside[1]+minInside[1] && z >= minInside[2]-1 && z <= dimensionsInside[2]+minInside[2]) && dx*dx+dy*dy+dz*dz<= radiusSquared ) { //then it is in sphere
+									long [] spherePos = new long[]{x-(minInside[0]-1),y-(minInside[1]-1),z-(minInside[2]-1)};
+									sheetnessSumRandomAccess.setPosition(spherePos);
+									FloatType outputVoxel = sheetnessSumRandomAccess.get();
+									outputVoxel.set(outputVoxel.get()+sheetnessMeasure);
+									
+									countsRandomAccess.setPosition(spherePos);
+									UnsignedIntType countsVoxel = countsRandomAccess.get();
+									countsVoxel.set(countsVoxel.get()+1);
 																			
 								}
 							}
@@ -318,25 +325,75 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			medialSurface = null;
 			distanceTransform = null;
 			sheetness = null;
+
+			Map<Integer,Double> sheetnessAndSurfaceAreaHistogram = new HashMap<Integer,Double>();
+			Map<Integer,Double> sheetnessAndVolumeHistogram = new HashMap<Integer,Double>();
+			List<long[]> voxelsToCheck = new ArrayList(); 
+			voxelsToCheck.add(new long[] {-1, 0, 0});
+			voxelsToCheck.add(new long[] {1, 0, 0});
+			voxelsToCheck.add(new long[] {0, -1, 0});
+			voxelsToCheck.add(new long[] {0, 1, 0});
+			voxelsToCheck.add(new long[] {0, 0, -1});
+			voxelsToCheck.add(new long[] {0, 0, 1});
 			
-			for(long x=minInside[0]; x<dimensionsInside[0]+minInside[0];x++) {
-				for(long y=minInside[1]; y<dimensionsInside[1]+minInside[1];y++) {
-					for(long z=minInside[2]; z<dimensionsInside[2]+minInside[2];z++) {
+			final Img<UnsignedByteType> output = new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType())
+					.create(dimensionsInside);
+			RandomAccess<UnsignedByteType> outputRandomAccess = output.randomAccess();
+			for(long x=1; x<dimensionsInside[0]+1;x++) {
+				for(long y=1; y<dimensionsInside[1]+1;y++) {
+					for(long z=1; z<dimensionsInside[2]+1;z++) {
 						long [] pos = new long[]{x,y,z};
-						outputRandomAccess.setPosition(pos);
+						sheetnessSumRandomAccess.setPosition(pos);
 						countsRandomAccess.setPosition(pos);
 						if(countsRandomAccess.get().get()>0) {
-							outputRandomAccess.get().set(outputRandomAccess.get().get()/countsRandomAccess.get().get());//take average
+							float sheetnessMeasure = sheetnessSumRandomAccess.get().get()/countsRandomAccess.get().get();
+							sheetnessSumRandomAccess.get().set(sheetnessMeasure);//take average
+							//System.out.println(sheetnessMeasure);
+							int sheetnessMeasureBin = (int) Math.floor(sheetnessMeasure*256);
+							sheetnessAndVolumeHistogram.put(sheetnessMeasureBin, sheetnessAndVolumeHistogram.getOrDefault(sheetnessMeasureBin,0.0)+voxelVolume);
+							int faces = getSurfaceAreaContributionOfVoxelInFaces(countsRandomAccess, voxelsToCheck);
+							if(faces>0) {
+								sheetnessAndSurfaceAreaHistogram.put(sheetnessMeasureBin, sheetnessAndSurfaceAreaHistogram.getOrDefault(sheetnessMeasureBin,0.0)+faces*voxelFaceArea);
+							}
+
+							outputRandomAccess.setPosition(new long[] {x-1,y-1,z-1});
+							
+							//rescale to 0-255
+							outputRandomAccess.get().set(sheetnessMeasureBin);
 						}
 					}
 				}
 			}
 			//if(show) ImageJFunctions.show(output_0p50,"output");
-			IntervalView<FloatType> outputCropped = Views.offsetInterval(Views.extendZero(output), minInside, dimensionsInside);		
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
-			N5Utils.saveBlock(outputCropped, n5BlockWriter, datasetName + "_sheetnessVolumeAveraged", gridBlock[2]);
-		
+			N5Utils.saveBlock(output, n5BlockWriter, datasetName + "_sheetnessVolumeAveraged", gridBlock[2]);
+			return new HistogramMaps(sheetnessAndThicknessHistogram, sheetnessAndSurfaceAreaHistogram, sheetnessAndVolumeHistogram);
 		});
+		
+		HistogramMaps histogramMaps = javaRDDHistogramMaps.reduce((a,b) -> {
+			a.merge(b);
+			return a;
+		});
+		
+		return histogramMaps;
+		
+	}
+	
+	public static int getSurfaceAreaContributionOfVoxelInFaces(final RandomAccess<UnsignedIntType> countsRandomAccess, List<long[]> voxelsToCheck) {
+		final long pos[] = {countsRandomAccess.getLongPosition(0), countsRandomAccess.getLongPosition(1), countsRandomAccess.getLongPosition(2)};
+		int surfaceAreaContributionOfVoxelInFaces = 0;
+
+
+		for(long[] currentVoxel : voxelsToCheck) {
+			final long currentPosition[] = {pos[0]+currentVoxel[0], pos[1]+currentVoxel[1], pos[2]+currentVoxel[2]};
+			countsRandomAccess.setPosition(currentPosition);
+			if(countsRandomAccess.get().get() ==0) {
+				surfaceAreaContributionOfVoxelInFaces ++;
+			}
+		}
+
+		return surfaceAreaContributionOfVoxelInFaces;	
+	
 	}
 	
 	/*public static final ObjectwiseSkeletonInformation getObjectwiseSkeletonInformation(
@@ -693,6 +750,49 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 		System.out.println(ts + " " + msg);
 	}
 	
+	public static void writeData(HistogramMaps histogramMaps, String outputDirectory, String organelle1) throws IOException {
+		if (! new File(outputDirectory).exists()){
+			new File(outputDirectory).mkdirs();
+	    }
+		
+		FileWriter sheetnessVolumeAndAreaHistograms = new FileWriter(outputDirectory+"/"+organelle1+"_sheetnessVolumeAndAreaHistograms.csv");
+		sheetnessVolumeAndAreaHistograms.append("Sheetness,Volume (nm^3),Surface Area(nm^2)\n");
+		
+		FileWriter sheetnessVsThicknessHistogram = new FileWriter(outputDirectory+"/"+organelle1+"_sheetnessVsThicknessHistogram.csv");
+		String rowString = "Sheetness/Thickness (nm)";
+		for(int thicknessBin=0; thicknessBin<100; thicknessBin++) {
+		//	int thicknessBinStart = thicknessBin*2-1;
+			rowString+=","+Integer.toString(thicknessBin*8+4);
+		}
+		sheetnessVsThicknessHistogram.append(rowString+"\n");
+		
+		for(int sheetnessBin=0;sheetnessBin<256;sheetnessBin++) {
+			double volume = histogramMaps.sheetnessAndVolumeHistogram.getOrDefault(sheetnessBin, 0.0);
+			double surfaceArea = histogramMaps.sheetnessAndSurfaceAreaHistogram.getOrDefault(sheetnessBin, 0.0);
+			//double sheetnessBinStart = Math.max(sheetnessBin-0.5, 0.0)/100.0;
+			//double sheetnessBinEnd = Math.min(sheetnessBinStart+0.1,1);
+			//String sheetnessBinString = "["+Double.toString(sheetnessBinStart)+"-"+Double.toString(sheetnessBinStart);
+			//			sheetnessBinString = sheetnessBin==99 ? sheetnessBinString+"]" : sheetnessBinString+")"; 
+
+			String sheetnessBinString = Double.toString(sheetnessBin/256.0+0.5/256.0);
+			sheetnessVolumeAndAreaHistograms.append(sheetnessBinString+","+Double.toString(volume)+","+Double.toString(surfaceArea)+"\n");
+			
+			rowString =sheetnessBinString;
+			for(int thicknessBin=0; thicknessBin<100; thicknessBin++) {
+				double thicknessCount = histogramMaps.sheetnessAndThicknessHistogram.getOrDefault(Arrays.asList(sheetnessBin,thicknessBin),0L);
+				rowString+=","+Double.toString(thicknessCount);
+			}
+			sheetnessVsThicknessHistogram.append(rowString+"\n");
+		}
+		sheetnessVolumeAndAreaHistograms.flush();
+		sheetnessVolumeAndAreaHistograms.close();
+		
+		sheetnessVsThicknessHistogram.flush();
+		sheetnessVsThicknessHistogram.close();
+		
+		
+	}
+	
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 		final Options options = new Options(args);
 
@@ -724,8 +824,8 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
 				currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			projectCurvatureToSurface(sc, options.getInputN5Path(), options.getInputN5DatasetName(), options.getOutputN5Path(), blockInformationList);
-			
+			HistogramMaps histogramMaps = projectCurvatureToSurface(sc, options.getInputN5Path(), options.getInputN5DatasetName(), options.getOutputN5Path(), blockInformationList);
+			writeData(histogramMaps, options.getOutputDirectory(), currentOrganelle);
 			
 			sc.close();
 		}
@@ -736,11 +836,11 @@ A:			for (boolean paddingIsTooSmall = true; paddingIsTooSmall; Arrays.setAll(pad
 }
 
 class HistogramMaps implements Serializable{
-	public Map<List<Double>,Integer> sheetnessAndThicknessHistogram;
-	public Map<Double,Double> sheetnessAndSurfaceAreaHistogram;
-	public Map<Double,Double> sheetnessAndVolumeHistogram;
+	public Map<List<Integer>,Long> sheetnessAndThicknessHistogram;
+	public Map<Integer,Double> sheetnessAndSurfaceAreaHistogram;
+	public Map<Integer,Double> sheetnessAndVolumeHistogram;
 
-	public HistogramMaps(Map<List<Double>,Integer> sheetnessAndThicknessHistogram,Map<Double,Double> sheetnessAndSurfaceAreaHistogram, Map<Double,Double> sheetnessAndVolumeHistogram){
+	public HistogramMaps(Map<List<Integer>, Long> sheetnessAndThicknessHistogram,Map<Integer,Double> sheetnessAndSurfaceAreaHistogram, Map<Integer,Double> sheetnessAndVolumeHistogram){
 		this.sheetnessAndThicknessHistogram = sheetnessAndThicknessHistogram;
 		this.sheetnessAndSurfaceAreaHistogram = sheetnessAndSurfaceAreaHistogram;
 		this.sheetnessAndVolumeHistogram = sheetnessAndVolumeHistogram;
@@ -748,51 +848,17 @@ class HistogramMaps implements Serializable{
 	
 	public void merge(HistogramMaps newHistogramMaps) {
 		//merge holeIDtoObjectIDMap
-		for(Entry<Long,Long> entry : newMapsForFillingHoles.holeIDtoObjectIDMap.entrySet()) {
-			long holeID = entry.getKey();
-			long objectID = entry.getValue();
-			if(	holeIDtoObjectIDMap.containsKey(holeID) && holeIDtoObjectIDMap.get(holeID)!=objectID) 
-				holeIDtoObjectIDMap.put(holeID, 0L);
-			else 
-				holeIDtoObjectIDMap.put(holeID, objectID);
-		}
-		
+		for(Entry<List<Integer>,Long> entry : newHistogramMaps.sheetnessAndThicknessHistogram.entrySet()) 
+			sheetnessAndThicknessHistogram.put(entry.getKey(), sheetnessAndThicknessHistogram.getOrDefault(entry.getKey(), 0L) + entry.getValue() );
+
 		//merge holeIDtoVolumeMap
-		for(Entry<Long,Long> entry : newMapsForFillingHoles.holeIDtoVolumeMap.entrySet())
-			holeIDtoVolumeMap.put(entry.getKey(), holeIDtoVolumeMap.getOrDefault(entry.getKey(), 0L) + entry.getValue() );
+		for(Entry<Integer,Double> entry : newHistogramMaps.sheetnessAndSurfaceAreaHistogram.entrySet())
+			sheetnessAndSurfaceAreaHistogram.put(entry.getKey(), sheetnessAndSurfaceAreaHistogram.getOrDefault(entry.getKey(), 0.0) + entry.getValue() );
 		
 		//merge objectIDtoVolumeMap
-		for(Entry<Long,Long> entry : newMapsForFillingHoles.objectIDtoVolumeMap.entrySet())
-			objectIDtoVolumeMap.put(entry.getKey(), objectIDtoVolumeMap.getOrDefault(entry.getKey(), 0L) + entry.getValue() );
+		for(Entry<Integer,Double> entry : newHistogramMaps.sheetnessAndVolumeHistogram.entrySet())
+			sheetnessAndVolumeHistogram.put(entry.getKey(), sheetnessAndVolumeHistogram.getOrDefault(entry.getKey(), 0.0) + entry.getValue() );
 	
-	}
-	
-	public void fillHolesForVolume() {
-		for(Entry<Long,Long> entry : holeIDtoObjectIDMap.entrySet()) {
-			long holeID = entry.getKey();
-			long objectID = entry.getValue();
-			if(objectID != 0 ) {
-				long holeVolume = holeIDtoVolumeMap.get(holeID);
-				objectIDtoVolumeMap.put(objectID, objectIDtoVolumeMap.getOrDefault(objectID, 0L) + holeVolume );
-			}
-		}		
-	}
-	
-	public void filterObjectsByVolume(int minimumVolumeCutoff) {
-		fillHolesForVolume();
-		for(Entry<Long,Long> entry : objectIDtoVolumeMap.entrySet()) {
-			long objectID = entry.getKey();
-			long volume = entry.getValue();
-			if(volume<=minimumVolumeCutoff) 
-				objectIDsBelowVolumeFilter.add(objectID);
-		}
-		for(Entry<Long,Long> entry : holeIDtoObjectIDMap.entrySet()) {
-			long holeID = entry.getKey();
-			long objectID = entry.getValue();
-			if ( objectIDsBelowVolumeFilter.contains(objectID) ) //then surrounding object is too small
-				holeIDtoObjectIDMap.put(holeID, 0L);
-		}
-		
 	}
 	
 }
