@@ -75,8 +75,6 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 
-import org.janelia.saalfeldlab.hotknife.DijkstraPriorityQueue;
-
 /**
  * Connected components for an entire n5 volume
  *

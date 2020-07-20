@@ -119,7 +119,7 @@ public class SparkCompareDatasets {
 
 	}
 
-	public static final boolean compareDatasets(
+	public static final boolean compareDatasets (
 			final JavaSparkContext sc,
 			final String n5Path,
 			final String datasetName1,
@@ -145,14 +145,14 @@ public class SparkCompareDatasets {
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 			
-			IntervalView<DoubleType> data1 =  Views.offsetInterval((RandomAccessibleInterval<DoubleType>) N5Utils.open(n5BlockReader, datasetName1)
+			IntervalView<UnsignedByteType> data1 =  Views.offsetInterval((RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, datasetName1)
 					,offset, dimension);
 				
-			IntervalView<DoubleType> data2 =  Views.offsetInterval((RandomAccessibleInterval<DoubleType>) N5Utils.open(n5BlockReader, datasetName2)
+			IntervalView<UnsignedByteType> data2 =  Views.offsetInterval((RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, datasetName2)
 					,offset, dimension);
 			
-			Cursor<DoubleType> data1Cursor = data1.cursor();
-			Cursor<DoubleType> data2Cursor = data2.cursor();
+			Cursor<UnsignedByteType> data1Cursor = data1.cursor();
+			Cursor<UnsignedByteType> data2Cursor = data2.cursor();
 			boolean areEqual = true;
 			while(data1Cursor.hasNext() && areEqual) {
 				data1Cursor.next();

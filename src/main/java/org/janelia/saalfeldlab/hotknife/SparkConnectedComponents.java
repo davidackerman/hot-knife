@@ -38,6 +38,7 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.hotknife.util.Grid;
+import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
@@ -49,8 +50,6 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import org.spark_project.guava.collect.Sets;
 
-import ij.ImageJ;
-import net.imagej.ops.Ops.Filter.Gauss;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
@@ -64,13 +63,10 @@ import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.LongArray;
-import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.numeric.integer.*;
-import net.imglib2.type.numeric.real.*;
 import net.imglib2.util.Intervals;
-import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 
 import org.janelia.saalfeldlab.hotknife.IOHelper;
@@ -112,7 +108,7 @@ public class SparkConnectedComponents {
 		@Option(name = "--onlyKeepLargestComponent", required = false, usage = "Keep only the largest connected component")
 		private boolean onlyKeepLargestComponent = false;
 
-		@Option(name = "--skipSmoothing", required = false, usage = "Keep only the largest connected component")
+		@Option(name = "--skipSmoothing", required = false, usage = "Skip gaussian smoothing step")
 		private boolean skipSmoothing = false;
 		
 		public Options(final String[] args) {
@@ -234,8 +230,7 @@ public class SparkConnectedComponents {
 		// Create output dataset
 		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
 		n5Writer.createGroup(outputN5DatasetName);
-		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
-				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
+		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize, DataType.UINT64, attributes.getCompression());
 		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 
 		// Set up rdd to parallelize over blockInformation list and run RDD, which will
@@ -252,21 +247,16 @@ public class SparkConnectedComponents {
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
 			RandomAccessibleInterval<UnsignedByteType> sourceInterval = null;
 			if(findHoles) {
-				
+				//If doing hole filling, need to set 0s to values for connected components
 				RandomAccessibleInterval<UnsignedLongType> connectedComponents = Views.offsetInterval(Views.extendZero(
 						(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
-						),offset, dimension);
-				
+						),offset, dimension);	
 				sourceInterval = Converters.convert(connectedComponents,
 						(a, b) -> b.set(a.getLong()==0 ? 255 : 0 ), new UnsignedByteType());
-			/*	if(offset[0]==0 && offset[1]==360 && offset[2] ==0) {
-					new ImageJ();
-				ImageJFunctions.show(sourceInterval);
-				}*/
-				
 			}
 			else {
 				if(smooth) {
+					//Gaussian smooth the predictions with a 12 nm (or 3 voxel by default) sigma
 					double [] sigma = new double[] {12.0/pixelResolution[0],12.0/pixelResolution[0],12.0/pixelResolution[0]}; //gives 3 pixel sigma at 4 nm resolution
 					int[] sizes = Gauss3.halfkernelsizes( sigma );
 					long padding = sizes[0];
@@ -279,13 +269,10 @@ public class SparkConnectedComponents {
 					final Img<UnsignedByteType> smoothedPredictions =  new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(paddedDimension);	
 					SimpleGaussRA<UnsignedByteType> gauss = new SimpleGaussRA<UnsignedByteType>(sigma);
 					gauss.compute(rawPredictions, smoothedPredictions);
-					//Gauss3.gauss(sigma, rawPredictions, smoothedPredictions);
-					/*ImageJ ij = new ImageJ();
-					ImageJFunctions.show(rawPredictions);
-					ImageJFunctions.show(smoothedPredictions);*/
 					sourceInterval = Views.offsetInterval(smoothedPredictions,new long[] {padding,padding,padding},dimension);
 					
-				}else {
+				}
+				else {
 					sourceInterval = Views.offsetInterval(Views.extendZero(
 							(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
 							),offset, dimension);
@@ -921,7 +908,7 @@ public class SparkConnectedComponents {
 		double thresholdDistance = options.getThresholdDistance();
 		if(options.getThresholdIntensityCutoff()!=-1) {
 			double thresholdIntensityCutoff = options.getThresholdIntensityCutoff();
-			double x = (thresholdIntensityCutoff-127)/128.0; //128 * Math.tanh(thresholdDistance / 50) + 127;
+			double x = (thresholdIntensityCutoff-127)/128.0; 
 			thresholdDistance = 50*0.5*Math.log( (1.0 + x) / (1.0 - x));
 		}
 		standardConnectedComponentAnalysisWorkflow(conf, options.getInputN5DatasetName(), options.getInputN5Path(), options.getMaskN5Path(), options.getOutputN5Path(), options.getOutputN5DatasetSuffix(), thresholdDistance, options.getMinimumVolumeCutoff(), options.getOnlyKeepLargestComponent(), smooth);

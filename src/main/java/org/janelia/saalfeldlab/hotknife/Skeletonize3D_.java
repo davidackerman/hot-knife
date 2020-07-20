@@ -750,41 +750,10 @@ public class Skeletonize3D_ implements PlugInFilter
 		else return 0;
 	} /* end getPixel */
 	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * Get pixel in 3D image (no border checking) 
-	 * 
-	 * @param image 3D image
-	 * @param x x- coordinate
-	 * @param y y- coordinate
-	 * @param z z- coordinate (in image stacks the indexes start at 1)
-	 * @return corresponding pixel
-	 */
-	private byte getPixelNoCheck(ImageStack image, int x, int y, int z)
-	{		
-		return ((byte[]) image.getPixels(z + 1))[x + y * this.width];		
-	} /* end getPixelNocheck */
-	
 	private byte getPixelNoCheck(RandomAccess<UnsignedByteType> ra, int x, int y, int z) {
 		ra.setPosition(new int[] {x,y,z});
 		return ra.get().getByte();
 	}
-	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * Set pixel in 3D image 
-	 * 
-	 * @param image 3D image
-	 * @param x x- coordinate
-	 * @param y y- coordinate
-	 * @param z z- coordinate (in image stacks the indexes start at 1)
-	 * @param value pixel value
-	 */
-	private void setPixel(ImageStack image, int x, int y, int z, byte value)
-	{
-		if(x >= 0 && x < this.width && y >= 0 && y < this.height && z >= 0 && z < this.depth)
-			((byte[]) image.getPixels(z + 1))[x + y * this.width] = value;
-	} /* end setPixel */
 	
 	private void setPixel(RandomAccess<UnsignedByteType> ra, int x, int y, int z, byte value)
 	{
@@ -794,80 +763,20 @@ public class Skeletonize3D_ implements PlugInFilter
 		}
 	} /* end setPixel */
 
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * North neighborhood (0 border conditions) 
-	 * 
-	 * @param image 3D image
-	 * @param x x- coordinate
-	 * @param y y- coordinate
-	 * @param z z- coordinate (in image stacks the indexes start at 1)
-	 * @return corresponding north pixel
-	 */
-	private byte N(ImageStack image, int x, int y, int z)
-	{
-		return getPixel(image, x, y-1, z);
-	} /* end N */
-	
 	private byte N(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
 	{
 		return getPixel(ra, x, y-1, z);
 	} /* end N */
-	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * South neighborhood (0 border conditions) 
-	 * 
-	 * @param image 3D image
-	 * @param x x- coordinate
-	 * @param y y- coordinate
-	 * @param z z- coordinate (in image stacks the indexes start at 1)
-	 * @return corresponding south pixel
-	 */
-	private byte S(ImageStack image, int x, int y, int z)
-	{
-		return getPixel(image, x, y+1, z);
-	} /* end S */
 	
 	private byte S(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
 	{
 		return getPixel(ra, x, y+1, z);
 	} /* end S */
 	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * East neighborhood (0 border conditions) 
-	 * 
-	 * @param image 3D image
-	 * @param x x- coordinate
-	 * @param y y- coordinate
-	 * @param z z- coordinate (in image stacks the indexes start at 1)
-	 * @return corresponding east pixel
-	 */
-	private byte E(ImageStack image, int x, int y, int z)
-	{
-		return getPixel(image, x+1, y, z);
-	} /* end E */
-	
 	private byte E(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
 	{
 		return getPixel(ra, x+1, y, z);
 	} /* end E */
-	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * West neighborhood (0 border conditions) 
-	 * 
-	 * @param image 3D image
-	 * @param x x- coordinate
-	 * @param y y- coordinate
-	 * @param z z- coordinate (in image stacks the indexes start at 1)
-	 * @return corresponding west pixel
-	 */
-	private byte W(ImageStack image, int x, int y, int z)
-	{
-		return getPixel(image, x-1, y, z);
-	} /* end W */
 	
 	private byte W(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
 	{
@@ -875,40 +784,10 @@ public class Skeletonize3D_ implements PlugInFilter
 	} /* end E */
 	
 	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * Up neighborhood (0 border conditions) 
-	 * 
-	 * @param image 3D image
-	 * @param x x- coordinate
-	 * @param y y- coordinate
-	 * @param z z- coordinate (in image stacks the indexes start at 1)
-	 * @return corresponding up pixel
-	 */
-	private byte U(ImageStack image, int x, int y, int z)
-	{
-		return getPixel(image, x, y, z+1);
-	} /* end U */
-	
 	private byte U(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
 	{
 		return getPixel(ra, x, y, z+1);
 	} /* end U */
-	
-	/* -----------------------------------------------------------------------*/
-	/**
-	 * Bottom neighborhood (0 border conditions) 
-	 * 
-	 * @param image 3D image
-	 * @param x x- coordinate
-	 * @param y y- coordinate
-	 * @param z z- coordinate (in image stacks the indexes start at 1)
-	 * @return corresponding bottom pixel
-	 */
-	private byte B(ImageStack image, int x, int y, int z)
-	{
-		return getPixel(image, x, y, z-1);
-	} /* end B */
 	
 	private byte B(RandomAccess<UnsignedByteType> ra, int x, int y, int z)
 	{
