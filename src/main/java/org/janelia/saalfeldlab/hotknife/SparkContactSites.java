@@ -727,7 +727,7 @@ public class SparkContactSites {
 				for(long [] organelle1SurfaceVoxel : organelle1SurfaceVoxels) {
 					for(long [] organelle2SurfaceVoxel : organelle2SurfaceVoxels) {
 						if(Math.pow(organelle2SurfaceVoxel[0]-organelle1SurfaceVoxel[0],2) + Math.pow(organelle2SurfaceVoxel[1]-organelle1SurfaceVoxel[1],2) + Math.pow(organelle2SurfaceVoxel[2]-organelle1SurfaceVoxel[2],2)<=expandedContactDistanceSquared) { //then could be valid
-							List<long[]> voxelsToCheck = SparkCalculatePropertiesFromMedialSurface.bressenham3D(organelle1SurfaceVoxel,organelle2SurfaceVoxel);
+							List<long[]> voxelsToCheck = Bressenham3D.getLine(organelle1SurfaceVoxel,organelle2SurfaceVoxel);
 							if(!voxelPathEntersObject(organelle1DataRA, organelle2DataRA,voxelsToCheck,allSurfaceVoxelIDs, paddedDimension)) {
 //								if(!voxelPathEntersObject(voxelsToCheck, allSurfaceVoxelIDs,paddedDimension)) {
 //								List<long[]> nonEndpointVoxels = voxelsToCheck.subList(1,voxelsToCheck.size()-2);

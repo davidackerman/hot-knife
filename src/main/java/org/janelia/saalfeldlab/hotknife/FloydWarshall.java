@@ -20,7 +20,12 @@ public class FloydWarshall {
 	public Set<Integer> branchpoints;
 	public Set<Integer> prunedVertices;
  
-	
+	/**
+	 * Constructor to initialize FloydWarshall arrays and variables for distances, connections, endpoints and branchpoints
+	 * 
+	 * @param numVertices	Number of vertices
+	 * @param adjacency		Adjacency matrix map
+	 */
 	public FloydWarshall(int numVertices, Map<List<Integer>,Float> adjacency) {
 		
 		this.prunedVertices = new HashSet<Integer>();
@@ -57,10 +62,21 @@ public class FloydWarshall {
 		branchpoints = new HashSet<Integer>();
 	}
 	
+	/**
+	 * Constructor using adjaceny matrix only
+	 * 
+	 * @param adjacency		Adjacency matrix map
+	 */
 	public FloydWarshall(Map<List<Integer>,Float> adjacency) {
 		this(getNumberOfVertices(adjacency), adjacency);
 	}
 	
+	/**
+	 * Get the number of vertices in adjacency matrix map
+	 * 
+	 * @param adjacency		Adjacency matrix map
+	 * @return 				Number of vertices
+	 */
 	private static int getNumberOfVertices(Map<List<Integer>,Float> adjacency) {
 		HashSet<Integer> uniqueVertices = new HashSet<Integer>();
 		for(List<Integer> key : adjacency.keySet()) {
@@ -71,38 +87,11 @@ public class FloydWarshall {
 	}
 
 
+	/**
+	 * Calculate shortest paths between all vertices using floyd warshall
+	 * 
+	 */
 	public void calculateFloydWarshallPaths() {
-		float newDist;
-		//i>j, k>i
-		for (int k = 0; k < dist.length; ++k) {
-		    for (int i = 0; i < k; ++i) //i<k
-		        for (int j = 0; j <= i; ++j) { //j<i<k (biggest first)
-		        	newDist = dist[k][i] + dist[k][j];
-		        	if(newDist < dist[i][j]) {
-		        		dist[i][j] = newDist;
-		        		next[i][j] = next[k][i];
-		        	}
-		        }
-		    for (int i = k; i < dist.length; ++i) { //k<=i
-		        for (int j = 0; j < k; ++j) { //j<=k<=i
-		        	newDist = dist[i][k] + dist[k][j];
-		        	if(newDist < dist[i][j]) {
-		        		dist[i][j] = newDist;
-		        		next[i][j] = next[i][k];
-		        	}
-		        }
-		        for (int j = k; j <= i; ++j) {//k<=j<=i
-		        	newDist = dist[i][k] + dist[j][k];
-		        	if(newDist < dist[i][j]) {
-		        		dist[i][j] = newDist;
-		        		next[i][j] = next[i][k];
-		        	}
-		        }
-		    }
-		}
-	}
-	
-	public void calculateFloydWarshallPathsOriginal() {
 		float newDist;
 		for (int k = 0; k < dist.length; ++k) {
 		    for (int i = 0; i < dist.length; ++i)
@@ -116,6 +105,11 @@ public class FloydWarshall {
 		}
 
 	}
+	
+	/**
+	 * Get endpoints and branchpoints based on number of connections a point has
+	 * 
+	 */
 	void getEndpointsAndBranchpoints(){
 		endpoints.clear();
 		branchpoints.clear();
@@ -139,6 +133,13 @@ public class FloydWarshall {
 		}
 	}
 	
+	/**
+	 * Get all nodes in shortest path between two nodes
+	 * 
+	 * @param start		Start point of path
+	 * @param end 		End point of path
+	 * @return 			List of indices along shortest path
+	 */
 	public List<Integer> getShortestPath(int start, int end) {
 		List<Integer> shortestPath = new ArrayList<Integer>();
 		shortestPath.add(start);
@@ -153,6 +154,9 @@ public class FloydWarshall {
 		return shortestPath;
 	}
 	
+	/**
+	 * Calculate the longest shortest path properties: start point, end point, and length
+	 */
    public void calculateLongestShortestPathStartEndAndLength() {
 	    longestShortestPathLength = -1;
 		for(int start=0; start<dist.length; start++) {
@@ -166,8 +170,13 @@ public class FloydWarshall {
 		}		
    }
 	
+   	/**
+   	 * Calculate longest shortest path properties and prune branches below minLength repeatedly until none are left. If any were pruned, recalculate longest shortest path.
+   	 *
+   	 * @param minLength		Minimum branch length
+   	 */
    	public void pruneAndCalculateLongestShortestPathInformation(float minLength) {
-		calculateFloydWarshallPathsOriginal();
+		calculateFloydWarshallPaths();
 		calculateLongestShortestPathStartEndAndLength();
 		
 		int numPrunedPrev = -1;
@@ -187,15 +196,22 @@ public class FloydWarshall {
 		System.out.println("Number of vertices: "+dist.length+ ". Longest shortest path: (Start,End,Vertices,Length): "+"("+longestShortestPathStart + ", " + longestShortestPathEnd+", "+ longestShortestPathNumVertices+ ", "+ longestShortestPathLength + ")");
 	}
    
+   	/**
+   	 * Calculate the longest shortest path and its corresponding information.
+   	 */
 	public void calculateLongestShortestPathInformation() {
-		calculateFloydWarshallPathsOriginal();
+		calculateFloydWarshallPaths();
 		calculateLongestShortestPathStartEndAndLength();
 		longestShortestPath = getShortestPath(longestShortestPathStart, longestShortestPathEnd);//longest shortest path;
 		longestShortestPathNumVertices = longestShortestPath.size();
 		System.out.println("Number of vertices: "+dist.length+ ". Longest shortest path: (Start,End,Vertices,Length): "+"("+longestShortestPathStart + ", " + longestShortestPathEnd+", "+ longestShortestPathNumVertices+ ", "+ longestShortestPathLength + ")");
 
 	}
-	 
+	
+	/**
+	 * Prune branches whose length is below minLength
+	 * @param minLength 	Minimum branch length
+	 */
 	public void pruneSkeletons(float minLength) {
 		getEndpointsAndBranchpoints();
 		
@@ -217,6 +233,12 @@ public class FloydWarshall {
 		
 	}
 	
+	/**
+	 * Remove a branch
+	 * 
+	 * @param shortestPathEndpoint 		End of branch
+	 * @param shortestPathBranchpoint 	Start of branch
+	 */
 	public void removeBranch(Integer shortestPathEndpoint, Integer shortestPathBranchpoint) {
 		List<Integer> shortestPath = getShortestPath(shortestPathEndpoint, shortestPathBranchpoint);
 		shortestPath.remove(shortestPathBranchpoint); // don't want to remove branchpoint
@@ -246,15 +268,10 @@ public class FloydWarshall {
 		distanceMap.put(Arrays.asList(102,103),1.0f);
 		distanceMap.put(Arrays.asList(103,104),1.0f);
 		distanceMap.put(Arrays.asList(102,105),1.0f);
-
-		/*distanceMap.put(Arrays.asList(1,11),1.0f);
-		distanceMap.put(Arrays.asList(0,11),1.0f);
-		distanceMap.put(Arrays.asList(11,12),1.0f);
-		distanceMap.put(Arrays.asList(12,13),1.0f);*/
 						
 		FloydWarshall fw = new FloydWarshall(numVertices,distanceMap);
 		long tic = System.currentTimeMillis();
-		//as.calculateFloydWarshallPathsOriginal();
+
 		fw.calculateLongestShortestPathInformation();
 		fw = new FloydWarshall(numVertices,distanceMap);
 		fw.pruneAndCalculateLongestShortestPathInformation(10);

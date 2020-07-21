@@ -82,7 +82,7 @@ import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 
 /**
- * Connected components for an entire n5 volume
+ * Calculate sheetness at contact sites. Outputs file with histogram of sheetness vs surface area at contact sites
  *
  * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
@@ -90,16 +90,16 @@ public class SparkCalculateSheetnessOfContactSites {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
-		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		@Option(name = "--inputN5Path", required = true, usage = "Input N5 path")
 		private String inputN5Path = null;
 
-		@Option(name = "--outputDirectory", required = false, usage = "output N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
+		@Option(name = "--outputDirectory", required = false, usage = "Output N5 path")
 		private String outputDirectory = null;
 
-		@Option(name = "--inputN5SheetnessDatasetName", required = false, usage = "N5 dataset, e.g. /mito")
+		@Option(name = "--inputN5SheetnessDatasetName", required = false, usage = "Volume averaged sheetness N5 dataset")
 		private String inputN5SheetnessDatasetName = null;
 		
-		@Option(name = "--inputN5ContactSiteDatasetName", required = false, usage = "N5 dataset, e.g. /mito")
+		@Option(name = "--inputN5ContactSiteDatasetName", required = false, usage = "Contact site N5 dataset")
 		private String inputN5ContactSiteDatasetName = null;
 		
 
@@ -136,6 +136,18 @@ public class SparkCalculateSheetnessOfContactSites {
 
 	}
 	
+	/**
+	 * Calculates histograms of the sheetness of the desired contact site surface voxels.
+	 * 
+	 * @param sc									Spark context
+	 * @param n5Path								Input N5 path
+	 * @param volumeAveragedSheetnessDatasetName	Dataset name for volume averaged sheetness
+	 * @param contactSiteName						Dataset name corresponding to desired contact sites
+	 * @param blockInformationList					Block information list
+	 * @return										Map of histogram data
+	 * @throws IOException
+	 */
+	@SuppressWarnings("unchecked")
 	public static final Map<Integer,Double> getContactSiteSheetness(
 			final JavaSparkContext sc,
 			final String n5Path,
@@ -143,14 +155,12 @@ public class SparkCalculateSheetnessOfContactSites {
 			final String contactSiteName,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
+		//Set up reader and get information about dataset
 		final N5Reader n5Reader = new N5FSReader(n5Path);
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, volumeAveragedSheetnessDatasetName);
 		double voxelFaceArea = pixelResolution[0]*pixelResolution[1];
 
-		/*
-		 * grid block size for parallelization to minimize double loading of
-		 * blocks
-		 */
+		//Acquire histograms in a blockwise manner
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		JavaRDD<Map<Integer,Double>> javaRDDHistogramMap = rdd.map(blockInformation -> {
 			final long [][] gridBlock = blockInformation.gridBlock;
@@ -160,66 +170,79 @@ public class SparkCalculateSheetnessOfContactSites {
 			long[] paddedOffset = new long[] {offset[0]-1,offset[1]-1,offset[2]-1};
 			long[] paddedDimension = new long[] {dimension[0]+2,dimension[1]+2,dimension[2]+2};
 
-			//Distance Transform
-			
-			IntervalView<UnsignedByteType> volumeAveragedSheetness = Views.offsetInterval(Views.extendZero(
+			//Set up random access for datasets
+			RandomAccessibleInterval<UnsignedByteType> volumeAveragedSheetness = Views.offsetInterval(Views.extendZero(
 					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, volumeAveragedSheetnessDatasetName)
 					),paddedOffset, paddedDimension);
-			
-			
 			RandomAccessibleInterval<UnsignedLongType> contactSites = Views.offsetInterval(Views.extendZero(
 					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5BlockReader, contactSiteName)
 					),paddedOffset, paddedDimension);
-			
+
 			RandomAccess<UnsignedByteType> volumeAveragedSheetnessRA = volumeAveragedSheetness.randomAccess();
 			RandomAccess<UnsignedLongType> contactSitesRA = contactSites.randomAccess();			
 			
-			
-			List<long[]> voxelsToCheck = new ArrayList(); 
-			voxelsToCheck.add(new long[] {-1, 0, 0});
-			voxelsToCheck.add(new long[] {1, 0, 0});
-			voxelsToCheck.add(new long[] {0, -1, 0});
-			voxelsToCheck.add(new long[] {0, 1, 0});
-			voxelsToCheck.add(new long[] {0, 0, -1});
-			voxelsToCheck.add(new long[] {0, 0, 1});
-			
-			Map<Integer,Double> sheetnessAndSurfaceAreaHistogram = new HashMap<Integer,Double>();
-
-			for(long x=1; x<paddedDimension[0]-1;x++) {
-				for(long y=1; y<paddedDimension[1]-1;y++) {
-					for(long z=1; z<paddedDimension[2]-1;z++) {
-						long [] pos = new long[]{x,y,z};
-						volumeAveragedSheetnessRA.setPosition(pos);
-						contactSitesRA.setPosition(pos);
-						int sheetnessMeasureBin = volumeAveragedSheetnessRA.get().get();
-
-						if(sheetnessMeasureBin>0 && contactSitesRA.get().get()>0) {//Then is on surface and contact site
-							int faces = getSurfaceAreaContributionOfVoxelInFaces(volumeAveragedSheetnessRA, voxelsToCheck);
-							if(faces>0) {
-								sheetnessAndSurfaceAreaHistogram.put(sheetnessMeasureBin, sheetnessAndSurfaceAreaHistogram.getOrDefault(sheetnessMeasureBin,0.0)+faces*voxelFaceArea);
-							}
-						}
-					}
-				}
-			}
+			//Build histogram
+			Map<Integer,Double> sheetnessAndSurfaceAreaHistogram = buildSheetnessAndSurfaceAreaHistogram(paddedDimension, volumeAveragedSheetnessRA, contactSitesRA, voxelFaceArea);
 			return sheetnessAndSurfaceAreaHistogram;
 		});
 		
-		 Map<Integer, Double> sheetnessAndSurfaceAreaHistogram = javaRDDHistogramMap.reduce((a,b) -> {
+		//Collect histograms
+		Map<Integer, Double> sheetnessAndSurfaceAreaHistogram = javaRDDHistogramMap.reduce((a,b) -> {
 			 for(Entry<Integer,Double> entry : b.entrySet())
 					a.put(entry.getKey(), a.getOrDefault(entry.getKey(), 0.0) + entry.getValue() );
 			return a;
 		});
 		
 		return sheetnessAndSurfaceAreaHistogram;
-		
 	}
-	public static int getSurfaceAreaContributionOfVoxelInFaces(final RandomAccess<UnsignedByteType> ra, List<long[]> voxelsToCheck) {
+	
+	/**
+	 * Loops over voxels to build up a histogram of the sheetness of the volume averaged sheetness at contact sites
+	 * 
+	 * @param paddedDimension			Padded dimensions of block
+	 * @param volumeAveragedSheetnessRA Random access for volume averaged sheetness dataset
+	 * @param contactSitesRA			Random access for contact site dataset
+	 * @param voxelFaceArea				Surface area of voxel face
+	 * @return							Map containing the histogram data
+	 */
+	
+	public static Map<Integer,Double> buildSheetnessAndSurfaceAreaHistogram(long[] paddedDimension, RandomAccess<UnsignedByteType> volumeAveragedSheetnessRA, RandomAccess<UnsignedLongType> contactSitesRA, double voxelFaceArea){
+		
+		Map<Integer,Double> sheetnessAndSurfaceAreaHistogram = new HashMap<Integer,Double>();
+		for(long x=1; x<paddedDimension[0]-1;x++) {
+			for(long y=1; y<paddedDimension[1]-1;y++) {
+				for(long z=1; z<paddedDimension[2]-1;z++) {
+					long [] pos = new long[]{x,y,z};
+					volumeAveragedSheetnessRA.setPosition(pos);
+					contactSitesRA.setPosition(pos);
+					int sheetnessMeasureBin = volumeAveragedSheetnessRA.get().get();
+	
+					if(sheetnessMeasureBin>0 && contactSitesRA.get().get()>0) {//Then is on surface and contact site
+						int faces = getSurfaceAreaContributionOfVoxelInFaces(volumeAveragedSheetnessRA);
+						if(faces>0) {
+							sheetnessAndSurfaceAreaHistogram.put(sheetnessMeasureBin, sheetnessAndSurfaceAreaHistogram.getOrDefault(sheetnessMeasureBin,0.0)+faces*voxelFaceArea);
+						}
+					}
+				}
+			}
+		}
+		
+		return sheetnessAndSurfaceAreaHistogram;
+	}
+	
+	/**
+	 * Get the number of voxel faces that are part of the object surface
+	 * 
+	 * @param ra	Random accessible
+	 * @return		Number of voxel faces on surface
+	 */
+	public static int getSurfaceAreaContributionOfVoxelInFaces(final RandomAccess<UnsignedByteType> ra) {
+		
 		final long pos[] = {ra.getLongPosition(0), ra.getLongPosition(1), ra.getLongPosition(2)};
 		int surfaceAreaContributionOfVoxelInFaces = 0;
 
 
-		for(long[] currentVoxel : voxelsToCheck) {
+		for(long[] currentVoxel : SparkCosemHelper.voxelsToCheckForSurface) {
 			final long currentPosition[] = {pos[0]+currentVoxel[0], pos[1]+currentVoxel[1], pos[2]+currentVoxel[2]};
 			ra.setPosition(currentPosition);
 			if(ra.get().get() ==0) {
