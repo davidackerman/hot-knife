@@ -20,10 +20,8 @@ import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -37,7 +35,6 @@ import java.util.stream.Collectors;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.hotknife.util.Grid;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
@@ -63,7 +60,6 @@ import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.LongArray;
-import net.imglib2.type.NativeType;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.util.Intervals;
@@ -176,20 +172,21 @@ public class SparkConnectedComponents {
 	 * Takes as input a threshold intensity, above which voxels are used for
 	 * calculating connected components. Parallelization is done using a
 	 * blockInformationList.
-	 *
-	 * @param sc
-	 * @param inputN5Path
-	 * @param inputN5DatasetName
-	 * @param outputN5Path
-	 * @param outputN5DatasetName
-	 * @param maskN5PathName
-	 * @param thresholdIntensity
-	 * @param blockInformationList
+	 * 
+	 * @param sc						Spark context
+	 * @param inputN5Path				Input N5 path
+	 * @param inputN5DatasetName		Input N5 dataset name
+	 * @param outputN5Path				Output N5 path
+	 * @param outputN5DatasetName		Output N5 dataset name
+	 * @param maskN5PathName			Mask N5 path
+	 * @param thresholdIntensityCutoff 	Threshold intensity cutoff, below which values will be set to 0
+	 * @param minimumVolumeCutoff		Minimum volume cutoff, above which objects will be kept
+	 * @param blockInformationList		List of block information
+	 * @return							List of block information
 	 * @throws IOException
 	 */
-	
 	//TODO: add rectangle connected components for blockwise. so far only added it to union find
-	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
+	public static final List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
 			final double thresholdIntensityCutoff, double minimumVolumeCutoff, List<BlockInformation> blockInformationList) throws IOException {
@@ -201,7 +198,28 @@ public class SparkConnectedComponents {
 				thresholdIntensityCutoff, minimumVolumeCutoff, blockInformationList, false, true);	
 	}
 	
-	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
+	/**
+	 * Find connected components on a block-by-block basis and write out to
+	 * temporary n5.
+	 *
+	 * Takes as input a threshold intensity, above which voxels are used for
+	 * calculating connected components. Parallelization is done using a
+	 * blockInformationList.
+	 * 
+	 * @param sc						Spark context
+	 * @param inputN5Path				Input N5 path
+	 * @param inputN5DatasetName		Input N5 dataset name
+	 * @param outputN5Path				Output N5 path
+	 * @param outputN5DatasetName		Output N5 dataset name
+	 * @param maskN5PathName			Mask N5 path
+	 * @param thresholdIntensityCutoff 	Threshold intensity cutoff, below which values will be set to 0
+	 * @param minimumVolumeCutoff		Minimum volume cutoff, above which objects will be kept
+	 * @param smooth					Whether or not to smooth the input
+	 * @param blockInformationList		List of block information
+	 * @return							List of block information
+	 * @throws IOException
+	 */
+	public static List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
 			final double thresholdIntensityCutoff, double minimumVolumeCutoff, boolean smooth, List<BlockInformation> blockInformationList) throws IOException {
@@ -213,8 +231,30 @@ public class SparkConnectedComponents {
 				thresholdIntensityCutoff, minimumVolumeCutoff, blockInformationList, false, smooth);	
 	}
 	
+	/**
+	 * Find connected components on a block-by-block basis and write out to
+	 * temporary n5.
+	 *
+	 * Takes as input a threshold intensity, above which voxels are used for
+	 * calculating connected components. Parallelization is done using a
+	 * blockInformationList.
+	 * 
+	 * @param sc						Spark context
+	 * @param inputN5Path				Input N5 path
+	 * @param inputN5DatasetName		Input N5 dataset name
+	 * @param outputN5Path				Output N5 path
+	 * @param outputN5DatasetName		Output N5 dataset name
+	 * @param maskN5PathName			Mask N5 path
+	 * @param thresholdIntensityCutoff 	Threshold intensity cutoff, below which values will be set to 0
+	 * @param minimumVolumeCutoff		Minimum volume cutoff, above which objects will be kept
+	 * @param findHoles					Find holes (zero values) vs objects (non-zero values)
+	 * @param smooth					Whether or not to smooth the input
+	 * @param blockInformationList		List of block information
+	 * @return							List of block information
+	 * @throws IOException
+	 */
 	@SuppressWarnings("unchecked")
-	public static final <T extends NativeType<T>> List<BlockInformation> blockwiseConnectedComponents(
+	public static final List<BlockInformation> blockwiseConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName,
 			final String outputN5Path, final String outputN5DatasetName, final String maskN5PathName,
 			final double thresholdIntensityCutoff, double minimumVolumeCutoff, List<BlockInformation> blockInformationList, boolean findHoles, boolean smooth) throws IOException {
@@ -328,23 +368,23 @@ public class SparkConnectedComponents {
 
 		return blockInformationList;
 	}
-
-
 	
 	/**
-	 * Merge all necessary objects obtained from blockwise connected components.
+	 * Union find to determine all necessary objects to merge from blockwise connected components. Assumes diamond shape.
 	 *
 	 * Determines which objects need to be fused based on which ones touch at the
 	 * boundary between blocks. Then performs the corresponding union find so each
 	 * complete object has a unique id. Parallelizes over block information list.
-	 *
-	 * @param sc
-	 * @param inputN5Path
-	 * @param inputN5DatasetName
-	 * @param blockInformationList
+	 * 
+	 * @param sc					Spark context
+	 * @param inputN5Path			Input N5 path
+	 * @param inputN5DatasetName	Input N5 dataset name
+	 * @param minimumVolumeCutoff	Minimum volume cutoff, above which objects will be kept
+	 * @param blockInformationList	Block information list
+	 * @return						Block information list
 	 * @throws IOException
 	 */
-	public static final <T extends NativeType<T>> List<BlockInformation> unionFindConnectedComponents(
+	public static final List<BlockInformation> unionFindConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, double minimumVolumeCutoff,
 			List<BlockInformation> blockInformationList) throws IOException
 	{
@@ -352,7 +392,23 @@ public class SparkConnectedComponents {
 		return unionFindConnectedComponents(sc, inputN5Path, inputN5DatasetName, minimumVolumeCutoff, diamondShape, blockInformationList);
 	}
 	
-	public static final <T extends NativeType<T>> List<BlockInformation> unionFindConnectedComponents(
+	/**
+	 * Union find to determine all necessary objects to merge from blockwise connected components. Can choose diamond/rectangular shape.
+	 *
+	 * Determines which objects need to be fused based on which ones touch at the
+	 * boundary between blocks. Then performs the corresponding union find so each
+	 * complete object has a unique id. Parallelizes over block information list.
+	 * 
+	 * @param sc					Spark context
+	 * @param inputN5Path			Input N5 path
+	 * @param inputN5DatasetName	Input N5 dataset name
+	 * @param minimumVolumeCutoff	Minimum volume cutoff, above which objects will be kept
+	 * @param diamondShape			Do diamond shape if true, else do rectangular shape
+	 * @param blockInformationList	Block information list
+	 * @return						Block information list
+	 * @throws IOException
+	 */
+	public static final List<BlockInformation> unionFindConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, double minimumVolumeCutoff,
 			boolean diamondShape, List<BlockInformation> blockInformationList) throws IOException {
 
@@ -500,24 +556,41 @@ public class SparkConnectedComponents {
 	 * Reads in blockwise-connected component data and relabels touching objects
 	 * using the block information map, writing the data to the final output n5
 	 *
-	 * @param sc
-	 * @param inputN5Path
-	 * @param datasetName
-	 * @param inputN5DatasetName
-	 * @param outputN5DatasetName
-	 * @param blockInformationList
-	 * @return
+	 * @param sc					Spark context
+	 * @param inputN5Path			Input N5 path
+	 * @param datasetName			Dataset name
+	 * @param inputN5DatasetName	Input N5 dataset name
+	 * @param outputN5DatasetName	Output N5 dataset name
+	 * @param blockInformationList	List of block information
+	 * @return						List of block information
 	 * @throws IOException
 	 */
-	public static final <T extends NativeType<T>> void mergeConnectedComponents(final JavaSparkContext sc,
+	public static final void mergeConnectedComponents(final JavaSparkContext sc,
 			final String inputN5Path, final String inputN5DatasetName, final String outputN5DatasetName,
 			final List<BlockInformation> blockInformationList) throws IOException {
 			mergeConnectedComponents(sc,
 				inputN5Path,inputN5DatasetName, outputN5DatasetName, false,
 				blockInformationList);
 	}
+	
+	/**
+	 * Merge touching objects by relabeling them to common root with option to only keep largest component
+	 *
+	 * Reads in blockwise-connected component data and relabels touching objects
+	 * using the block information map, writing the data to the final output n5
+	 * 
+	 * @param sc						Spark context
+	 * @param inputN5Path				Input N5 path
+	 * @param datasetName				Dataset name
+	 * @param inputN5DatasetName		Input N5 dataset name
+	 * @param outputN5DatasetName		Output N5 dataset name
+	 * @param onlyKeepLargestComponent	If true, only keeps largest object
+	 * @param blockInformationList		List of block information
+	 * @return							List of block information
+	 * @throws IOException
+	 */
 	@SuppressWarnings("unchecked")
-	public static final <T extends NativeType<T>> void mergeConnectedComponents(final JavaSparkContext sc,
+	public static final void mergeConnectedComponents(final JavaSparkContext sc,
 			final String inputN5Path, final String inputN5DatasetName, final String outputN5DatasetName, boolean onlyKeepLargestComponent,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
@@ -580,35 +653,43 @@ public class SparkConnectedComponents {
 
 	}
 	
-
-	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
-			final String inputN5DatasetName) throws IOException {
-		//Get block attributes
-		N5Reader n5Reader = new N5FSReader(inputN5Path);
-		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
-		final int[] blockSize = attributes.getBlockSize();
-		final long[] outputDimensions = attributes.getDimensions();
-		//final long[] outputDimensions = new long[] {501,501,501};
-
-		//Build list
-		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
-		List<BlockInformation> blockInformationList = new ArrayList<BlockInformation>();
-		for (int i = 0; i < gridBlockList.size(); i++) {
-			long[][] currentGridBlock = gridBlockList.get(i);
-			blockInformationList.add(new BlockInformation(currentGridBlock, null, null));
-		}
-		return blockInformationList;
-	}
-
+	/**
+	 * Actually compute the connected components for a given block of data, setting global IDs and enforcing minimum volume cutoff. Assumes diamond shape.
+	 * 
+	 * @param blockInformation			Block information
+	 * @param sourceInterval			Interval on which to calculate connected components
+	 * @param output					Interval which stores connected components
+	 * @param outputDimensions			Output dimensions
+	 * @param blockSize					Block size
+	 * @param offset					Offset
+	 * @param thresholdIntensityCutoff	Threshold intensity cutoff, below which values will be set to 0
+	 * @param minimumVolumeCutoff		Minimum volume cutoff, above which objects will be kept
+	 * @param shape						Diamond or rectangular shape for connected components
+	 * @return							Block information
+	 */
 	public static BlockInformation computeConnectedComponents(BlockInformation blockInformation, RandomAccessibleInterval<UnsignedByteType> sourceInterval,
-			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
+			RandomAccessibleInterval<UnsignedLongType> output, long[] outputDimensions, long[] blockSize,
 			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff) {
-			return computeConnectedComponents(blockInformation, sourceInterval, output, sourceDimensions, outputDimensions, offset, thresholdIntensityCutoff, minimumVolumeCutoff, new DiamondShape(1));
+			return computeConnectedComponents(blockInformation, sourceInterval, output, outputDimensions, blockSize, offset, thresholdIntensityCutoff, minimumVolumeCutoff, new DiamondShape(1));
 
 	}
 	
+	/**
+	 * Actually compute the connected components for a given block of data, setting global IDs and enforcing minimum volume cutoff.
+	 * 
+	 * @param blockInformation			Block information
+	 * @param sourceInterval			Interval on which to calculate connected components
+	 * @param output					Interval which stores connected components
+	 * @param outputDimensions			Output dimensions
+	 * @param blockSize					Block size
+	 * @param offset					Offset
+	 * @param thresholdIntensityCutoff	Threshold intensity cutoff, below which values will be set to 0
+	 * @param minimumVolumeCutoff		Minimum volume cutoff, above which objects will be kept
+	 * @param shape						Diamond or rectangular shape for connected components
+	 * @return							Block information
+	 */
 	public static BlockInformation computeConnectedComponents(BlockInformation blockInformation, RandomAccessibleInterval<UnsignedByteType> sourceInterval,
-			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
+			RandomAccessibleInterval<UnsignedLongType> output, long[] outputDimensions, long[] blockSize,
 			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff, Shape shape) {
 
 		// Threshold sourceInterval using thresholdIntensityCutoff
@@ -626,7 +707,7 @@ public class SparkConnectedComponents {
 
 		// Relabel object ids with unique ids corresponding to a global voxel index
 		// within the object, and store/return object ids on edge
-		long[] defaultIDtoGlobalID = new long[(int) (outputDimensions[0] * outputDimensions[1] * outputDimensions[2])];
+		long[] defaultIDtoGlobalID = new long[(int) (blockSize[0] * blockSize[1] * blockSize[2])];
 		Set<Long> edgeComponentIDs = new HashSet<>();
 		Map<Long,Long> allComponentIDtoVolumeMap = new HashMap<>();
 		while (o.hasNext()) {
@@ -649,8 +730,7 @@ public class SparkConnectedComponents {
 
 					// Unique global ID is based on pixel index, +1 to differentiate it from
 					// background
-					long globalID = sourceDimensions[0] * sourceDimensions[1] * currentVoxelPosition[2]
-							+ sourceDimensions[0] * currentVoxelPosition[1] + currentVoxelPosition[0] + 1;
+					long globalID = SparkCosemHelper.convertPositionToGlobalID(currentVoxelPosition, outputDimensions);
 
 					defaultIDtoGlobalID[defaultID] = globalID;
 				}
@@ -658,9 +738,9 @@ public class SparkConnectedComponents {
 				tO.setLong(defaultIDtoGlobalID[defaultID]);
 
 				// Store ids of objects on the edge of a block
-				if (o.getIntPosition(0) == 0 || o.getIntPosition(0) == outputDimensions[0] - 1
-						|| o.getIntPosition(1) == 0 || o.getIntPosition(1) == outputDimensions[1] - 1
-						|| o.getIntPosition(2) == 0 || o.getIntPosition(2) == outputDimensions[2] - 1) {
+				if (o.getIntPosition(0) == 0 || o.getIntPosition(0) == blockSize[0] - 1
+						|| o.getIntPosition(1) == 0 || o.getIntPosition(1) == blockSize[1] - 1
+						|| o.getIntPosition(2) == 0 || o.getIntPosition(2) == blockSize[2] - 1) {
 					edgeComponentIDs.add(defaultIDtoGlobalID[defaultID]);
 				}
 				allComponentIDtoVolumeMap.put(defaultIDtoGlobalID[defaultID], allComponentIDtoVolumeMap.getOrDefault(defaultIDtoGlobalID[defaultID],0L)+1);	
@@ -705,30 +785,72 @@ public class SparkConnectedComponents {
 		
 		return blockInformation;
 	}
+	
+	/**
+	 * Actually compute the connected components for a given block of data, setting global IDs and enforcing minimum volume cutoff. Assumes diamond shape
+	 * 
+	 * @param sourceInterval			Interval on which to calculate connected components
+	 * @param output					Interval which stores connected components
+	 * @param outputDimensions			Output dimensions
+	 * @param blockSize					Block size
+	 * @param offset					Offset
+	 * @param thresholdIntensityCutoff	Threshold intensity cutoff, below which values will be set to 0
+	 * @param minimumVolumeCutoff		Minimum volume cutoff, above which objects will be kept
+	 * @return							Map of edge component ID to volumes
+	 */
 	public static Map<Long,Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
-			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
+			RandomAccessibleInterval<UnsignedLongType> output, long[] outputDimensions, long[] blockSize,
 			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff){
 		
-		return computeConnectedComponents(sourceInterval, output, sourceDimensions, outputDimensions, offset, thresholdIntensityCutoff, minimumVolumeCutoff, new DiamondShape(1));
+		return computeConnectedComponents(sourceInterval, output, outputDimensions, blockSize, offset, thresholdIntensityCutoff, minimumVolumeCutoff, new DiamondShape(1));
 	}
 	
+	/**
+	 * Actually compute the connected components for a given block of data, setting global IDs and enforcing minimum volume cutoff
+	 * 
+	 * @param sourceInterval			Interval on which to calculate connected components
+	 * @param output					Interval which stores connected components
+	 * @param outputDimensions			Output dimensions
+	 * @param blockSize					Block size
+	 * @param offset					Offset
+	 * @param thresholdIntensityCutoff	Threshold intensity cutoff, below which values will be set to 0
+	 * @param minimumVolumeCutoff		Minimum volume cutoff, above which objects will be kept
+	 * @param shape						Rectangular or diamond shape for connected components
+	 * @return							Map of edge component ID to volumes
+	 */
 	public static Map<Long,Long> computeConnectedComponents(RandomAccessibleInterval<UnsignedByteType> sourceInterval,
-			RandomAccessibleInterval<UnsignedLongType> output, long[] sourceDimensions, long[] outputDimensions,
+			RandomAccessibleInterval<UnsignedLongType> output, long[] outputDimensions, long[] blockSize,
 			long[] offset, double thresholdIntensityCutoff, int minimumVolumeCutoff, Shape shape) {
 
 		BlockInformation blockInformation = new BlockInformation();
 		blockInformation = computeConnectedComponents(blockInformation, sourceInterval,
-				output,  sourceDimensions,  outputDimensions,
+				output,  outputDimensions,  blockSize,
 				offset, thresholdIntensityCutoff, minimumVolumeCutoff, shape);
 
 		return blockInformation.edgeComponentIDtoVolumeMap;
 	}
+	
+	/**
+	 * Get the ids on the edges (hypersSlice1 and hyperSlice2) that need to be merged together
+	 * 
+	 * @param hyperSlice1			Edge of block 1
+	 * @param hyperSlice2			Edge of block 2
+	 * @param globalIDtoGlobalIDSet	Set of pairs of IDs to merge
+	 * @param diamondShape			If true use diamond shape, else use rectangle shape
+	 */
 	public static final void getGlobalIDsToMerge(RandomAccessibleInterval<UnsignedLongType> hyperSlice1,
 			RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Set<List<Long>> globalIDtoGlobalIDSet, boolean diamondShape) {
 		if(diamondShape) getGlobalIDsToMergeDiamondShape(hyperSlice1, hyperSlice2, globalIDtoGlobalIDSet);
 		else {getGlobalIDsToMergeRectangleShape(hyperSlice1, hyperSlice2, globalIDtoGlobalIDSet);}
 	}
 	
+	/**
+	 * Get the ids on the edges (hypersSlice1 and hyperSlice2) that need to be merged together when using diamond shape
+	 * 
+	 * @param hyperSlice1			Edge of block 1
+	 * @param hyperSlice2			Edge of block 2
+	 * @param globalIDtoGlobalIDSet	Set of pairs of IDs to merge
+	 */
 	public static final void getGlobalIDsToMergeDiamondShape(RandomAccessibleInterval<UnsignedLongType> hyperSlice1,
 			RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Set<List<Long>> globalIDtoGlobalIDSet) {
 		// The global IDS that need to be merged are those that are touching along the
@@ -749,6 +871,13 @@ public class SparkConnectedComponents {
 		}
 	}
 	
+	/**
+	 * Get the ids on the edges (hypersSlice1 and hyperSlice2) that need to be merged together when using rectangle shape
+	 * 
+	 * @param hyperSlice1			Edge of block 1
+	 * @param hyperSlice2			Edge of block 2
+	 * @param globalIDtoGlobalIDSet	Set of pairs of IDs to merge
+	 */
 	public static final void getGlobalIDsToMergeRectangleShape(RandomAccessibleInterval<UnsignedLongType> hyperSlice1,
 			RandomAccessibleInterval<UnsignedLongType> hyperSlice2, Set<List<Long>> globalIDtoGlobalIDSet) {
 		// The global IDS that need to be merged are those that are touching along the
@@ -819,23 +948,40 @@ public class SparkConnectedComponents {
 			}
 		}
 	}
-
-	public static void logMemory(final String context) {
-		final long freeMem = Runtime.getRuntime().freeMemory() / 1000000L;
-		final long totalMem = Runtime.getRuntime().totalMemory() / 1000000L;
-		logMsg(context + ", Total: " + totalMem + " MB, Free: " + freeMem + " MB, Delta: " + (totalMem - freeMem)
-				+ " MB");
-	}
-
-	public static void logMsg(final String msg) {
-		final String ts = new SimpleDateFormat("HH:mm:ss").format(new Date()) + " ";
-		System.out.println(ts + " " + msg);
-	}
 	
+	/**
+	 * The standard (usual) connected components workflow, with smoothing on
+	 * 
+	 * @param conf						Spark conf
+	 * @param inputN5DatasetName		Input N5 dataset name
+	 * @param inputN5Path				Input N5 path
+	 * @param maskN5Path				Mask N5 path
+	 * @param outputN5Path				Output N5 path
+	 * @param outputN5DatasetSuffix		Output N5 datset suffix
+	 * @param thresholdDistance			Threshold distance used to calculate intensity cutoff
+	 * @param minimumVolumeCutoff		Minimum object volume cutoff
+	 * @param onlyKeepLargestComponent	Whether or not to keep only largest component
+	 * @throws IOException
+	 */
 	public static void standardConnectedComponentAnalysisWorkflow(SparkConf conf, String inputN5DatasetName, String inputN5Path, String maskN5Path, String outputN5Path, String outputN5DatasetSuffix, double thresholdDistance, double minimumVolumeCutoff, boolean onlyKeepLargestComponent ) throws IOException {
 			standardConnectedComponentAnalysisWorkflow(conf, inputN5DatasetName, inputN5Path, maskN5Path, outputN5Path, outputN5DatasetSuffix, thresholdDistance, minimumVolumeCutoff, onlyKeepLargestComponent, true );
 		}
 	
+	/**
+	 * The standard (usual) connected components workflow with option to smooth input
+	 * 
+	 * @param conf						Spark conf
+	 * @param inputN5DatasetName		Input N5 dataset name
+	 * @param inputN5Path				Input N5 path
+	 * @param maskN5Path				Mask N5 path
+	 * @param outputN5Path				Output N5 path
+	 * @param outputN5DatasetSuffix		Output N5 datset suffix
+	 * @param thresholdDistance			Threshold distance used to calculate intensity cutoff
+	 * @param minimumVolumeCutoff		Minimum object volume cutoff
+	 * @param onlyKeepLargestComponent	Whether or not to keep only largest component
+	 * @param smooth					Whether or not to smooth input
+	 * @throws IOException
+	 */
 	public static void standardConnectedComponentAnalysisWorkflow(SparkConf conf, String inputN5DatasetName, String inputN5Path, String maskN5Path, String outputN5Path, String outputN5DatasetSuffix, double thresholdDistance, double minimumVolumeCutoff, boolean onlyKeepLargestComponent, boolean smooth ) throws IOException {
 		// Get all organelles
 		String[] organelles = { "" };
@@ -860,12 +1006,12 @@ public class SparkConnectedComponents {
 		String finalOutputN5DatasetName = null;
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (String currentOrganelle : organelles) {
-			logMemory(currentOrganelle);	
+			SparkCosemHelper.logMemory(currentOrganelle);	
 			tempOutputN5DatasetName = currentOrganelle + outputN5DatasetSuffix + "_blockwise_temp_to_delete";
 			finalOutputN5DatasetName = currentOrganelle + outputN5DatasetSuffix;
 			
 			//Create block information list
-			List<BlockInformation> blockInformationList = buildBlockInformationList(inputN5Path,
+			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(inputN5Path,
 				currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 		
@@ -875,14 +1021,14 @@ public class SparkConnectedComponents {
 			blockInformationList = blockwiseConnectedComponents(sc, inputN5Path, currentOrganelle,
 					outputN5Path, tempOutputN5DatasetName, maskN5Path,
 					thresholdIntensityCutoff, minimumVolumeCutoff, smooth, blockInformationList);
-			logMemory("Stage 1 complete");
+			SparkCosemHelper.logMemory("Stage 1 complete");
 			
 			blockInformationList = unionFindConnectedComponents(sc, outputN5Path, tempOutputN5DatasetName, minimumVolumeCutoff,
 					blockInformationList);
-			logMemory("Stage 2 complete");
+			SparkCosemHelper.logMemory("Stage 2 complete");
 			
 			mergeConnectedComponents(sc, outputN5Path, tempOutputN5DatasetName, finalOutputN5DatasetName, onlyKeepLargestComponent,blockInformationList);
-			logMemory("Stage 3 complete");
+			SparkCosemHelper.logMemory("Stage 3 complete");
 
 			directoriesToDelete.add(outputN5Path + "/" + tempOutputN5DatasetName);
 			
@@ -891,10 +1037,18 @@ public class SparkConnectedComponents {
 
 		//Remove temporary files
 		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
-		logMemory("Stage 4 complete");
+		SparkCosemHelper.logMemory("Stage 4 complete");
 
 	}
 	
+	/**
+	 * Run analysis given input options
+	 * 
+	 * @param args
+	 * @throws IOException
+	 * @throws InterruptedException
+	 * @throws ExecutionException
+	 */
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 
 		final Options options = new Options(args);

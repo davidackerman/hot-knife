@@ -13,10 +13,10 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 
+/**
+ * Class to help with getting correctly padded distance transform
+ */
 public class CorrectlyPaddedDistanceTransform{
-	/**
-	 * Class to help with getting correctly padded distance transform
-	 */
 	public long [] padding, paddedOffset, paddedDimension;
 	public NativeImg<FloatType, ?> correctlyPaddedDistanceTransform;
 	

@@ -241,8 +241,7 @@ public class SparkVolumeFilterConnectedComponents {
 
 		for (String currentOrganelle : organelles) {
 			// Create block information list
-			List<BlockInformation> blockInformationList = SparkConnectedComponents
-								.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
+			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			
 			Set<Long> idsToKeep = new HashSet<Long>();

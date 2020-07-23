@@ -18,10 +18,8 @@ package org.janelia.saalfeldlab.hotknife;
 
 import java.io.File;
 import java.io.FileWriter;
-import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -107,6 +105,38 @@ public class SparkCalculatePropertiesFromMedialSurface {
 			return outputN5Path;
 		}
 
+	}
+	
+	/**
+	 * Class to contain histograms as maps for sheetness, thickness, surface area and volume
+	 */
+	public static class HistogramMaps implements Serializable{
+		private static final long serialVersionUID = 1L;
+		public Map<List<Integer>,Long> sheetnessAndThicknessHistogram;
+		public Map<Integer,Double> sheetnessAndSurfaceAreaHistogram;
+		public Map<Integer,Double> sheetnessAndVolumeHistogram;
+
+		public HistogramMaps(Map<List<Integer>, Long> sheetnessAndThicknessHistogram,Map<Integer,Double> sheetnessAndSurfaceAreaHistogram, Map<Integer,Double> sheetnessAndVolumeHistogram){
+			this.sheetnessAndThicknessHistogram = sheetnessAndThicknessHistogram;
+			this.sheetnessAndSurfaceAreaHistogram = sheetnessAndSurfaceAreaHistogram;
+			this.sheetnessAndVolumeHistogram = sheetnessAndVolumeHistogram;
+		}
+		
+		public void merge(HistogramMaps newHistogramMaps) {
+			//merge holeIDtoObjectIDMap
+			for(Entry<List<Integer>,Long> entry : newHistogramMaps.sheetnessAndThicknessHistogram.entrySet()) 
+				sheetnessAndThicknessHistogram.put(entry.getKey(), sheetnessAndThicknessHistogram.getOrDefault(entry.getKey(), 0L) + entry.getValue() );
+
+			//merge holeIDtoVolumeMap
+			for(Entry<Integer,Double> entry : newHistogramMaps.sheetnessAndSurfaceAreaHistogram.entrySet())
+				sheetnessAndSurfaceAreaHistogram.put(entry.getKey(), sheetnessAndSurfaceAreaHistogram.getOrDefault(entry.getKey(), 0.0) + entry.getValue() );
+			
+			//merge objectIDtoVolumeMap
+			for(Entry<Integer,Double> entry : newHistogramMaps.sheetnessAndVolumeHistogram.entrySet())
+				sheetnessAndVolumeHistogram.put(entry.getKey(), sheetnessAndVolumeHistogram.getOrDefault(entry.getKey(), 0.0) + entry.getValue() );
+		
+		}
+		
 	}
 	
 	/**
@@ -207,29 +237,7 @@ public class SparkCalculatePropertiesFromMedialSurface {
 		return histogramMaps;
 		
 	}
-	
-	/**
-	 * Count how many faces of a voxel are exposed to the surface
-	 * 
-	 * @param countsRandomAccess 	Random access for counts image
-	 * @return						Number of faces on surface
-	 */
-	public static int getSurfaceAreaContributionOfVoxelInFaces(final RandomAccess<UnsignedIntType> countsRandomAccess) {
-		
-		final long pos[] = {countsRandomAccess.getLongPosition(0), countsRandomAccess.getLongPosition(1), countsRandomAccess.getLongPosition(2)};
-		int surfaceAreaContributionOfVoxelInFaces = 0;
 
-		for(long[] currentVoxel : SparkCosemHelper.voxelsToCheckForSurface) {
-			final long currentPosition[] = {pos[0]+currentVoxel[0], pos[1]+currentVoxel[1], pos[2]+currentVoxel[2]};
-			countsRandomAccess.setPosition(currentPosition);
-			if(countsRandomAccess.get().get() ==0) {
-				surfaceAreaContributionOfVoxelInFaces ++;
-			}
-		}
-
-		return surfaceAreaContributionOfVoxelInFaces;	
-	
-	}
 	
 	/**
 	 * Update sheetness sum and count images which are used to calculate the volume averaged sheetness.
@@ -338,7 +346,7 @@ public class SparkCalculatePropertiesFromMedialSurface {
 						sheetnessSumRA.get().set(sheetnessMeasure);//take average
 						int sheetnessMeasureBin = (int) Math.floor(sheetnessMeasure*256);
 						sheetnessAndVolumeHistogram.put(sheetnessMeasureBin, sheetnessAndVolumeHistogram.getOrDefault(sheetnessMeasureBin,0.0)+voxelVolume);
-						int faces = getSurfaceAreaContributionOfVoxelInFaces(countsRA);
+						int faces = SparkCosemHelper.getSurfaceAreaContributionOfVoxelInFaces(countsRA);
 						if(faces>0) {
 							sheetnessAndSurfaceAreaHistogram.put(sheetnessMeasureBin, sheetnessAndSurfaceAreaHistogram.getOrDefault(sheetnessMeasureBin,0.0)+faces*voxelFaceArea);
 						}
@@ -363,7 +371,6 @@ public class SparkCalculatePropertiesFromMedialSurface {
 	 * @param datasetName		Dataset name that is being analyzed
 	 * @throws IOException
 	 */
-	
 	public static void writeData(HistogramMaps histogramMaps, String outputDirectory, String datasetName) throws IOException {
 		if (! new File(outputDirectory).exists()){
 			new File(outputDirectory).mkdirs();
@@ -428,36 +435,6 @@ public class SparkCalculatePropertiesFromMedialSurface {
 	
 }
 
-class HistogramMaps implements Serializable{
-	/**
-	 * Class to contain histograms as maps for sheetness, thickness, surface area and volume
-	 */
-	private static final long serialVersionUID = 1L;
-	public Map<List<Integer>,Long> sheetnessAndThicknessHistogram;
-	public Map<Integer,Double> sheetnessAndSurfaceAreaHistogram;
-	public Map<Integer,Double> sheetnessAndVolumeHistogram;
 
-	public HistogramMaps(Map<List<Integer>, Long> sheetnessAndThicknessHistogram,Map<Integer,Double> sheetnessAndSurfaceAreaHistogram, Map<Integer,Double> sheetnessAndVolumeHistogram){
-		this.sheetnessAndThicknessHistogram = sheetnessAndThicknessHistogram;
-		this.sheetnessAndSurfaceAreaHistogram = sheetnessAndSurfaceAreaHistogram;
-		this.sheetnessAndVolumeHistogram = sheetnessAndVolumeHistogram;
-	}
-	
-	public void merge(HistogramMaps newHistogramMaps) {
-		//merge holeIDtoObjectIDMap
-		for(Entry<List<Integer>,Long> entry : newHistogramMaps.sheetnessAndThicknessHistogram.entrySet()) 
-			sheetnessAndThicknessHistogram.put(entry.getKey(), sheetnessAndThicknessHistogram.getOrDefault(entry.getKey(), 0L) + entry.getValue() );
-
-		//merge holeIDtoVolumeMap
-		for(Entry<Integer,Double> entry : newHistogramMaps.sheetnessAndSurfaceAreaHistogram.entrySet())
-			sheetnessAndSurfaceAreaHistogram.put(entry.getKey(), sheetnessAndSurfaceAreaHistogram.getOrDefault(entry.getKey(), 0.0) + entry.getValue() );
-		
-		//merge objectIDtoVolumeMap
-		for(Entry<Integer,Double> entry : newHistogramMaps.sheetnessAndVolumeHistogram.entrySet())
-			sheetnessAndVolumeHistogram.put(entry.getKey(), sheetnessAndVolumeHistogram.getOrDefault(entry.getKey(), 0.0) + entry.getValue() );
-	
-	}
-	
-}
 
 

@@ -417,7 +417,7 @@ public class SparkProcessLightData {
 		List<String> directoriesToDelete = new ArrayList<String>();
 		double[] thresholdIntensities = options.getThresholdIntensityCutoff();
 		for(int i=0; i<organelles.length;i++) {
-			List<BlockInformation> blockInformationList = SparkConnectedComponents.buildBlockInformationList(options.getInputN5Path(), organelles[i]);
+			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), organelles[i]);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			
 			//Do connected components of mito and er

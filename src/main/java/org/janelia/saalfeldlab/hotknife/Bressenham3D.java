@@ -3,8 +3,18 @@ package org.janelia.saalfeldlab.hotknife;
 import java.util.ArrayList;
 import java.util.List;
 
+/** 
+ * Class for calculating 3D line in voxelspace using Bressenham3D
+ *
+ */
 public class Bressenham3D {
 	
+	/**
+	 * Get 3D line in voxel space from start voxel to end voxel
+	 * @param start Starting voxel
+	 * @param end	End voxel
+	 * @return
+	 */
 	public static List<long[]> getLine(long [] start, long [] end){
 		// https://www.geeksforgeeks.org/bresenhams-algorithm-for-3-d-line-drawing/
 		// Get 3d line betweeen two points in voxel grid

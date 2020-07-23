@@ -4,10 +4,10 @@ import java.io.IOException;
 import java.util.*;
 import java.util.Map.Entry;
 
+/**
+ * Class for doing Floyd Warshall algorithm for symmetric adjacency matrix based on wiki: https://stackoverflow.com/questions/2037735/optimise-floyd-warshall-for-symmetric-adjacency-matrix
+*/
 public class FloydWarshall {
-	/**
-	 * Class for doing Floyd Warshall algorithm for symmetric adjacency matrix based on wiki: https://stackoverflow.com/questions/2037735/optimise-floyd-warshall-for-symmetric-adjacency-matrix
-	*/
 	public float dist[][];
 	public int next[][];
 	final Set<Long> V = new HashSet<>(); 

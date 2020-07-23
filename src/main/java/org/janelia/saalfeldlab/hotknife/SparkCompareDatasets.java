@@ -145,14 +145,14 @@ public class SparkCompareDatasets {
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 			
-			IntervalView<UnsignedByteType> data1 =  Views.offsetInterval((RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, datasetName1)
+			IntervalView<UnsignedLongType> data1 =  Views.offsetInterval((RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5BlockReader, datasetName1)
 					,offset, dimension);
 				
-			IntervalView<UnsignedByteType> data2 =  Views.offsetInterval((RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5BlockReader, datasetName2)
+			IntervalView<UnsignedLongType> data2 =  Views.offsetInterval((RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5BlockReader, datasetName2)
 					,offset, dimension);
 			
-			Cursor<UnsignedByteType> data1Cursor = data1.cursor();
-			Cursor<UnsignedByteType> data2Cursor = data2.cursor();
+			Cursor<UnsignedLongType> data1Cursor = data1.cursor();
+			Cursor<UnsignedLongType> data2Cursor = data2.cursor();
 			boolean areEqual = true;
 			while(data1Cursor.hasNext() && areEqual) {
 				data1Cursor.next();

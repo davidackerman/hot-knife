@@ -480,8 +480,7 @@ public class SparkFillHolesInConnectedComponents {
 
 			
 			// Create block information list
-			List<BlockInformation> blockInformationList = SparkConnectedComponents
-								.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
+			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			
 			datasetToHoleFill = currentOrganelle;

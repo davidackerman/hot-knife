@@ -16,73 +16,32 @@
  */
 package org.janelia.saalfeldlab.hotknife;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
 import java.io.FileWriter;
-import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
-import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Date;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
-import javax.swing.text.html.StyleSheet.ListPainter;
-
-import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.broadcast.Broadcast;
-import org.janelia.saalfeldlab.hotknife.util.Grid;
-import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.DatasetAttributes;
-import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSReader;
-import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
-import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
-import ij.ImageJ;
-import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.morphology.distance.DistanceTransform;
-import net.imglib2.algorithm.morphology.distance.DistanceTransform.DISTANCE_TYPE;
-import net.imglib2.converter.Converters;
-import net.imglib2.img.Img;
-import net.imglib2.img.NativeImg;
-import net.imglib2.img.array.ArrayImg;
-import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.img.basictypeaccess.array.ByteArray;
-import net.imglib2.type.NativeType;
-import net.imglib2.type.logic.NativeBoolType;
-import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.integer.*;
-import net.imglib2.type.numeric.real.DoubleType;
-import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 
 /**
- * Calculate sheetness at contact sites. Outputs file with histogram of sheetness vs surface area at contact sites
+ * Calculate sheetness at contact sites. Outputs file with histogram of sheetness vs surface area at contact sites based on sheetness in inputN5SheetnessDatasetName
  *
  * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
@@ -205,7 +164,6 @@ public class SparkCalculateSheetnessOfContactSites {
 	 * @param voxelFaceArea				Surface area of voxel face
 	 * @return							Map containing the histogram data
 	 */
-	
 	public static Map<Integer,Double> buildSheetnessAndSurfaceAreaHistogram(long[] paddedDimension, RandomAccess<UnsignedByteType> volumeAveragedSheetnessRA, RandomAccess<UnsignedLongType> contactSitesRA, double voxelFaceArea){
 		
 		Map<Integer,Double> sheetnessAndSurfaceAreaHistogram = new HashMap<Integer,Double>();
@@ -218,7 +176,7 @@ public class SparkCalculateSheetnessOfContactSites {
 					int sheetnessMeasureBin = volumeAveragedSheetnessRA.get().get();
 	
 					if(sheetnessMeasureBin>0 && contactSitesRA.get().get()>0) {//Then is on surface and contact site
-						int faces = getSurfaceAreaContributionOfVoxelInFaces(volumeAveragedSheetnessRA);
+						int faces = SparkCosemHelper.getSurfaceAreaContributionOfVoxelInFaces(volumeAveragedSheetnessRA);
 						if(faces>0) {
 							sheetnessAndSurfaceAreaHistogram.put(sheetnessMeasureBin, sheetnessAndSurfaceAreaHistogram.getOrDefault(sheetnessMeasureBin,0.0)+faces*voxelFaceArea);
 						}
@@ -231,29 +189,12 @@ public class SparkCalculateSheetnessOfContactSites {
 	}
 	
 	/**
-	 * Get the number of voxel faces that are part of the object surface
 	 * 
-	 * @param ra	Random accessible
-	 * @return		Number of voxel faces on surface
+	 * @param sheetnessAndSurfaceAreaHistogram	Histogram of sheetness vs surface area as map
+	 * @param outputDirectory					Directory to write results to
+	 * @param filePrefix						Prefix for file name
+	 * @throws IOException
 	 */
-	public static int getSurfaceAreaContributionOfVoxelInFaces(final RandomAccess<UnsignedByteType> ra) {
-		
-		final long pos[] = {ra.getLongPosition(0), ra.getLongPosition(1), ra.getLongPosition(2)};
-		int surfaceAreaContributionOfVoxelInFaces = 0;
-
-
-		for(long[] currentVoxel : SparkCosemHelper.voxelsToCheckForSurface) {
-			final long currentPosition[] = {pos[0]+currentVoxel[0], pos[1]+currentVoxel[1], pos[2]+currentVoxel[2]};
-			ra.setPosition(currentPosition);
-			if(ra.get().get() ==0) {
-				surfaceAreaContributionOfVoxelInFaces ++;
-			}
-		}
-
-		return surfaceAreaContributionOfVoxelInFaces;	
-	
-	}
-	
 	public static void writeData( Map<Integer, Double> sheetnessAndSurfaceAreaHistogram, String outputDirectory, String filePrefix) throws IOException {
 		if (! new File(outputDirectory).exists()){
 			new File(outputDirectory).mkdirs();
@@ -272,6 +213,14 @@ public class SparkCalculateSheetnessOfContactSites {
 	
 	}
 	
+	/**
+	 * Take input args and perform analysis.
+	 * 
+	 * @param args
+	 * @throws IOException
+	 * @throws InterruptedException
+	 * @throws ExecutionException
+	 */
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 		final Options options = new Options(args);
 
@@ -281,7 +230,7 @@ public class SparkCalculateSheetnessOfContactSites {
 		final SparkConf conf = new SparkConf().setAppName("SparkCalculateSheetnessOfContactSites");
 		
 		//Create block information list
-		List<BlockInformation> blockInformationList = SparkConnectedComponents.buildBlockInformationList(options.getInputN5Path(),
+		List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(),
 			options.getInputN5SheetnessDatasetName());
 		JavaSparkContext sc = new JavaSparkContext(conf);
 		Map<Integer, Double> sheetnessAndSurfaceAreaHistogram = getContactSiteSheetness(sc, options.getInputN5Path(), options.getInputN5SheetnessDatasetName(), options.getInputN5ContactSiteDatasetName(), blockInformationList);

@@ -229,7 +229,7 @@ public class SparkRemoveVolumeEdgeVoxels {
 		final SparkConf conf = new SparkConf().setAppName("SparkRemoveVolumeEdgeVoxels");
 		
 		//Create block information list
-		List<BlockInformation> blockInformationList = SparkConnectedComponents.buildBlockInformationList(options.getInputN5Path(), options.getInputN5DatasetName());
+		List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), options.getInputN5DatasetName());
 		JavaSparkContext sc = new JavaSparkContext(conf);
 		removeVolumeEdgeVoxels(sc, options.getInputN5Path(), options.getInputN5DatasetName(), options.getOutputN5Path(), blockInformationList);
 		sc.close();
