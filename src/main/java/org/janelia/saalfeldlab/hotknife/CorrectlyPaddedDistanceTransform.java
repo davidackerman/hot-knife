@@ -8,7 +8,7 @@ import net.imglib2.converter.Converters;
 import net.imglib2.img.NativeImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.type.logic.NativeBoolType;
-import net.imglib2.type.numeric.integer.UnsignedLongType;
+import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
@@ -20,14 +20,35 @@ public class CorrectlyPaddedDistanceTransform{
 	public long [] padding, paddedOffset, paddedDimension;
 	public NativeImg<FloatType, ?> correctlyPaddedDistanceTransform;
 	
-	public CorrectlyPaddedDistanceTransform(RandomAccessibleInterval<UnsignedLongType> source, long[] offset, long[] dimension){
+	/**
+	 * Get the correctly padded distance transform
+	 * 
+	 * @param <T>
+	 * @param source	Source to do distance transform on
+	 * @param offset	Image offset
+	 * @param dimension	Image dimension
+	 */
+	public <T extends IntegerType<T>> CorrectlyPaddedDistanceTransform(RandomAccessibleInterval<T> source, long[] offset, long[] dimension){
+		this(source, offset,dimension, 1);
+	}
+		
+	/**
+	 * Get the correctly padded distance transform
+	 * 
+	 * @param <T>
+	 * @param source	Source to do distance transform on
+	 * @param offset	Image offset
+	 * @param dimension	Image dimension
+	 * @param threshold Threshold for binarization
+	 */
+	public <T extends IntegerType<T>> CorrectlyPaddedDistanceTransform(RandomAccessibleInterval<T> source, long[] offset, long[] dimension, int threshold){
 		
 		long[] sourceDimensions = {0,0,0};
 		source.dimensions(sourceDimensions);
 		final RandomAccessibleInterval<NativeBoolType> sourceBinarized = Converters.convert(
 				source,
 				(a, b) -> {
-					b.set(a.getIntegerLong()<1);
+					b.set(a.getIntegerLong()<threshold);
 				},
 				new NativeBoolType());
 		

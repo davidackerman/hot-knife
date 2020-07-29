@@ -5,8 +5,6 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
-import org.scijava.tool.IconDrawer;
-
 import ch.qos.logback.core.Context;
 import net.imglib2.RandomAccess;
 import net.imglib2.type.NativeType;

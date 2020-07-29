@@ -93,7 +93,7 @@ import net.imglib2.algorithm.neighborhood.Shape;
 
 
 /**
- * Connected components for an entire n5 volume
+ * Expand skeleton for visualization purposes when making meshes
  *
  * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
@@ -160,8 +160,18 @@ public class SparkExpandSkeletonForMeshes {
 
 	}
 
-	
-
+	/**
+	 * Expand skeletonization (1-voxel thin data) by a set radius to make meshes cleaner and more visible.
+	 * 
+	 * @param sc					Spark context
+	 * @param n5Path				Input N5 path
+	 * @param inputDatasetName		Skeletonization dataset name
+	 * @param n5OutputPath			Output N5 path
+	 * @param outputDatasetName		Output N5 dataset name
+	 * @param expansionInVoxels		Expansion in voxels
+	 * @param blockInformationList	List of block information
+	 * @throws IOException
+	 */
 	public static final void expandSkeleton(final JavaSparkContext sc, final String n5Path,
 			final String inputDatasetName, final String n5OutputPath, final String outputDatasetName, final int expansionInVoxels,
 			final List<BlockInformation> blockInformationList) throws IOException {
@@ -217,6 +227,15 @@ public class SparkExpandSkeletonForMeshes {
 
 	}
 	
+	/**
+	 * Fill in all voxels within expanded region
+	 * 
+	 * @param expandedSkeletonsRA 	Output expanded skeletons random access
+	 * @param objectID				Object ID of skeleton
+	 * @param pos					Position of skeleton voxel
+	 * @param paddedDimension		Padded dimensions
+	 * @param expansionInVoxels		Expansion radius in voxels
+	 */
 	public static void fillInExpandedRegion(RandomAccess<UnsignedLongType> expandedSkeletonsRA, long objectID, int [] pos, long [] paddedDimension, int expansionInVoxels) {
 		int expansionInVoxelsSquared = expansionInVoxels*expansionInVoxels;
 		for(int x=pos[0]-expansionInVoxels; x<=pos[0]+expansionInVoxels; x++) {
@@ -227,7 +246,6 @@ public class SparkExpandSkeletonForMeshes {
 					int dz = z-pos[2];
 						if((dx*dx+dy*dy+dz*dz)<=expansionInVoxelsSquared) {
 						if((x>=0 && y>=0 && z>=0) && (x<paddedDimension[0] && y<paddedDimension[1] && z<paddedDimension[2])) {
-
 							expandedSkeletonsRA.setPosition(new int[] {x,y,z});
 							expandedSkeletonsRA.get().set(objectID);
 						}
@@ -237,26 +255,15 @@ public class SparkExpandSkeletonForMeshes {
 			}
 		}
 	}
-	
-	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
-			final String inputN5DatasetName) throws IOException {
-		//Get block attributes
-		N5Reader n5Reader = new N5FSReader(inputN5Path);
-		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
-		final int[] blockSize = attributes.getBlockSize();
-		final long[] outputDimensions = attributes.getDimensions();
-		
-		//Build list
-		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
-		List<BlockInformation> blockInformationList = new ArrayList<BlockInformation>();
-		for (int i = 0; i < gridBlockList.size(); i++) {
-			long[][] currentGridBlock = gridBlockList.get(i);
-			blockInformationList.add(new BlockInformation(currentGridBlock, null, null));
-		}
-		return blockInformationList;
-	}
 
-
+	/**
+	 * Expand skeleton for more visible meshes
+	 * 
+	 * @param args
+	 * @throws IOException
+	 * @throws InterruptedException
+	 * @throws ExecutionException
+	 */
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 
 		final Options options = new Options(args);
@@ -282,13 +289,9 @@ public class SparkExpandSkeletonForMeshes {
 
 		System.out.println(Arrays.toString(organelles));
 
-		String finalOutputN5DatasetName = null;
 		for (String currentOrganelle : organelles) {
-			finalOutputN5DatasetName = currentOrganelle;// + options.getOutputN5DatasetSuffix();
-			
 			// Create block information list
-			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
-					currentOrganelle);
+			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			 expandSkeleton(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(), options.getInputN5DatasetName()+options.getOutputN5DatasetSuffix(),
 					options.getExpansionInVoxels(), blockInformationList);

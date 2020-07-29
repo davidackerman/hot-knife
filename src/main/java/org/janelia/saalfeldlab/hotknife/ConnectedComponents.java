@@ -58,7 +58,6 @@ public class ConnectedComponents {
 	 */
 	public static void main(final String[] args) throws IOException {
 		Set<long[][]> temp = new HashSet<>();
-		
 	//	ImagePlus imp = new Opener().openImage( "/groups/cosem/cosem/ackermand/other_skeleton_failed.tif");//failed_skeleton.tif");//jan_skeleton.tif");//HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5/skeletonShortestPathAsRadii.tif" );
 	//	ImagePlus imp = new Opener().openImage("/groups/cosem/cosem/ackermand/HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5/mito_cc_filled_skeletonExtraConditionConversion");
 		//ImagePlus imp = new Opener().openImage("/groups/cosem/cosem/weigela/hela3/original_HeLa_Cell3_4x4x4nm_it650000_plasma_membrane_ccSkipSmoothing_ds8_8bit.tif");
