@@ -23,12 +23,14 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
@@ -323,7 +325,8 @@ public class SparkTopologicalThinning {
 	}
 	
 	
-	private static boolean areObjectsTouching(IntervalView<UnsignedLongType> thinningResult, long[] paddedDimension) {
+	private static Map<Long,Set<Long>> getTouchingObjectIDs(IntervalView<UnsignedLongType> thinningResult, long[] paddedDimension) {
+		Map<Long,Set<Long>> touchingObjectIDs = new HashMap<Long,Set<Long>>();
 		RandomAccess<UnsignedLongType> thinningResultRandomAccess = thinningResult.randomAccess();
 		for(int x=0; x<paddedDimension[0]; x++) {
 			for(int y=0; y<paddedDimension[1]; y++) {
@@ -341,7 +344,13 @@ public class SparkTopologicalThinning {
 										thinningResultRandomAccess.setPosition(new int[] {newX,newY,newZ});
 										long neighboringObjectID = thinningResultRandomAccess.get().get();
 										if(neighboringObjectID>0 && neighboringObjectID!=objectID) {//then two objects are touching
-											return true;
+											Set<Long> objectIDTouchers = touchingObjectIDs.getOrDefault(objectID, new HashSet<Long>());
+											objectIDTouchers.add(neighboringObjectID);
+											touchingObjectIDs.put(objectID, objectIDTouchers);
+											
+											Set<Long> neighboringIDTouchers = touchingObjectIDs.getOrDefault(neighboringObjectID, new HashSet<Long>());
+											neighboringIDTouchers.add(objectID);
+											touchingObjectIDs.put(neighboringObjectID, neighboringIDTouchers);
 										}
 									}
 								}
@@ -352,52 +361,61 @@ public class SparkTopologicalThinning {
 				}
 			}
 		}
-		return false;
+		return touchingObjectIDs;
 	}
 
 	private static BlockInformation updateThinningResult(IntervalView<UnsignedLongType> thinningResult, int [][] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ) {
 		blockInformation.thinningLocations = new boolean[3][3][3];
+		Map<Long,Set<Long>> touchingObjectIDs = null;
 		if(blockInformation.areObjectsTouching) {//check if objects are still touching
-			blockInformation.areObjectsTouching = areObjectsTouching(thinningResult, paddedDimension);
+			touchingObjectIDs = getTouchingObjectIDs(thinningResult, paddedDimension);
+			blockInformation.areObjectsTouching = touchingObjectIDs.size()>0;
 		}
 		//System.out.println("Are objects touching:"+ blockInformation.areObjectsTouching);
 		if(blockInformation.areObjectsTouching) {
-			blockInformation = thinEachObjectIndependently(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
+			blockInformation = thinTouchingObjectsIndependently(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, touchingObjectIDs, blockInformation );
 		}
-		else {
-			blockInformation = thinEverythingTogether(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
-		}
+		//else {
+		blockInformation = thinEverythingTogether(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
+		//}
 		return blockInformation;
 	}
 	
-	private static BlockInformation thinEachObjectIndependently(IntervalView<UnsignedLongType> thinningResult, int [][] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, BlockInformation blockInformation ){
+	private static BlockInformation thinTouchingObjectsIndependently(IntervalView<UnsignedLongType> thinningResult, int [][] padding, long [] paddedOffset, long [] paddedDimension, boolean doMedialSurface, Map<Long,Set<Long>> touchingObjectIDs, BlockInformation blockInformation ){
 		blockInformation.needToThinAgainCurrent = false;
 		//blockInformation.isIndependent = true;
 		
 		Cursor<UnsignedLongType> thinningResultCursor = thinningResult.localizingCursor();
 		thinningResultCursor.reset();
 		
-		Set<Long> objectIDsInBlock = new HashSet<Long>();
+		Set<Long> objectIDsInBlockLeftToProcess = new HashSet<Long>();
 		while(thinningResultCursor.hasNext()) {
-			long objectID = thinningResultCursor.next().get();
+			Long objectID = thinningResultCursor.next().get();
 			if (objectID >0) {
-				objectIDsInBlock.add(objectID);
+				objectIDsInBlockLeftToProcess.add(objectID);
 			}
 		}
 		
-		
-		IntervalView<UnsignedByteType> current = null;
-		Cursor<UnsignedByteType> currentCursor = null;
 		boolean isIndependent = true;
-
-		for(long objectID : objectIDsInBlock) {
+		while(objectIDsInBlockLeftToProcess.size()>0) {
+			Set<Long> currentIndependentSetOfObjectIDsToProcess = new HashSet<>(objectIDsInBlockLeftToProcess);
+			for(Long currentID : objectIDsInBlockLeftToProcess) {
+				if(currentIndependentSetOfObjectIDsToProcess.contains(currentID)) {
+					currentIndependentSetOfObjectIDsToProcess.removeAll(touchingObjectIDs.getOrDefault(currentID, new HashSet<Long>()));//remove all that were touching object
+				}
+			}
+			objectIDsInBlockLeftToProcess.removeAll(currentIndependentSetOfObjectIDsToProcess);
+				
+			IntervalView<UnsignedByteType> current = null;
+			Cursor<UnsignedByteType> currentCursor = null;
+			//System.out.println(currentIndependentSetOfObjectIDsToProcess.size());
 			thinningResultCursor.reset();
 			current = Views.offsetInterval(ArrayImgs.unsignedBytes(paddedDimension),new long[]{0,0,0}, paddedDimension);
 			currentCursor = current.cursor();
 			while(thinningResultCursor.hasNext()) { //initialize to only look at current object
 				thinningResultCursor.next();
 				currentCursor.next();
-				if(thinningResultCursor.get().get() == objectID)
+				if(currentIndependentSetOfObjectIDsToProcess.contains(thinningResultCursor.get().get()))
 					currentCursor.get().set(1);
 			}
 		
@@ -422,14 +440,13 @@ public class SparkTopologicalThinning {
 				currentCursor.next();
 				thinningResultCursor.next();
 				if(currentCursor.get().get() ==0) {
-					if (thinningResultCursor.get().get() == objectID) {
+					if (currentIndependentSetOfObjectIDsToProcess.contains(thinningResultCursor.get().get())) {
 						blockInformation = updateBlockInformationThinningLocations(thinningResultCursor, padding, paddedDimension, blockInformation);
 						thinningResultCursor.get().set(0);//Then this voxel was thinned out
 					}
 				}
 			}
 		}
-		
 		blockInformation.isIndependent = isIndependent;
 		//previous thinning result should now equal the current thinning result
 		return blockInformation;

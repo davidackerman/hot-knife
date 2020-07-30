@@ -17,9 +17,12 @@
 package org.janelia.saalfeldlab.hotknife;
 
 import java.io.IOException;
+
 import java.io.Serializable;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -35,8 +38,12 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 import ij.ImageJ;
+import ij.ImagePlus;
+import net.imagej.ops.OpService;
+import net.imagej.ops.image.watershed.Watershed;
 import net.imglib2.Cursor;
 import net.imglib2.Interval;
+import net.imglib2.IterableInterval;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.gauss3.Gauss3;
@@ -48,10 +55,13 @@ import net.imglib2.img.Img;
 import net.imglib2.img.ImgFactory;
 import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.roi.labeling.ImgLabeling;
+import net.imglib2.type.logic.BitType;
 import net.imglib2.type.logic.NativeBoolType;
 import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.*;
+import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
@@ -172,7 +182,6 @@ public class SparkRibosomeConnectedComponents {
 			/* RandomAccessibleInterval<UnsignedByteType> rawPredictions = Views.offsetInterval(Views.extendMirrorSingle(
 					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
 					),paddedOffset, paddedDimension); */
-			
 			RandomAccessibleInterval<UnsignedByteType> rawPredictions = 
 					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName);
 			/*final Img<UnsignedByteType> smoothedPredictions =  new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(paddedDimension);	
@@ -185,10 +194,16 @@ public class SparkRibosomeConnectedComponents {
 
 			Img< UnsignedLongType > outputCenters = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(cpdt.paddedDimension);
 	        Img< UnsignedLongType > outputSpheres = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(cpdt.paddedDimension);
-	        
-		    findAndDisplayLocalMaxima(cpdt.correctlyPaddedDistanceTransform, outputCenters.randomAccess(), outputSpheres.randomAccess(), ribosomeRadiusInVoxels[0], cpdt.paddedOffset, cpdt.paddedDimension, outputDimensions);
+	        RandomAccessibleInterval<UnsignedByteType> rawPredictionsCropped = Views.offsetInterval(rawPredictions,cpdt.paddedOffset, cpdt.paddedDimension);
+	        Img< IntType > sphereness = new ArrayImgFactory<IntType>(new IntType()).create(cpdt.paddedDimension);
+	     
+	        //  doWatershedding(rawPredictions);
+	        getSphereness(rawPredictionsCropped.randomAccess(), sphereness.randomAccess(), ribosomeRadiusInVoxels[0], paddedDimension);
+	        //keepNonOverlappingSpheres(outputCenters);
 
-	       // findAndDisplayLocalMaxima(smoothedPredictions, outputCenters.randomAccess(), outputSpheres.randomAccess(), ribosomeRadiusInVoxels[0], paddedOffset, paddedDimension, outputDimensions);
+		    findAndDisplayLocalMaxima(cpdt.correctlyPaddedDistanceTransform, sphereness.randomAccess(), outputCenters.randomAccess(), outputSpheres.randomAccess(), ribosomeRadiusInVoxels[0], cpdt.paddedOffset, cpdt.paddedDimension, outputDimensions);
+
+	       //findAndDisplayLocalMaxima(sphereness, outputCenters.randomAccess(), outputSpheres.randomAccess(), ribosomeRadiusInVoxels[0], paddedOffset, paddedDimension, outputDimensions);
 			
 			// Write out output to temporary n5 stack
 			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
@@ -196,6 +211,71 @@ public class SparkRibosomeConnectedComponents {
 			N5Utils.saveBlock(Views.offsetInterval(outputSpheres, updatedPadding, dimension), n5WriterLocal, outputSpheresDatasetName, gridBlock[2]);
 
 		});
+	}
+	
+	
+	public static Set<List<Long>> keepNonOverlappingSpheres(Set<List<Long>> centers, int centerSeparationInVoxels, long [] paddedOffset){
+		Set<List<Long>> keptCenters = new HashSet<List<Long>>();
+		//simpleBorderPoints.get((x+paddedOffset[0])%centerSeparationInVoxels+((y+paddedOffset[1])%centerSeparationInVoxels)*centerSeparationInVoxels+((z+paddedOffset[2])%centerSeparationInVoxels)*Math.pow(centerSeparationInVoxels,2)).add(index);
+
+		return centers;
+	}
+	
+	public static void doWatershedding(RandomAccessibleInterval<UnsignedByteType> ra) {
+		//https://forum.image.sc/t/watershed-segmentation-using-ops/24713/3
+		//Thresold the Output mask from fiji (where 0 is false and 255 is true)
+		final RandomAccessibleInterval<NativeBoolType> mask = Converters.convert(
+				ra,
+				(a, b) -> {
+					b.set(a.getIntegerLong()>=127);
+				},
+				new NativeBoolType());
+		//Fill the holes
+		//maskFilled = ij.op().morphology().fillHoles(maskBitType);
+
+		//Perform the watershed
+		boolean useEightConnectivity=true;
+		boolean drawWatersheds=false;
+		double sigma=2.0;
+		net.imagej.ImageJ ij = new net.imagej.ImageJ();
+		ImgLabeling<Integer, IntType> watershedImgLabeling = ij.op().image().watershed(null,mask,useEightConnectivity,drawWatersheds,sigma,mask);
+		
+		ImageJ temp = new ij.ImageJ();
+		//Display the result
+		RandomAccessibleInterval<IntType> watershedImg = watershedImgLabeling.getIndexImg();
+		ImagePlus watershedImgLabelingImp = ImageJFunctions.wrap(watershedImg, "wrapped");
+		watershedImgLabelingImp.show();
+		
+	}
+	public static void getSphereness(RandomAccess<UnsignedByteType> rawPredictionsRA, RandomAccess<IntType> spherenessRA, double radius, long[] dimensions){
+		Set<List<Long>> spherePoints = getSpherePoints(radius);
+
+		for(long x=0; x<dimensions[0]; x++) {
+			for(long y=0; y<dimensions[1]; y++) {
+				for(long z=0; z<dimensions[2]; z++) {
+					long [] sphereCenter = new long [] {x,y,z};
+					rawPredictionsRA.setPosition(sphereCenter);
+					if(rawPredictionsRA.get().get()>=127) {//center is greater than 127
+						int countForSphereCenteredAtxyz = 0;
+					
+						for(List<Long> currentSpherePoint : spherePoints) {
+							long[] sphereCoordinate = new long [] {x+currentSpherePoint.get(0),y+currentSpherePoint.get(1),z+currentSpherePoint.get(2)};
+							if(sphereCoordinate[0]>=0 && sphereCoordinate[1]>=0 && sphereCoordinate[2]>=0 && 
+								sphereCoordinate[0]<dimensions[0] && sphereCoordinate[1]<dimensions[1] && sphereCoordinate[2]<dimensions[2]) {
+								rawPredictionsRA.setPosition(sphereCoordinate);
+								if(rawPredictionsRA.get().get()>=127) {
+									countForSphereCenteredAtxyz ++;
+								}
+							}
+						}
+						if(countForSphereCenteredAtxyz>spherePoints.size()/10) {
+							spherenessRA.setPosition(new long[] {x,y,z});
+							spherenessRA.get().set(countForSphereCenteredAtxyz);
+						}
+					}
+				}
+			}
+		}
 	}
 	
 	/**
@@ -212,9 +292,10 @@ public class SparkRibosomeConnectedComponents {
 	 * @param paddedDimension			Padded dimensions
 	 * @param overallDimensions			Overall dimensions of image
 	 */
-    public static <T extends RealType<T>,U extends IntegerType< U > >
+    public static <T extends RealType<T>,U extends IntegerType< U >, V extends IntegerType< V >>
         void findAndDisplayLocalMaxima(
             RandomAccessibleInterval< T > source,
+            RandomAccess<V> spherenessRA,
             RandomAccess< U > centersRA,
             RandomAccess< U > spheresRA,
             double ribosomeRadiusInVoxels,
@@ -255,7 +336,7 @@ public class SparkRibosomeConnectedComponents {
 	            for ( final T value : localNeighborhood )
 	            {
 	                // test if the center is smaller than the current pixel value
-	                if ( centerValue.compareTo( value ) <= 0 )
+	                if ( centerValue.compareTo( value ) < 0 )
 	                {
 	                    isMaximum = false;
 	                    break;
@@ -300,6 +381,22 @@ public class SparkRibosomeConnectedComponents {
     			}
     		}
     	}
+    }
+    
+    public static Set<List<Long>> getSpherePoints(double radius){
+    	Set<List<Long>> pointsInSphere = new HashSet<List<Long>>();
+    	long radiusCeiling = (long) Math.ceil(radius);
+    	long radiusCeilingSquared = radiusCeiling*radiusCeiling;
+    	for(long dx=-radiusCeiling; dx<=radiusCeiling; dx++) {
+    		for(long dy=-radiusCeiling; dy<=radiusCeiling; dy++) {
+    			for(long dz=-radiusCeiling; dz<=radiusCeiling; dz++) {
+    				if(dx*dx+dy*dy+dz*dz<=radiusCeilingSquared) {
+    					pointsInSphere.add(Arrays.asList(dx,dy,dz));
+    					}
+    				}
+    			}
+    		}
+    	return pointsInSphere;
     }
     
     
