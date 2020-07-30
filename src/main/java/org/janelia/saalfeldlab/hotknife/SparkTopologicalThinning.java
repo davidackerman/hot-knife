@@ -375,9 +375,9 @@ public class SparkTopologicalThinning {
 		if(blockInformation.areObjectsTouching) {
 			blockInformation = thinTouchingObjectsIndependently(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, touchingObjectIDs, blockInformation );
 		}
-		//else {
-		blockInformation = thinEverythingTogether(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
-		//}
+		else {
+			blockInformation = thinEverythingTogether(thinningResult, padding, paddedOffset, paddedDimension, doMedialSurface, blockInformation );
+		}
 		return blockInformation;
 	}
 	
