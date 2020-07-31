@@ -337,9 +337,9 @@ public class SparkRibosomeConnectedComponents {
 					rawPredictionsRA.setPosition(sphereCenter);
 					if(rawPredictionsRA.get().get()>=127) {//center is greater than 127
 						int countForSphereCenteredAtxyz = 0;
-						double comX = 0;
-						double comY = 0;
-						double comZ = 0;
+						float comX = 0;
+						float comY = 0;
+						float comZ = 0;
 
 						for(List<Long> currentSpherePoint : spherePoints) {
 							long[] sphereCoordinate = new long [] {x+currentSpherePoint.get(0),y+currentSpherePoint.get(1),z+currentSpherePoint.get(2)};
@@ -348,13 +348,20 @@ public class SparkRibosomeConnectedComponents {
 								rawPredictionsRA.setPosition(sphereCoordinate);
 								if(rawPredictionsRA.get().get()>=127 && !voxelPathExitsObject(rawPredictionsRA, Bressenham3D.getLine(sphereCenter, sphereCoordinate))) {
 									countForSphereCenteredAtxyz ++;
-									
+									comX+=sphereCoordinate[0];
+									comY+=sphereCoordinate[1];
+									comZ+=sphereCoordinate[2];
 								}
 							}
 						}
+						float deltaCOMX = x-comX/countForSphereCenteredAtxyz;
+						float deltaCOMY = y-comY/countForSphereCenteredAtxyz;
+						float deltaCOMZ = z-comZ/countForSphereCenteredAtxyz;
+						float deltaCOM = (float) Math.sqrt(deltaCOMX*deltaCOMX+deltaCOMY*deltaCOMY+deltaCOMZ*deltaCOMZ);
+						float deltaCOMmetric = (float) (1-deltaCOM/radius);
 						//if(countForSphereCenteredAtxyz>spherePoints.size()/10) {
 							spherenessFractionRA.setPosition(new long[] {x,y,z});
-							spherenessFractionRA.get().set((float) (countForSphereCenteredAtxyz)/spherePoints.size());
+							spherenessFractionRA.get().set((float) (countForSphereCenteredAtxyz)/spherePoints.size() + deltaCOMmetric);
 						//}
 					}
 				}
