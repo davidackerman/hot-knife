@@ -19,14 +19,18 @@ package org.janelia.saalfeldlab.hotknife;
 import java.io.IOException;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
@@ -61,6 +65,7 @@ import net.imglib2.type.logic.NativeBoolType;
 import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.*;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.view.IntervalView;
@@ -136,7 +141,7 @@ public class SparkRibosomeConnectedComponents {
 	public static final void getRibosomeConnectedComponents(
 			final JavaSparkContext sc, final String inputN5Path, final String outputN5Path, final double sigmaNm, List<BlockInformation> blockInformationList) throws IOException {
 
-		final String inputN5DatasetName = "ribosomes";
+		final String inputN5DatasetName = "ribosomes_cc_sphereness";
 		// Get attributes of input data sets.
 		final N5Reader predictionN5Reader = new N5FSReader(inputN5Path);
 		final DatasetAttributes attributes = predictionN5Reader.getDatasetAttributes(inputN5DatasetName);
@@ -172,47 +177,117 @@ public class SparkRibosomeConnectedComponents {
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
 			
-			double [] sigma = new double[] {sigmaNm/pixelResolution[0],sigmaNm/pixelResolution[0],sigmaNm/pixelResolution[0]}; //gives 3 pixel sigma at 4 nm resolution
-			int[] sizes = Gauss3.halfkernelsizes( sigma );
-			long padding = (long) (sizes[0]+2*Math.ceil(ribosomeRadiusInVoxels[0])+3);//add extra padding so if a ribosome appears in adjacent block, will be correctly shown in current block
+			//double [] sigma = new double[] {sigmaNm/pixelResolution[0],sigmaNm/pixelResolution[0],sigmaNm/pixelResolution[0]}; //gives 3 pixel sigma at 4 nm resolution
+			//int[] sizes = Gauss3.halfkernelsizes( sigma );
+			//long padding = (long) (sizes[0]+2*Math.ceil(ribosomeRadiusInVoxels[0])+3);//add extra padding so if a ribosome appears in adjacent block, will be correctly shown in current block
+			long separation = Math.round(ribosomeRadiusInVoxels[0]*1.5);
+			long padding = 3*separation;
 			long [] paddedOffset = new long [] {offset[0]-padding,offset[1]-padding,offset[2]-padding};
 			long [] paddedDimension = new long [] {dimension[0]+2*padding,dimension[1]+2*padding,dimension[2]+2*padding};
 			
 			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
-			/* RandomAccessibleInterval<UnsignedByteType> rawPredictions = Views.offsetInterval(Views.extendMirrorSingle(
-					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
-					),paddedOffset, paddedDimension); */
-			RandomAccessibleInterval<UnsignedByteType> rawPredictions = 
-					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName);
+			RandomAccessibleInterval<DoubleType> rawPredictions = Views.offsetInterval(Views.extendMirrorSingle(
+					(RandomAccessibleInterval<DoubleType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
+					),paddedOffset, paddedDimension); 
+			/*RandomAccessibleInterval<FloatType> rawPredictions = 
+					(RandomAccessibleInterval<FloatType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName);
+			*/
 			/*final Img<UnsignedByteType> smoothedPredictions =  new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(paddedDimension);	
 			SimpleGaussRA<UnsignedByteType> gauss = new SimpleGaussRA<UnsignedByteType>(sigma);
 			gauss.compute(rawPredictions, smoothedPredictions);*/
 			
 	        
-			CorrectlyPaddedDistanceTransform cpdt = new CorrectlyPaddedDistanceTransform(rawPredictions, paddedOffset, paddedDimension, 127);
-			long [] updatedPadding = new long[] {cpdt.padding[0]+padding,cpdt.padding[1]+padding,cpdt.padding[2]+padding};
-
-			Img< UnsignedLongType > outputCenters = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(cpdt.paddedDimension);
-	        Img< UnsignedLongType > outputSpheres = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(cpdt.paddedDimension);
-	        RandomAccessibleInterval<UnsignedByteType> rawPredictionsCropped = Views.offsetInterval(rawPredictions,cpdt.paddedOffset, cpdt.paddedDimension);
-	        Img< IntType > sphereness = new ArrayImgFactory<IntType>(new IntType()).create(cpdt.paddedDimension);
+		//	CorrectlyPaddedDistanceTransform cpdt = new CorrectlyPaddedDistanceTransform(rawPredictions, paddedOffset, paddedDimension, 127);
+		//	long [] updatedPadding = new long[] {cpdt.padding[0]+padding,cpdt.padding[1]+padding,cpdt.padding[2]+padding};
+			Map<Integer, List<long[]>> allLocalMaxima = findAllLocalMaxima(rawPredictions, 0, separation, paddedOffset);
+			List<long[]> nonoverlappingMaxima = getNonoverlappingMaxima(allLocalMaxima, separation);
+			Img< UnsignedLongType > outputCenters = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(paddedDimension);
+	        Img< UnsignedLongType > outputSpheres = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(paddedDimension);
+	        plotCentersAndSpheres(nonoverlappingMaxima, outputCenters.randomAccess(), outputSpheres.randomAccess(), ribosomeRadiusInVoxels[0], paddedOffset, paddedDimension, outputDimensions);
+	        //RandomAccessibleInterval<UnsignedByteType> rawPredictionsCropped = Views.offsetInterval(rawPredictions,cpdt.paddedOffset, cpdt.paddedDimension);
+	       // Img< IntType > sphereness = new ArrayImgFactory<IntType>(new IntType()).create(cpdt.paddedDimension);
 	     
 	        //  doWatershedding(rawPredictions);
-	        getSphereness(rawPredictionsCropped.randomAccess(), sphereness.randomAccess(), ribosomeRadiusInVoxels[0], paddedDimension);
+	     //   getSphereness(rawPredictionsCropped.randomAccess(), sphereness.randomAccess(), ribosomeRadiusInVoxels[0], paddedDimension);
 	        //keepNonOverlappingSpheres(outputCenters);
 
-		    findAndDisplayLocalMaxima(cpdt.correctlyPaddedDistanceTransform, sphereness.randomAccess(), outputCenters.randomAccess(), outputSpheres.randomAccess(), ribosomeRadiusInVoxels[0], cpdt.paddedOffset, cpdt.paddedDimension, outputDimensions);
+		//    findAndDisplayLocalMaxima(rawPredictions, outputCenters.randomAccess(), outputSpheres.randomAccess(), ribosomeRadiusInVoxels[0], paddedOffset, paddedDimension, outputDimensions);
 
 	       //findAndDisplayLocalMaxima(sphereness, outputCenters.randomAccess(), outputSpheres.randomAccess(), ribosomeRadiusInVoxels[0], paddedOffset, paddedDimension, outputDimensions);
 			
 			// Write out output to temporary n5 stack
 			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
-			N5Utils.saveBlock(Views.offsetInterval(outputCenters, updatedPadding, dimension), n5WriterLocal, outputCentersDatasetName, gridBlock[2]);
-			N5Utils.saveBlock(Views.offsetInterval(outputSpheres, updatedPadding, dimension), n5WriterLocal, outputSpheresDatasetName, gridBlock[2]);
+			N5Utils.saveBlock(Views.offsetInterval(outputCenters, new long[] {padding,padding,padding}, dimension), n5WriterLocal, outputCentersDatasetName, gridBlock[2]);
+			N5Utils.saveBlock(Views.offsetInterval(outputSpheres, new long[] {padding,padding,padding}, dimension), n5WriterLocal, outputSpheresDatasetName, gridBlock[2]);
 
 		});
 	}
 	
+	public static List<long[]> getNonoverlappingMaxima(Map<Integer, List<long[]>> allLocalMaxima, long separation){
+		List<long[]> nonoverlappingMaxima = new ArrayList<long[]>();
+		long separationSquared = separation*separation;
+		for(List<long[]> independentLocalMaxima : allLocalMaxima.values()) {
+			ArrayList<long[]> centersToAdd = new ArrayList<long[]>();
+			for(long[] currentLocalMaxima : independentLocalMaxima) {
+				
+				boolean isNonoverlapping = true;
+				for(long[] currentNonoverlappingMaxima : nonoverlappingMaxima) {
+					long dx = currentLocalMaxima[0]-currentNonoverlappingMaxima[0];
+					long dy = currentLocalMaxima[1]-currentNonoverlappingMaxima[1];
+					long dz = currentLocalMaxima[2]-currentNonoverlappingMaxima[2];
+					if(dx*dx+dy*dy+dz*dz<=separationSquared) {
+						isNonoverlapping = false;
+						break;
+					}
+				}
+				if(isNonoverlapping) {
+					centersToAdd.add(currentLocalMaxima);
+				}
+			}
+			
+			nonoverlappingMaxima.addAll(centersToAdd);
+		}
+		return nonoverlappingMaxima;
+	}
+	
+	public static Map<Integer, List<long[]>> findAllLocalMaxima(RandomAccessibleInterval <DoubleType> rai, float cutoff, long separation, long [] paddedOffset){
+		HashMap<Integer, List<long[]>> allLocalMaxima = new HashMap<Integer,List<long[]>>();
+		RandomAccess<DoubleType> raiRA = rai.randomAccess(); 
+		
+		Set<List<Long>> spherePoints = getSpherePoints(separation);
+		
+		for(long x = separation; x<rai.dimension(0)-separation; x++) {
+			for(long y = separation; y<rai.dimension(1)-separation; y++) {
+				for(long z = separation; z<rai.dimension(2)-separation; z++) {
+					long [] centerPosition= new long[] {x,y,z};
+					raiRA.setPosition(centerPosition);
+					double centerValue = raiRA.get().get();
+					
+					if (centerValue>cutoff) {
+						boolean isMaximum = true;
+						for(List<Long> delta : spherePoints) {
+							raiRA.setPosition(new long[] {x+delta.get(0),y+delta.get(1),z+delta.get(2)});
+							if(raiRA.get().get()>centerValue) {
+								isMaximum = false;
+								break;
+							}
+								
+						}
+						if(isMaximum) {
+							long [] overallCenterPosition = new long[] {x+paddedOffset[0],y+paddedOffset[1],z+paddedOffset[2]};
+							int independentIndex = (int) (overallCenterPosition[0]%separation+(overallCenterPosition[1]%separation)*separation+(overallCenterPosition[2]%separation)*Math.pow(separation,2));
+							List<long[]> currentLocalMaxima = allLocalMaxima.getOrDefault(independentIndex, new ArrayList<long[]>());
+							currentLocalMaxima.add(centerPosition);
+							allLocalMaxima.put(independentIndex,currentLocalMaxima);
+						}
+
+					}
+					
+				}
+			}
+		}
+		return allLocalMaxima;
+	}
 	
 	public static Set<List<Long>> keepNonOverlappingSpheres(Set<List<Long>> centers, int centerSeparationInVoxels, long [] paddedOffset){
 		Set<List<Long>> keptCenters = new HashSet<List<Long>>();
@@ -295,7 +370,6 @@ public class SparkRibosomeConnectedComponents {
     public static <T extends RealType<T>,U extends IntegerType< U >, V extends IntegerType< V >>
         void findAndDisplayLocalMaxima(
             RandomAccessibleInterval< T > source,
-            RandomAccess<V> spherenessRA,
             RandomAccess< U > centersRA,
             RandomAccess< U > spheresRA,
             double ribosomeRadiusInVoxels,
@@ -364,6 +438,25 @@ public class SparkRibosomeConnectedComponents {
         }
     }
     
+	public static void plotCentersAndSpheres(List<long[]> localMaxima, RandomAccess<UnsignedLongType> centersRA, RandomAccess<UnsignedLongType> spheresRA, double ribosomeRadiusInVoxels,long [] paddedOffset, long [] paddedDimension, long [] overallDimensions){
+		for(long [] centerPosition : localMaxima) {
+	    	long [] overallCenterPosition = {centerPosition[0]+paddedOffset[0],centerPosition[1]+paddedOffset[1],centerPosition[2]+paddedOffset[2]};
+	        
+	    	if(overallCenterPosition[0]>=0 && overallCenterPosition[1]>=0 && overallCenterPosition[2]>=0 && 
+	    			overallCenterPosition[0]<overallDimensions[0] && overallCenterPosition[1]<overallDimensions[1] && overallCenterPosition[2]<overallDimensions[2]) {
+	        	long setValue = SparkCosemHelper.convertPositionToGlobalID(overallCenterPosition, overallDimensions);
+	        	
+	        	//set center to setValue
+	        	centersRA.setPosition(centerPosition);
+	        	centersRA.get().setInteger(setValue);
+	
+	        	// draw a sphere of radius one in the new image
+	        	fillSphereWithValue( spheresRA, centerPosition, ribosomeRadiusInVoxels, setValue, paddedDimension );
+	    	}
+		}
+	}
+
+    
     public static < T extends IntegerType< T > >void fillSphereWithValue(RandomAccess<T> ra, long [] center, double radius, long setValue, long[] dimensions){
     	long radiusCeiling = (long) Math.ceil(radius);
     	long radiusCeilingSquared = radiusCeiling*radiusCeiling;
@@ -417,7 +510,7 @@ public class SparkRibosomeConnectedComponents {
 		final SparkConf conf = new SparkConf().setAppName("SparkLabelPredictionWithConnectedComponents");
 		
 		//Create block information list
-		List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), "ribosomes");
+		List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), "ribosomes_cc_sphereness");
 	
 		//Run connected components
 		JavaSparkContext sc = new JavaSparkContext(conf);

@@ -57,6 +57,7 @@ import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.type.numeric.integer.*;
@@ -83,6 +84,12 @@ public class SparkCurvature {
 
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. organelle. Requires organelle_medialSurface as well.")
 		private String inputN5DatasetName = null;
+		
+		@Option(name = "--scaleSteps", required = false, usage = "N5 dataset, e.g. organelle. Requires organelle_medialSurface as well.")
+		private int scaleSteps = 11;
+		
+		@Option(name = "--calculateSphereness", required = false, usage = "Calculate Sphereness; if not set, will calculate sheetness")
+		private boolean calculateSphereness = false;
 
 		public Options(final String[] args) {
 
@@ -111,6 +118,14 @@ public class SparkCurvature {
 		public String getOutputN5Path() {
 			return outputN5Path;
 		}
+		
+		public int getScaleSteps() {
+			return scaleSteps;
+		}
+		
+		public boolean getCalculateSphereness() {
+			return calculateSphereness;
+		}
 
 	}
 
@@ -124,12 +139,14 @@ public class SparkCurvature {
 	 * @param inputDatasetName		Input N5 dataset name
 	 * @param n5OutputPath			Output N5 path
 	 * @param outputDatasetName		Output N5 dataset name
+	 * @param scaleSteps			Number of scale steps
+	 * @param calculateSphereness	If true, do sphereness; else do sheetness
 	 * @param blockInformationList	List of block information to parallize over
 	 * @throws IOException
 	 */
 	@SuppressWarnings("unchecked")
 	public static final void computeCurvature(final JavaSparkContext sc, final String n5Path,
-			final String inputDatasetName, final String n5OutputPath, String outputDatasetName,
+			final String inputDatasetName, final String n5OutputPath, String outputDatasetName, int scaleSteps, boolean calculateSphereness,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
 		//Read in input block information
@@ -141,8 +158,9 @@ public class SparkCurvature {
 
 		//Create output
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);	
-		n5Writer.createDataset(outputDatasetName+"_sheetness", dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
-		n5Writer.setAttribute(outputDatasetName+"_sheetness", "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		String finalOutputDatasetName = calculateSphereness ? outputDatasetName+"_sphereness" : outputDatasetName+"_sheetness";
+		n5Writer.createDataset(finalOutputDatasetName, dimensions, blockSize, DataType.FLOAT64, new GzipCompression());
+		n5Writer.setAttribute(finalOutputDatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		rdd.foreach(blockInformation -> {
@@ -150,8 +168,11 @@ public class SparkCurvature {
 			final long[][] gridBlock = blockInformation.gridBlock;
 			long[] offset = gridBlock[0];
 			long[] dimension = gridBlock[1];
-			int sigma = 50;
-			int padding = sigma+1;//Since need extra of 1 around each voxel for curvature
+			
+			final int octaveSteps = 2;
+			double [][][] sigmaSeries = sigmaSeries(pixelResolution, octaveSteps, scaleSteps);
+			int[] sizes = Gauss3.halfkernelsizes( sigmaSeries[0][scaleSteps-1] );
+			int padding = sizes[0]+2;//Since need extra of 1 around each voxel for curvature
 			long[] paddedOffset = new long[]{offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long[] paddedDimension = new long []{dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
@@ -184,28 +205,28 @@ public class SparkCurvature {
 			}
 			
 			//Create sheetness output
-			IntervalView<DoubleType> sheetness = null;			
+			IntervalView<DoubleType> curvatureOutput = null;			
 			
 			//Perform curvature analysis
 			if(!medialSurfaceCoordinatesToSheetnessInformationMap.isEmpty()) {
-				getSheetness(sourceCropped, medialSurfaceCoordinatesToSheetnessInformationMap, new long[]{padding,padding,padding}, dimension, pixelResolution); 
-				sheetness = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
-				RandomAccess<DoubleType> sheetnessRA = sheetness.randomAccess();
+				getCurvature(sourceCropped, medialSurfaceCoordinatesToSheetnessInformationMap, new long[]{padding,padding,padding}, dimension, pixelResolution, sigmaSeries, calculateSphereness); 
+				curvatureOutput = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
+				RandomAccess<DoubleType> sheetnessRA = curvatureOutput.randomAccess();
 				
 				for(Entry<List<Long>, SheetnessInformation> entry : medialSurfaceCoordinatesToSheetnessInformationMap.entrySet()) {
 					long[] pos = new long[] {entry.getKey().get(0), entry.getKey().get(1), entry.getKey().get(2)};
 					sheetnessRA.setPosition(pos);
-					sheetnessRA.get().set(entry.getValue().sheetness);
+					sheetnessRA.get().set(entry.getValue().curvature);
 				}
 				
-				sheetness = Views.offsetInterval(sheetness,new long[]{padding,padding,padding}, dimension);
+				curvatureOutput = Views.offsetInterval(curvatureOutput,new long[]{padding,padding,padding}, dimension);
 			}
 			else{
-				sheetness = Views.offsetInterval(ArrayImgs.doubles(dimension),new long[]{0,0,0}, dimension);
+				curvatureOutput = Views.offsetInterval(ArrayImgs.doubles(dimension),new long[]{0,0,0}, dimension);
 			}
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
-			N5Utils.saveBlock(sheetness, n5BlockWriter, outputDatasetName+"_sheetness", gridBlock[2]);
+			N5Utils.saveBlock(curvatureOutput, n5BlockWriter, finalOutputDatasetName, gridBlock[2]);
 						
 		});
 
@@ -219,7 +240,7 @@ public class SparkCurvature {
 		//use map to associate object ID with radii, edges etc
 		public double[][] b_minus_a_normalized;
 		public double minimumLaplacian;
-		public double sheetness; 
+		public double curvature; 
 		
 		/**
 		 * Constructor to initialize sheetness information
@@ -228,7 +249,7 @@ public class SparkCurvature {
 		{ 
 			this.b_minus_a_normalized = new double[3][3];
 			this.minimumLaplacian = 0;
-			this.sheetness = 0;
+			this.curvature = 0;
 		}
 	}
 	
@@ -275,13 +296,13 @@ public class SparkCurvature {
 	 * @param padding												Padding for image
 	 * @param dimension												Dimension of image
 	 * @param resolution											Resolution of image
+	 * @param scaleSteps											Number of scale steps
+	 * @param calculateSphereness									If true, do sphereness; else do sheetness
 	 */
-	public static void getSheetness(RandomAccessibleInterval<DoubleType> converted, HashMap<List<Long>, SheetnessInformation> medialSurfaceCoordinatesToSheetnessInformationMap, 
-			long[] padding, long[] dimension, double[] resolution) {
+	public static void getCurvature(RandomAccessibleInterval<DoubleType> converted, HashMap<List<Long>, SheetnessInformation> medialSurfaceCoordinatesToSheetnessInformationMap, 
+			long[] padding, long[] dimension, double[] resolution,double[][][] sigmaSeries, boolean calculateSphereness) {
 		
 		//Define scale steps and octave steps
-		final int scaleSteps = 11;
-		final int octaveSteps = 2;
 		long[] paddedDimension = new long[] {converted.dimension(0), converted.dimension(1), converted.dimension(2)};
 		
 		//Create required images for calculating sheetness
@@ -290,7 +311,8 @@ public class SparkCurvature {
 		final RandomAccessible<DoubleType>[] gradients = new RandomAccessible[converted.numDimensions()];
 			
 		//Loop over scale steps to calculate smoothed image
-		final double[][][] sigmaSeries = sigmaSeries(resolution, octaveSteps, scaleSteps);
+		//final double[][][] sigmaSeries = sigmaSeries(resolution, octaveSteps, scaleSteps);
+		int scaleSteps = sigmaSeries[0].length;
 		for (int i = 0; i < scaleSteps; ++i) {
 			final SimpleGaussRA<DoubleType> op = new SimpleGaussRA<>(sigmaSeries[2][i]);
 			op.setInput(source);
@@ -310,11 +332,12 @@ public class SparkCurvature {
 			}
 			
 			//Update sheetness if necessary
-			updateSheetness(converted, gradients, medialSurfaceCoordinatesToSheetnessInformationMap, 
-					sigmaSeries[0][i],padding, dimension, i);
+			updateCurvature(converted, gradients, medialSurfaceCoordinatesToSheetnessInformationMap, 
+					sigmaSeries[0][i],padding, dimension, i, calculateSphereness);
 		}
 		
 	}
+	
 	
 	/**
 	 * Update sheetness - if necessary - for a given scale step in medialSurfaceCoordinatesToSheetnessInformationMap
@@ -326,11 +349,12 @@ public class SparkCurvature {
 	 * @param padding												Padding of image
 	 * @param dimension												Dimension of image
 	 * @param scaleStep												Scale step, for keeping track of progress
+	 * @param calculateSphereness									If true, do sphereness; else do sheetness
 	 */
-	private static void updateSheetness(final RandomAccessibleInterval<DoubleType> converted, 
+	private static void updateCurvature(final RandomAccessibleInterval<DoubleType> converted, 
 			final RandomAccessible<DoubleType>[] gradients, 
 			final HashMap<List<Long>, SheetnessInformation> medialSurfaceCoordinatesToSheetnessInformationMap, 
-			final double[] sigma, long[] padding, long[] dimension, int scaleStep) {
+			final double[] sigma, long[] padding, long[] dimension, int scaleStep, boolean calculateSphereness) {
 
 		//Create gradients
 		final int n = gradients[0].numDimensions();
@@ -415,17 +439,26 @@ public class SparkCurvature {
 				else {
 					updatedCount++;
 				}
-				double Rsheet = Math.abs(eigenvalues[1]/eigenvalues[2]);
-				double alpha = 0.5;
-				double sheetEnhancementTerm = Math.exp(-Rsheet*Rsheet/(2*alpha*alpha));
+				
+				double curvature;
 				double Rblob = Math.abs(2*Math.abs(eigenvalues[2])-Math.abs(eigenvalues[1])-Math.abs(eigenvalues[0]))/Math.abs(eigenvalues[2]);
 				double beta = 0.5;
-				double blobEliminationTerm = 1-Math.exp(-Rblob*Rblob/(2*beta*beta));
-				
-				double equation1 = sheetEnhancementTerm*blobEliminationTerm;
-				
+				if(!calculateSphereness) {
+					double Rsheet = Math.abs(eigenvalues[1]/eigenvalues[2]);
+					double alpha = 0.5;
+					double sheetEnhancementTerm = Math.exp(-Rsheet*Rsheet/(2*alpha*alpha));
+					double blobEliminationTerm = 1-Math.exp(-Rblob*Rblob/(2*beta*beta));
+					double equation1 = sheetEnhancementTerm*blobEliminationTerm;
+					curvature = equation1;
+				}
+				else {
+					if(eigenvalues[2]==0) curvature = 0;
+					else {
+						curvature = Math.exp(-Rblob*Rblob/(2*beta*beta));
+					}
+				}
 				sheetnessInformation.minimumLaplacian = laplacian;
-				sheetnessInformation.sheetness = equation1;
+				sheetnessInformation.curvature = curvature;
 				medialSurfaceCoordinatesToSheetnessInformationMap.put(currentMedialSurfaceCoordinate, sheetnessInformation);
 				
 			}
@@ -487,7 +520,7 @@ public class SparkCurvature {
 			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(),
 					currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			computeCurvature(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(), finalOutputN5DatasetName, blockInformationList);
+			computeCurvature(sc, options.getInputN5Path(), currentOrganelle, options.getOutputN5Path(), finalOutputN5DatasetName, options.getScaleSteps(), options.getCalculateSphereness(), blockInformationList);
 
 			sc.close();
 		}
