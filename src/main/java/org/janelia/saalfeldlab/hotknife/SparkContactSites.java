@@ -88,6 +88,9 @@ public class SparkContactSites {
 
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. organelle")
 		private String inputN5DatasetName = null;
+		
+		@Option(name = "--inputPairs", required = false, usage = "eg 'a_to_b,c_to_d'")
+		private String inputPairs = null;
 
 		@Option(name = "--contactDistance", required = false, usage = "Distance from orgnelle for contact site (nm)")
 		private double contactDistance = 10;
@@ -123,6 +126,10 @@ public class SparkContactSites {
 
 		public String getInputN5DatasetName() {
 			return inputN5DatasetName;
+		}
+		
+		public String getInputPairs() {
+			return inputPairs;
 		}
 
 		public String getOutputN5Path() {
@@ -1289,16 +1296,34 @@ public class SparkContactSites {
 
 		// Get all organelles
 		String[] organelles = { "" };
-		if (options.getInputN5DatasetName() != null) {
-			organelles = options.getInputN5DatasetName().split(",");
-		} else {
-			File file = new File(options.getInputN5Path());
-			organelles = file.list(new FilenameFilter() {
-				@Override
-				public boolean accept(File current, String name) {
-					return new File(current, name).isDirectory();
-				}
-			});
+		
+		List<String[]> customOrganellePairs = new ArrayList<String[]>();
+		if(options.getInputPairs()!=null) {
+			String[] inputPairs = options.getInputPairs().split(",");
+			HashSet<String> organelleSet = new HashSet<String>();
+			for(int i=0; i<inputPairs.length; i++)
+			{
+				String organelle1 = inputPairs[i].split("_to_")[0];
+				String organelle2 = inputPairs[i].split("_to_")[1];
+				organelleSet.add(organelle1);
+				organelleSet.add(organelle2);
+				customOrganellePairs.add(new String[] {organelle1, organelle2});
+			}
+			organelles = organelleSet.toArray(organelles);
+		}
+		else {
+			if (options.getInputN5DatasetName() != null) {
+				organelles = options.getInputN5DatasetName().split(",");
+			} else {
+				File file = new File(options.getInputN5Path());
+				organelles = file.list(new FilenameFilter() {
+					@Override
+					public boolean accept(File current, String name) {
+						return new File(current, name).isDirectory();
+					}
+				});
+			}
+			
 		}
 		
 		//First calculate the object contact boundaries
@@ -1314,7 +1339,13 @@ public class SparkContactSites {
 		}
 		System.out.println("finished boundaries");
 		
-		calculateContactSites(conf, organelles,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), options.getInputN5Path(), options.getOutputN5Path());
+		if(customOrganellePairs.size()>0) {
+			for(String [] customOrganellePair : customOrganellePairs)
+			calculateContactSites(conf, customOrganellePair,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), options.getInputN5Path(), options.getOutputN5Path());
+		}
+		else {
+			calculateContactSites(conf, organelles,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), options.getInputN5Path(), options.getOutputN5Path());
+		}
 		System.out.println("finished contact sites");
 		
 	}
