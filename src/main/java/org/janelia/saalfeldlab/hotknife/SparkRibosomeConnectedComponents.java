@@ -87,11 +87,11 @@ public class SparkRibosomeConnectedComponents {
 		@Option(name = "--inputN5Path", required = true, usage = "Path to input N5")
 		private String inputN5Path = null;
 		
+		@Option(name = "--inputN5DatasetName", required = true, usage = "N5 Dataset name")
+		private String inputN5DatasetName = null;
+		
 		@Option(name = "--outputN5Path", required = false, usage = "Output N5 path")
 		private String outputN5Path = null;
-		
-		@Option(name = "--sigmaNm", required = false, usage = "Gaussian smoothing sigma (nm)")
-		private double sigmaNm = 2;
 		
 		public Options(final String[] args) {
 
@@ -113,13 +113,15 @@ public class SparkRibosomeConnectedComponents {
 			return inputN5Path;
 		}
 		
+		public String getInputN5DatasetName() {
+			return inputN5DatasetName;
+		}
+		
 		public String getOutputN5Path() {
 			return outputN5Path;
 		}
 		
-		public double getSigmaNm() {
-			return sigmaNm;
-		}
+		
 		
 	}
 
@@ -139,16 +141,15 @@ public class SparkRibosomeConnectedComponents {
 	 */
 	@SuppressWarnings("unchecked")
 	public static final void getRibosomeConnectedComponents(
-			final JavaSparkContext sc, final String inputN5Path, final String outputN5Path, final double sigmaNm, List<BlockInformation> blockInformationList) throws IOException {
+			final JavaSparkContext sc, final String inputN5Path, final String inputN5DatasetName, final String outputN5Path, List<BlockInformation> blockInformationList) throws IOException {
 
-		final String inputN5DatasetName = "ribosomes";
 		// Get attributes of input data sets.
 		final N5Reader predictionN5Reader = new N5FSReader(inputN5Path);
 		final DatasetAttributes attributes = predictionN5Reader.getDatasetAttributes(inputN5DatasetName);
 		final int[] blockSize = attributes.getBlockSize();
 		final long[] outputDimensions = attributes.getDimensions();
 		final double [] pixelResolution = IOHelper.getResolution(predictionN5Reader, inputN5DatasetName);
-				
+		
 		// Create output dataset
 		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
 		final String outputCentersDatasetName = inputN5DatasetName+"_centers";
@@ -156,20 +157,15 @@ public class SparkRibosomeConnectedComponents {
 		n5Writer.createDataset(outputCentersDatasetName, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
 		n5Writer.setAttribute(outputCentersDatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
-		
+		n5Writer.setAttribute(outputCentersDatasetName, "offset", predictionN5Reader.getAttribute(inputN5DatasetName, "offset", int[].class));
+
 		final String outputSpheresDatasetName = inputN5DatasetName+"_spheres";
 		n5Writer.createGroup(outputSpheresDatasetName);
 		n5Writer.createDataset(outputSpheresDatasetName, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
 		n5Writer.setAttribute(outputSpheresDatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
-		
-		final String tmp = "tmp";
-		n5Writer.createGroup(tmp);
-		n5Writer.createDataset(tmp, outputDimensions, blockSize,
-				DataType.FLOAT32, attributes.getCompression());
-		n5Writer.setAttribute(tmp, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
-		
-		
+		n5Writer.setAttribute(outputSpheresDatasetName, "offset", predictionN5Reader.getAttribute(inputN5DatasetName, "offset", int[].class));
+
 		double ribosomeRadiusInNm = 10.0;
 		double [] ribosomeRadiusInVoxels = 	new double[] {ribosomeRadiusInNm/pixelResolution[0],ribosomeRadiusInNm/pixelResolution[0],ribosomeRadiusInNm/pixelResolution[0]}; //gives 3 pixel sigma at 4 nm resolution
 
@@ -210,7 +206,6 @@ public class SparkRibosomeConnectedComponents {
 			
 			// Write out output to temporary n5 stack
 			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
-			N5Utils.saveBlock(Views.offsetInterval(spherenessFraction, new long[] {padding,padding,padding}, dimension), n5WriterLocal, "tmp", gridBlock[2]);
 			N5Utils.saveBlock(Views.offsetInterval(outputCenters, new long[] {padding,padding,padding}, dimension), n5WriterLocal, outputCentersDatasetName, gridBlock[2]);
 			N5Utils.saveBlock(Views.offsetInterval(outputSpheres, new long[] {padding,padding,padding}, dimension), n5WriterLocal, outputSpheresDatasetName, gridBlock[2]);
 
@@ -361,7 +356,7 @@ public class SparkRibosomeConnectedComponents {
 						float deltaCOMmetric = (float) (1-deltaCOM/radius);
 						//if(countForSphereCenteredAtxyz>spherePoints.size()/10) {
 							spherenessFractionRA.setPosition(new long[] {x,y,z});
-							spherenessFractionRA.get().set((float) (countForSphereCenteredAtxyz)/spherePoints.size() + deltaCOMmetric);
+							spherenessFractionRA.get().set(countForSphereCenteredAtxyz + deltaCOMmetric);
 						//}
 					}
 				}
@@ -523,14 +518,14 @@ public class SparkRibosomeConnectedComponents {
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkLabelPredictionWithConnectedComponents");
+		final SparkConf conf = new SparkConf().setAppName("SparkRibosomeConnectedComponents");
 		
 		//Create block information list
 		List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), "ribosomes");
 	
 		//Run connected components
 		JavaSparkContext sc = new JavaSparkContext(conf);
-		getRibosomeConnectedComponents(sc, options.getInputN5Path(), options.getOutputN5Path(), options.getSigmaNm(), blockInformationList);
+		getRibosomeConnectedComponents(sc, options.getInputN5Path(), options.getInputN5DatasetName(), options.getOutputN5Path(), blockInformationList);
 		sc.close();
 		
 	}
