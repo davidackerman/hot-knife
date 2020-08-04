@@ -428,7 +428,7 @@ public class SparkGeneralCosemObjectInformation {
 		if (!options.getSkipContactSites()) {
 			for (int i=0; i<organelles.length; i++) {
 				for(int j= options.getSkipSelfContacts() ? i+1 : i; j<organelles.length;j++) {
-					String [] datasetNames = {organelles[i],i==j ? organelles[j]+"_pairs" : organelles[j] ,organelles[i]+"_to_"+organelles[j]+"_cc"};
+					String [] datasetNames = {organelles[i],i==j ? organelles[j]+"_pairs" : organelles[j] ,organelles[i]+"_to_"+organelles[j]+"_ccNewest"};
 					System.out.println(Arrays.toString(datasetNames));
 					
 					JavaSparkContext sc = new JavaSparkContext(conf);

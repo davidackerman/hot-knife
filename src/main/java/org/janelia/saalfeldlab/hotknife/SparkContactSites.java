@@ -648,7 +648,7 @@ public class SparkContactSites {
 		
 		//Get contact distance in voxels
 		final double contactDistanceInVoxels = contactDistance/pixelResolution[0];
-		double expandedContactDistanceSquared = (contactDistanceInVoxels+2)*(contactDistanceInVoxels+2);//expand by 2 since including surface voxels (1 for each voxel);
+		double expandedContactDistanceSquared = (contactDistanceInVoxels+1)*(contactDistanceInVoxels+1);//expand by 1 since including surface voxels
 		int contactDistanceInVoxelsCeiling=(int)Math.ceil(contactDistanceInVoxels);
 	
 		int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
