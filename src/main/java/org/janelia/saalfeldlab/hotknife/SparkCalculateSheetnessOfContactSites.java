@@ -18,6 +18,7 @@ package org.janelia.saalfeldlab.hotknife;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.HashMap;
@@ -226,16 +227,32 @@ public class SparkCalculateSheetnessOfContactSites {
 
 		if (!options.parsedSuccessfully)
 			return;
+		
+		// Get all organelles
+		String[] organelles = { "" };
+		if (options.getInputN5ContactSiteDatasetName() != null) {
+			organelles = options.getInputN5ContactSiteDatasetName().split(",");
+		} else {
+			File file = new File(options.getInputN5Path());
+			organelles = file.list(new FilenameFilter() {
+				@Override
+				public boolean accept(File current, String name) {
+					return new File(current, name).isDirectory();
+				}
+			});
+		}
 
 		final SparkConf conf = new SparkConf().setAppName("SparkCalculateSheetnessOfContactSites");
 		
 		//Create block information list
 		List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(),
 			options.getInputN5SheetnessDatasetName());
-		JavaSparkContext sc = new JavaSparkContext(conf);
-		Map<Integer, Double> sheetnessAndSurfaceAreaHistogram = getContactSiteSheetness(sc, options.getInputN5Path(), options.getInputN5SheetnessDatasetName(), options.getInputN5ContactSiteDatasetName(), blockInformationList);
-		writeData(sheetnessAndSurfaceAreaHistogram, options.getOutputDirectory(),  options.getInputN5ContactSiteDatasetName());
-		sc.close();
+		for(String organelle : organelles) {
+			JavaSparkContext sc = new JavaSparkContext(conf);
+			Map<Integer, Double> sheetnessAndSurfaceAreaHistogram = getContactSiteSheetness(sc, options.getInputN5Path(), options.getInputN5SheetnessDatasetName(), organelle, blockInformationList);
+			writeData(sheetnessAndSurfaceAreaHistogram, options.getOutputDirectory(),  options.getInputN5ContactSiteDatasetName());
+			sc.close();
+		}
 
 	}
 	

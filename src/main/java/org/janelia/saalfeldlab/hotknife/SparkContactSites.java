@@ -1193,11 +1193,12 @@ public class SparkContactSites {
 	 * @param doSelfContacts		True if want to include organelleA-organelleA contacts
 	 * @param minimumVolumeCutoff	Minimum volume above which objects will be kept
 	 * @param contactDistance		Maximum distance surface adjacent organelle voxels can be for intervening region to be considered contact site. TODO maybe redo this so that contact distance is distance between surfaces themselves 
+	 * @param doLM					Do LM (rather than EM)
 	 * @param inputN5Path			Input N5 path
 	 * @param outputN5Path			Output N5 path
 	 * @throws IOException
 	 */
-	public static final void calculateContactSites(final SparkConf conf, final String [] organelles, final boolean doSelfContacts, final double minimumVolumeCutoff, final double contactDistance, final String inputN5Path, final String outputN5Path ) throws IOException {
+	public static final void calculateContactSites(final SparkConf conf, final String [] organelles, final boolean doSelfContacts, final double minimumVolumeCutoff, final double contactDistance, final boolean doLM, final String inputN5Path, final String outputN5Path ) throws IOException {
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (int i = 0; i<organelles.length; i++) {
 			final String organelle1 =organelles[i];
@@ -1210,7 +1211,7 @@ public class SparkContactSites {
 				final String tempOutputN5ConnectedComponents = organelleContactString + "_cc_blockwise_temp_to_delete";
 				final String finalOutputN5DatasetName = organelleContactString + "_cc";
 				
-				if(contactDistance==0) {
+				if(contactDistance==0 && doLM) {
 					blockInformationList = blockwiseConnectedComponentsLM(
 							sc, outputN5Path,
 							organelle1, organelle2, 
@@ -1327,8 +1328,12 @@ public class SparkContactSites {
 		}
 		
 		//First calculate the object contact boundaries
-		if(!options.getSkipGeneratingContactBoundaries()) {
-			for (String organelle : organelles) {
+		for (String organelle : organelles) {
+			File contactBoundary = new File(options.getOutputN5Path()+"/"+organelle+"_contact_boundary_temp_to_delete");
+			File contactBoundaryPairs = new File(options.getOutputN5Path()+"/"+organelle+"_pairs_contact_boundary_temp_to_delete");
+			boolean skipGeneratingCurrentContactBoundaries = options.getSkipGeneratingContactBoundaries() && contactBoundary.isDirectory() && (options.getDoSelfContacts() ? contactBoundaryPairs.isDirectory() : true);
+			if(!skipGeneratingCurrentContactBoundaries) {
+				
 				JavaSparkContext sc = new JavaSparkContext(conf);
 				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), organelle);
 				calculateObjectContactBoundaries(sc, options.getInputN5Path(), organelle,
@@ -1339,12 +1344,14 @@ public class SparkContactSites {
 		}
 		System.out.println("finished boundaries");
 		
+		boolean doLM = false;
 		if(customOrganellePairs.size()>0) {
-			for(String [] customOrganellePair : customOrganellePairs)
-			calculateContactSites(conf, customOrganellePair,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), options.getInputN5Path(), options.getOutputN5Path());
+			for(String [] customOrganellePair : customOrganellePairs) {
+				calculateContactSites(conf, customOrganellePair,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), doLM, options.getInputN5Path(), options.getOutputN5Path());
+			}
 		}
 		else {
-			calculateContactSites(conf, organelles,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), options.getInputN5Path(), options.getOutputN5Path());
+			calculateContactSites(conf, organelles,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), doLM, options.getInputN5Path(), options.getOutputN5Path());
 		}
 		System.out.println("finished contact sites");
 		
