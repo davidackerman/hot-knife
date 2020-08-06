@@ -684,8 +684,10 @@ public class SparkContactSites {
 			RandomAccess<UnsignedLongType> organelle1ContactBoundaryDataRA = organelle1ContactBoundaryData.randomAccess();
 			RandomAccess<UnsignedLongType> organelle2ContactBoundaryDataRA = organelle2ContactBoundaryData.randomAccess();
 			
+			double ticA = System.currentTimeMillis()/1000.0;
 			ContactSiteInformation csi = getContactSiteInformation(paddedDimension, organelle1DataRA, organelle2DataRA, organelle1ContactBoundaryDataRA, organelle2ContactBoundaryDataRA, sameOrganelleClass);
-			
+			double ticB = System.currentTimeMillis()/1000.0;
+			//System.out.println("csi time: "+(ticB-ticA));
 			// Create the output based on the current dimensions
 			
 			final Img<UnsignedLongType> output = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(dimension);
@@ -698,17 +700,44 @@ public class SparkContactSites {
 			organelle2ContactBoundaryData = null;
 			organelle2ContactBoundaryDataRA = null;
 			
+			
+			//do all organelle pairs separately 
+			ContactSiteVoxelHelper contactSiteVoxelHelper = new ContactSiteVoxelHelper();
 			for( List<Long> currentOrganellePair : csi.allOrganellePairs ) {
 				long organelle1ID = currentOrganellePair.get(0);
 				long organelle2ID = currentOrganellePair.get(1);
 				if(sameOrganelleClass && organelle1ID==organelle2ID) break; //then it is an object to itself contact site
 				
-				Set<List<Long>> allContactSiteVoxels = getContactSiteVoxelsForOrganellePair(csi, currentOrganellePair, organelle1DataRA, organelle2DataRA, expandedContactDistanceSquared, padding, dimension, paddedDimension);
+				Map<List<Long>, List<Long>> allContactSiteVoxels = getContactSiteVoxelsForOrganellePair(csi, currentOrganellePair, organelle1DataRA, organelle2DataRA, expandedContactDistanceSquared, padding, dimension, paddedDimension);
+				contactSiteVoxelHelper.addContactSiteVoxels(allContactSiteVoxels);
+			}
+			
+			double ticC = System.currentTimeMillis()/1000.0;
+			//System.out.println("get contact site voxels time: "+(ticC-ticB));
+			
+			for(Map<List<Long>, List<Long>> currentIndependentContactSiteVoxelInformation : contactSiteVoxelHelper.listOfIndepdenentContactSiteVoxelInformation) {
+				doConnectedComponents(currentIndependentContactSiteVoxelInformation, sameOrganelleClass, output, minimumVolumeCutoffInVoxels, blockSizeL, offset, dimension, outputDimensions, currentBlockInformation);
+			}
+			double ticD = System.currentTimeMillis()/1000.0;
+			//System.out.println("connected components time: "+(ticD-ticC));
+
+			/*for( List<Long> currentOrganellePair : csi.allOrganellePairs ) {
+				long organelle1ID = currentOrganellePair.get(0);
+				long organelle2ID = currentOrganellePair.get(1);
+				if(sameOrganelleClass && organelle1ID==organelle2ID) break; //then it is an object to itself contact site
 				
+				double ticC = System.currentTimeMillis()/1000.0;
+				Set<List<Long>> allContactSiteVoxels = getContactSiteVoxelsForOrganellePair(csi, currentOrganellePair, organelle1DataRA, organelle2DataRA, expandedContactDistanceSquared, padding, dimension, paddedDimension);
+				double ticD = System.currentTimeMillis()/1000.0;
+				//System.out.println("get contact site voxels time: "+(ticD-ticC));
+
 				if(!allContactSiteVoxels.isEmpty()) {
 					doConnectedComponentsForOrganellePairContactSites(organelle1ID, organelle2ID, sameOrganelleClass, allContactSiteVoxels, output, minimumVolumeCutoffInVoxels, blockSizeL, offset, dimension, outputDimensions, currentBlockInformation);
+					double ticE = System.currentTimeMillis()/1000.0;
+					//System.out.println("cc time: "+(ticE-ticD));
 				}			// Write out output to temporary n5 stack
 			}
+			*/
 			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
 			N5Utils.saveBlock(output, n5WriterLocal, outputN5DatasetName, gridBlock[2]);
 
@@ -721,6 +750,47 @@ public class SparkContactSites {
 		return blockInformationList;
 	}
 	
+	static class ContactSiteVoxelHelper {
+		public List< Map<List<Long>,List<Long>> > listOfIndepdenentContactSiteVoxelInformation ;
+		
+		public ContactSiteVoxelHelper(){
+			Map<List<Long>, List<Long>> contactSiteVoxelsToOrganellePair = new HashMap<List<Long>,List<Long>>();
+			listOfIndepdenentContactSiteVoxelInformation = new ArrayList<Map<List<Long>, List<Long>>>(Arrays.asList(contactSiteVoxelsToOrganellePair));
+		}
+		
+		public void addContactSiteVoxels(Map<List<Long>, List<Long>> newContactSiteVoxelsToOrganellePair) {
+			boolean newVoxelsTouchExistingVoxels = false;
+			for (Map<List<Long>, List<Long>> existingContactSiteVoxelsToOrganellePair : listOfIndepdenentContactSiteVoxelInformation) {
+				newVoxelsTouchExistingVoxels = doNewVoxelsTouchExistingVoxels(existingContactSiteVoxelsToOrganellePair.keySet(),
+						newContactSiteVoxelsToOrganellePair.keySet());
+				if(!newVoxelsTouchExistingVoxels) {
+					existingContactSiteVoxelsToOrganellePair.putAll(newContactSiteVoxelsToOrganellePair);
+					break;
+				}
+			}
+			
+			if(newVoxelsTouchExistingVoxels) {
+				listOfIndepdenentContactSiteVoxelInformation.add(newContactSiteVoxelsToOrganellePair);
+			}
+		}
+		
+		private static boolean doNewVoxelsTouchExistingVoxels(Set<List<Long>> existingVoxels, Set<List<Long>> newVoxels) {
+			for(List<Long> newVoxel : newVoxels) {
+				for(long dx=-1; dx<=1; dx++) {
+					for(long dy=-1; dy<=1; dy++) {
+						for(long dz=-1; dz<=1; dz++) {
+							List<Long> testVoxel = Arrays.asList(newVoxel.get(0)+dx, newVoxel.get(1)+dy, newVoxel.get(2)+dz);
+							if(existingVoxels.contains(testVoxel)) {
+								return true;
+							}
+						}
+					}
+				}
+			}
+			return false;
+		}
+
+	}
 	/**
 	 * Get voxels that make up contact sites for a given pair of organelles. A contact site is taken to be the all voxels between two surface voxels on different organelles, if the surface voxels are within the expanded contact distance.
 	 * 
@@ -734,8 +804,8 @@ public class SparkContactSites {
 	 * @param paddedDimension					Padded dimension
 	 * @return									Set of contact site voxel coordinates
 	 */
-	public static Set<List<Long>> getContactSiteVoxelsForOrganellePair(ContactSiteInformation csi, List<Long> currentOrganellePair, RandomAccess<UnsignedLongType> organelle1DataRA,RandomAccess<UnsignedLongType> organelle2DataRA, double expandedContactDistanceSquared, long padding, long[] dimension, long [] paddedDimension){
-		Set<List<Long>> allContactSiteVoxels = new HashSet<List<Long>>();
+	public static Map<List<Long>,List<Long>> getContactSiteVoxelsForOrganellePair(ContactSiteInformation csi, List<Long> currentOrganellePair, RandomAccess<UnsignedLongType> organelle1DataRA,RandomAccess<UnsignedLongType> organelle2DataRA, double expandedContactDistanceSquared, long padding, long[] dimension, long [] paddedDimension){
+		Map<List<Long>,List<Long>> allContactSiteVoxels = new HashMap<List<Long>,List<Long>>();
 		
 		List<long[]> organelle1SurfaceVoxels = csi.organelle1SurfaceVoxelsWithinOrganelle2ContactDistance.getOrDefault(currentOrganellePair, new ArrayList<long[]>());
 		List<long[]> organelle2SurfaceVoxels = csi.organelle2SurfaceVoxelsWithinOrganelle1ContactDistance.getOrDefault(currentOrganellePair, new ArrayList<long[]>());
@@ -749,7 +819,7 @@ public class SparkContactSites {
 							long [] correctedPosition = new long[] {validVoxel[0]-padding, validVoxel[1]-padding,validVoxel[2]-padding};
 							if(correctedPosition[0]>=0 && correctedPosition[1]>=0 && correctedPosition[2]>=0 &&
 									correctedPosition[0]<dimension[0] && correctedPosition[1]<dimension[1] && correctedPosition[2]<dimension[2]) {
-								allContactSiteVoxels.add(Arrays.asList(correctedPosition[0],correctedPosition[1],correctedPosition[2]));
+								allContactSiteVoxels.put(Arrays.asList(correctedPosition[0],correctedPosition[1],correctedPosition[2]), currentOrganellePair);
 							}
 						}
 					}
@@ -788,6 +858,34 @@ public class SparkContactSites {
 				blockSizeL, offset, 1, minimumVolumeCutoffInVoxels, new RectangleShape(1,false));
 		currentBlockInformation.edgeComponentIDtoVolumeMap.putAll(currentPairEdgeComponentIDtoVolumeMap);
 		for(Long edgeComponentID : currentPairEdgeComponentIDtoVolumeMap.keySet()) {
+			if(sameOrganelleClass) {
+				List<Long> sortedPair = organelle1ID<organelle2ID ? Arrays.asList(organelle1ID,organelle2ID) : Arrays.asList(organelle2ID,organelle1ID);
+				currentBlockInformation.edgeComponentIDtoOrganelleIDs.put(edgeComponentID, sortedPair);
+			}
+			else{
+				currentBlockInformation.edgeComponentIDtoOrganelleIDs.put(edgeComponentID, Arrays.asList(organelle1ID, organelle2ID));
+			}
+		}
+	}
+	
+	public static void doConnectedComponents(Map<List<Long>, List<Long>> currentIndependentContactSiteVoxelInformation, boolean sameOrganelleClass, Img<UnsignedLongType> output, int minimumVolumeCutoffInVoxels, long [] blockSizeL, long [] offset, long [] dimension, long outputDimensions[], BlockInformation currentBlockInformation) {
+		Img<UnsignedByteType> currentPairBinarized = new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(dimension);
+		RandomAccess<UnsignedByteType> currentPairBinarizedRA = currentPairBinarized.randomAccess();
+		for(List<Long> contactSiteVoxel : currentIndependentContactSiteVoxelInformation.keySet()) {
+			currentPairBinarizedRA.setPosition(new long[] {contactSiteVoxel.get(0),contactSiteVoxel.get(1),contactSiteVoxel.get(2)});
+			currentPairBinarizedRA.get().set(1);
+		}
+	
+		// Compute the connected components which returns the components along the block
+		// edges, and update the corresponding blockInformation object					
+		Map<Long, Long> currentPairEdgeComponentIDtoVolumeMap = SparkConnectedComponents.computeConnectedComponents(currentPairBinarized, output, outputDimensions,
+				blockSizeL, offset, 1, minimumVolumeCutoffInVoxels, new RectangleShape(1,false));
+		currentBlockInformation.edgeComponentIDtoVolumeMap.putAll(currentPairEdgeComponentIDtoVolumeMap);
+		for(Long edgeComponentID : currentPairEdgeComponentIDtoVolumeMap.keySet()) {
+			long[] edgeComponentGlobalPos = SparkCosemHelper.convertGlobalIDtoPosition(edgeComponentID, outputDimensions);
+			List<Long> organellePair = currentIndependentContactSiteVoxelInformation.get(Arrays.asList(edgeComponentGlobalPos[0]-offset[0],edgeComponentGlobalPos[1]-offset[1],edgeComponentGlobalPos[2]-offset[2]));
+			long organelle1ID = organellePair.get(0);
+			long organelle2ID = organellePair.get(1);
 			if(sameOrganelleClass) {
 				List<Long> sortedPair = organelle1ID<organelle2ID ? Arrays.asList(organelle1ID,organelle2ID) : Arrays.asList(organelle2ID,organelle1ID);
 				currentBlockInformation.edgeComponentIDtoOrganelleIDs.put(edgeComponentID, sortedPair);
@@ -1209,7 +1307,7 @@ public class SparkContactSites {
 				
 				final String organelleContactString = organelle1 + "_to_" + organelle2;
 				final String tempOutputN5ConnectedComponents = organelleContactString + "_cc_blockwise_temp_to_delete";
-				final String finalOutputN5DatasetName = organelleContactString + "_cc";
+				final String finalOutputN5DatasetName = organelleContactString + "_ccSpeedup";
 				
 				if(contactDistance==0 && doLM) {
 					blockInformationList = blockwiseConnectedComponentsLM(

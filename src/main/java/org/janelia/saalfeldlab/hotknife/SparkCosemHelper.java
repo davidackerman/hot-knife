@@ -74,4 +74,21 @@ public class SparkCosemHelper {
 				+ dimensions[0] * position[1] + position[0] + 1;
 		return ID;
 	}
+	
+	/**
+	 * Convert global ID to position
+	 * @param globalID		Global ID
+	 * @param dimensions	Dimensions of original image
+	 * @return				Global ID
+	 */
+	public static long [] convertGlobalIDtoPosition(long globalID, long[] dimensions) {
+		long [] pos = new long[3];
+		globalID-=1;
+		pos[2] = (long)Math.floor(globalID/(dimensions[0]*dimensions[1]));
+		globalID-=pos[2]*dimensions[0]*dimensions[1];
+		pos[1] = (long)Math.floor(globalID/dimensions[0]);
+		globalID-=pos[1]*dimensions[0];
+		pos[0] = globalID;
+		return pos;
+	}
 }

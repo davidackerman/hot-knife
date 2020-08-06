@@ -721,29 +721,35 @@ public class SparkConnectedComponents {
 				// unique global ID
 
 				if (defaultIDtoGlobalID[defaultID] == 0) {
-					// Get global ID
+					if(tO.get()==0) {//otherwise, this is part of a multistep connected components and don't want to reuse id
 
-					long[] currentVoxelPosition = { o.getIntPosition(0), o.getIntPosition(1), o.getIntPosition(2) };
-					currentVoxelPosition[0] += offset[0];
-					currentVoxelPosition[1] += offset[1];
-					currentVoxelPosition[2] += offset[2];
-
-					// Unique global ID is based on pixel index, +1 to differentiate it from
-					// background
-					long globalID = SparkCosemHelper.convertPositionToGlobalID(currentVoxelPosition, outputDimensions);
-
-					defaultIDtoGlobalID[defaultID] = globalID;
+						// Get global ID
+	
+						long[] currentVoxelPosition = { o.getIntPosition(0), o.getIntPosition(1), o.getIntPosition(2) };
+						currentVoxelPosition[0] += offset[0];
+						currentVoxelPosition[1] += offset[1];
+						currentVoxelPosition[2] += offset[2];
+	
+						// Unique global ID is based on pixel index, +1 to differentiate it from
+						// background
+						long globalID = SparkCosemHelper.convertPositionToGlobalID(currentVoxelPosition, outputDimensions);
+						defaultIDtoGlobalID[defaultID] = globalID;
+						
+					}
 				}
-
-				tO.setLong(defaultIDtoGlobalID[defaultID]);
-
-				// Store ids of objects on the edge of a block
-				if (o.getIntPosition(0) == 0 || o.getIntPosition(0) == blockSize[0] - 1
-						|| o.getIntPosition(1) == 0 || o.getIntPosition(1) == blockSize[1] - 1
-						|| o.getIntPosition(2) == 0 || o.getIntPosition(2) == blockSize[2] - 1) {
-					edgeComponentIDs.add(defaultIDtoGlobalID[defaultID]);
+				
+				if(tO.get()==0) {//only update if tO was zero
+					tO.setLong(defaultIDtoGlobalID[defaultID]);
+				
+					// Store ids of objects on the edge of a block
+					if (o.getIntPosition(0) == 0 || o.getIntPosition(0) == blockSize[0] - 1
+							|| o.getIntPosition(1) == 0 || o.getIntPosition(1) == blockSize[1] - 1
+							|| o.getIntPosition(2) == 0 || o.getIntPosition(2) == blockSize[2] - 1) {
+						
+						edgeComponentIDs.add(defaultIDtoGlobalID[defaultID]);
+					}
+					allComponentIDtoVolumeMap.put(defaultIDtoGlobalID[defaultID], allComponentIDtoVolumeMap.getOrDefault(defaultIDtoGlobalID[defaultID],0L)+1);
 				}
-				allComponentIDtoVolumeMap.put(defaultIDtoGlobalID[defaultID], allComponentIDtoVolumeMap.getOrDefault(defaultIDtoGlobalID[defaultID],0L)+1);	
 			}
 		}
 		Set<Long> allComponentIDs = allComponentIDtoVolumeMap.keySet();
