@@ -266,8 +266,9 @@ public class SparkGeneralCosemObjectInformation {
 				objectInformation[5+i] = Math.min(objectInformation[5+i], position[i]); //xyz min
 				objectInformation[8+i] = Math.max(objectInformation[8+i], position[i]); //xyz max
 			}
-			 objectInformation[11] = organelleIDs[0];
-			 objectInformation[12] = organelleIDs[1];
+			//ids, in the even that a voxel is contained within the halo
+			 objectInformation[11] = Math.max(organelleIDs[0],objectInformation[11]);
+			 objectInformation[12] = Math.max(organelleIDs[1],objectInformation[12]);
 			 
 			 objectInformation[13] += organelleSurfaceAreas[0]; //add surface area contribution in faces
 			 objectInformation[14] += organelleSurfaceAreas[1];
@@ -290,6 +291,10 @@ public class SparkGeneralCosemObjectInformation {
 					objectInformationA[8+i] = Math.max(objectInformationA[8+i], objectInformationB[8+i]); //max xyz
 				}
 				
+				//Organelle ids (in the event that a voxel is not contained within contact boundary)
+				objectInformationA[11] = Math.max(objectInformationA[11],objectInformationB[11]);
+				objectInformationA[12] = Math.max(objectInformationA[12],objectInformationB[12]);
+
 				//Organelle surface areas for contact sites
 				objectInformationA[13]+=objectInformationB[13];
 				objectInformationA[14]+=objectInformationB[14];

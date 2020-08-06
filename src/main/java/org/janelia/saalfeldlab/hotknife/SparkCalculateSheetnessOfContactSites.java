@@ -250,7 +250,7 @@ public class SparkCalculateSheetnessOfContactSites {
 		for(String organelle : organelles) {
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			Map<Integer, Double> sheetnessAndSurfaceAreaHistogram = getContactSiteSheetness(sc, options.getInputN5Path(), options.getInputN5SheetnessDatasetName(), organelle, blockInformationList);
-			writeData(sheetnessAndSurfaceAreaHistogram, options.getOutputDirectory(),  options.getInputN5ContactSiteDatasetName());
+			writeData(sheetnessAndSurfaceAreaHistogram, options.getOutputDirectory(),  organelle);
 			sc.close();
 		}
 

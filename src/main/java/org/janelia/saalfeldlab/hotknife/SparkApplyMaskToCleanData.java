@@ -44,6 +44,8 @@ import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.type.logic.NativeBoolType;
+import net.imglib2.type.numeric.IntegerType;
+import net.imglib2.type.numeric.NumericType;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
@@ -128,7 +130,7 @@ public class SparkApplyMaskToCleanData {
 	 * @throws IOException
 	 */
 	@SuppressWarnings("unchecked")
-	public static final void applyMask(
+	public static final <T extends NumericType<T>> void applyMask(
 			final JavaSparkContext sc,
 			final String datasetToMaskN5Path,
 			final String datasetNameToMask,
@@ -139,18 +141,17 @@ public class SparkApplyMaskToCleanData {
 			final List<BlockInformation> blockInformationList) throws IOException {
 
 		final N5Reader n5Reader = new N5FSReader(datasetToMaskN5Path);
-
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetNameToMask);
 		final long[] dimensions = attributes.getDimensions();
 		final int[] blockSize = attributes.getBlockSize();		
-
+		
 		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
 		String maskedDatasetName = datasetNameToMask + "_maskedWith_"+datasetNameToUseAsMask;
 		n5Writer.createDataset(
 				maskedDatasetName,
 				dimensions,
 				blockSize,
-				DataType.UINT64,
+				attributes.getDataType(),
 				new GzipCompression());
 		double[] pixelResolution = IOHelper.getResolution(n5Reader, datasetNameToMask);
 		n5Writer.setAttribute(maskedDatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
@@ -166,9 +167,9 @@ public class SparkApplyMaskToCleanData {
 			final long [] paddedBlockMin =  new long [] {offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			final long [] paddedBlockSize =  new long [] {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			
-			final RandomAccessibleInterval<UnsignedLongType> dataToMask;
+			final RandomAccessibleInterval<T> dataToMask;
 			try {
-				dataToMask = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, datasetNameToMask)), offset, dimension);
+				dataToMask = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<T>)N5Utils.open(n5BlockReader, datasetNameToMask)), offset, dimension);
 			} catch (Exception e) {
 				System.out.println(datasetToMaskN5Path+" "+datasetNameToMask);
 				System.out.println(Arrays.toString(offset));
@@ -179,7 +180,7 @@ public class SparkApplyMaskToCleanData {
 			final RandomAccessibleInterval<UnsignedLongType> maskData = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5MaskReader, datasetNameToUseAsMask)), paddedBlockMin, paddedBlockSize);
 			
 			RandomAccess<UnsignedLongType> maskDataRA = maskData.randomAccess();
-			RandomAccess<UnsignedLongType> dataToMaskRA = dataToMask.randomAccess();
+			RandomAccess<T> dataToMaskRA = dataToMask.randomAccess();
 			
 			for(int x=padding; x<dimension[0]+padding; x++) {
 				for(int y= padding; y<dimension[1]+padding; y++) {
@@ -190,14 +191,14 @@ public class SparkApplyMaskToCleanData {
 							if(!keepWithinMask) {//then use mask as regions to set to 0
 								long [] newPos = new long[] {x-padding, y-padding, z-padding};
 								dataToMaskRA.setPosition(newPos);
-								dataToMaskRA.get().set( 0 );
+								dataToMaskRA.get().setZero();
 							}
 						}
 						else { //set region outside mask to 0
 							if(keepWithinMask) {
 								long [] newPos = new long[] {x-padding, y-padding, z-padding};
 								dataToMaskRA.setPosition(newPos);
-								dataToMaskRA.get().set( 0 );
+								dataToMaskRA.get().setZero();
 							}
 						}
 						
@@ -207,8 +208,15 @@ public class SparkApplyMaskToCleanData {
 			}
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
-			N5Utils.saveBlock(dataToMask, n5BlockWriter, maskedDatasetName, blockInformation.gridBlock[2]);
-		
+			if(attributes.getDataType()==DataType.FLOAT64) {
+				N5Utils.saveBlock((RandomAccessibleInterval<FloatType>)dataToMask, n5BlockWriter, maskedDatasetName, blockInformation.gridBlock[2]);
+			}
+			else if(attributes.getDataType()==DataType.UINT64) {
+				N5Utils.saveBlock((RandomAccessibleInterval<UnsignedLongType>)dataToMask, n5BlockWriter, maskedDatasetName, blockInformation.gridBlock[2]);
+			}
+			else {
+				N5Utils.saveBlock((RandomAccessibleInterval<UnsignedByteType>)dataToMask, n5BlockWriter, maskedDatasetName, blockInformation.gridBlock[2]);
+			}
 		});
 	}
 	
