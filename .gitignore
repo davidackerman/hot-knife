@@ -2,6 +2,8 @@
 /target/
 /dconf/
 /hs_err*
-*.sh
+/*.sh
+/flintstone/
+/hemi-brain/
 /er_cc_even/
 /cosem_poster/
