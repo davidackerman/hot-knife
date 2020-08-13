@@ -153,8 +153,9 @@ public class SparkCompareDatasets {
 			
 			Cursor<T> data1Cursor = data1.cursor();
 			Cursor<T> data2Cursor = data2.cursor();
+			RandomAccess<T> data1RA = data1.randomAccess();
 			boolean areEqual = true;
-			while(data1Cursor.hasNext() && areEqual) {
+			while(data1Cursor.hasNext() ) {//&& areEqual) {
 				data1Cursor.next();
 				data2Cursor.next();
 				if(!data1Cursor.get().valueEquals(data2Cursor.get())) {

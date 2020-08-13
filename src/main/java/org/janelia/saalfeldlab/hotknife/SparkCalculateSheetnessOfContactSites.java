@@ -204,9 +204,9 @@ public class SparkCalculateSheetnessOfContactSites {
 		FileWriter sheetnessVolumeAndAreaHistogramFW = new FileWriter(outputDirectory+"/"+filePrefix+"_sheetnessSurfaceAreaHistograms.csv");
 		sheetnessVolumeAndAreaHistogramFW.append("Sheetness,Surface Area(nm^2)\n");
 				
-		for(int sheetnessBin=0;sheetnessBin<256;sheetnessBin++) {
+		for(int sheetnessBin=1;sheetnessBin<256;sheetnessBin++) {
 			double surfaceArea = sheetnessAndSurfaceAreaHistogram.getOrDefault(sheetnessBin, 0.0);
-			String sheetnessBinString = Double.toString(sheetnessBin/256.0+0.5/256.0);
+			String sheetnessBinString = Double.toString(sheetnessBin/255.0+0.5/255.0);
 			sheetnessVolumeAndAreaHistogramFW.append(sheetnessBinString+","+Double.toString(surfaceArea)+"\n");
 		}
 		sheetnessVolumeAndAreaHistogramFW.flush();

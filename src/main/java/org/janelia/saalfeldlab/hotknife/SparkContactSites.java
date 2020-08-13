@@ -208,7 +208,8 @@ public class SparkContactSites {
 						org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
 				double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle);
 				n5Writer.setAttribute(outputN5DatasetNameOrganelle, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
-				
+				n5Writer.setAttribute(outputN5DatasetNameOrganelle, "offset", IOHelper.getOffset(n5Reader, organelle));
+
 				//Get contact distance in voxels
 				final double contactDistanceInVoxels = contactDistance/pixelResolution[0]+1;//add 1 extra because are going to include surface voxels of other organelle so need an extra distance of 1 voxel
 				double contactDistanceInVoxelsSquared = contactDistanceInVoxels*contactDistanceInVoxels;//contactDistanceInVoxelsCeiling*contactDistanceInVoxelsCeiling;
@@ -295,13 +296,15 @@ public class SparkContactSites {
 				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle);
 		n5Writer.setAttribute(outputN5DatasetNameOrganelle, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
-		
+		n5Writer.setAttribute(outputN5DatasetNameOrganelle, "offset", IOHelper.getOffset(n5Reader, organelle));
+
 		//Pairs necessary for classA - classA contact sites
 		n5Writer.createGroup(outputN5DatasetNameOrganellePairs);
 		n5Writer.createDataset(outputN5DatasetNameOrganellePairs, outputDimensions, blockSize,
 				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
 		n5Writer.setAttribute(outputN5DatasetNameOrganellePairs, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
-		
+		n5Writer.setAttribute(outputN5DatasetNameOrganellePairs, "offset", IOHelper.getOffset(n5Reader, organelle));
+
 		//Get contact distance in voxels
 		final double contactDistanceInVoxels = contactDistance/pixelResolution[0]+1;//cuz will use surface voxels
 		double contactDistanceInVoxelsSquared = contactDistanceInVoxels*contactDistanceInVoxels;//contactDistanceInVoxelsCeiling*contactDistanceInVoxelsCeiling;
@@ -481,6 +484,7 @@ public class SparkContactSites {
 		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
 				DataType.UINT64, attributes.getCompression());
 		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		n5Writer.setAttribute(outputN5DatasetName, "offset", IOHelper.getOffset(n5Reader, organelle1));
 
 		// Set up rdd to parallelize over blockInformation list and run RDD, which will
 		// return updated block information containing list of components on the edge of
@@ -640,6 +644,7 @@ public class SparkContactSites {
 		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
 				DataType.UINT64, attributes.getCompression());
 		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		n5Writer.setAttribute(outputN5DatasetName, "offset", IOHelper.getOffset(n5Reader, organelle1));
 
 		// Set up rdd to parallelize over blockInformation list and run RDD, which will
 		// return updated block information containing list of components on the edge of
@@ -1307,7 +1312,7 @@ public class SparkContactSites {
 				
 				final String organelleContactString = organelle1 + "_to_" + organelle2;
 				final String tempOutputN5ConnectedComponents = organelleContactString + "_cc_blockwise_temp_to_delete";
-				final String finalOutputN5DatasetName = organelleContactString + "_ccSpeedup";
+				final String finalOutputN5DatasetName = organelleContactString + "_cc";
 				
 				if(contactDistance==0 && doLM) {
 					blockInformationList = blockwiseConnectedComponentsLM(
@@ -1377,6 +1382,17 @@ public class SparkContactSites {
 			return false;	
 		}
 	
+	}
+	
+	public static boolean isSurfaceVoxel(final RandomAccess<UnsignedLongType> raObject, final RandomAccess<UnsignedLongType> raSurface, long [] position ) {
+		raObject.setPosition(position);
+		if(raObject.get().get()>0 ) {//needs to be inside organelle
+			raSurface.setPosition(position);
+			if (raSurface.get().get()>0) {
+				return true;
+			}
+		}
+		return false;	
 	}
 	
 	/**

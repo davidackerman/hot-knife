@@ -73,6 +73,10 @@ public class BlockInformation implements Serializable {
 		final long[] outputDimensions = attributes.getDimensions();
 		
 		//Build list
+		return buildBlockInformationList(outputDimensions, blockSize);
+	}
+	
+	public static  List<BlockInformation> buildBlockInformationList(long [] outputDimensions, int [] blockSize){
 		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
 		List<BlockInformation> blockInformationList = new ArrayList<BlockInformation>();
 		for (int i = 0; i < gridBlockList.size(); i++) {

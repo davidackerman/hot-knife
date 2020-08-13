@@ -161,6 +161,7 @@ public class SparkGeneralCosemObjectInformation {
 		final long[] outputDimensions = attributes.getDimensions();
 		final long outOfBoundsValue = outputDimensions[0]*outputDimensions[1]*outputDimensions[2]+1;
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, inputN5DatasetName);
+		int[] datasetOffset = IOHelper.getOffset(n5Reader, inputN5DatasetName);
 
 		// Set up rdd to parallelize over blockInformation list and run RDD, which will
 		// return updated block information containing list of components on the edge of
@@ -218,7 +219,7 @@ public class SparkGeneralCosemObjectInformation {
 							
 							int surfaceAreaContributionOfVoxelInFaces = getSurfaceAreaContributionOfVoxelInFaces(sourceRandomAccess, outOfBoundsValue, voxelsToCheck);
 							
-							long[] absolutePosition = {x+extendedOffset[0],y+extendedOffset[1],z+extendedOffset[2]};
+							long[] absolutePosition = {(long) (x+extendedOffset[0]+datasetOffset[0]/pixelResolution[0]),(long) (y+extendedOffset[1]+datasetOffset[1]/pixelResolution[1]),(long) (z+extendedOffset[2]+datasetOffset[2]/pixelResolution[2])};
 							long[] organelleIDs = {-1, -1};
 							long[] organelleSurfaceAreas = {-1, -1};
 							if(datasetNames.length>1) {
@@ -426,49 +427,48 @@ public class SparkGeneralCosemObjectInformation {
 				organelleSet.add(organelle2);
 				customOrganellePairs.add(new String[] {organelle1, organelle2});
 			}
-			organelles = organelleSet.toArray(organelles);
 		}
-		else {
-			if (options.getInputN5DatasetName() != null) {
-				organelles = options.getInputN5DatasetName().split(",");
-			} else {
-				File file = new File(options.getInputN5Path());
-				organelles = file.list(new FilenameFilter() {
-					@Override
-					public boolean accept(File current, String name) {
-						return new File(current, name).isDirectory();
-					}
-				});
-			}	
-		}
+		
+		if (options.getInputN5DatasetName() != null) {
+			organelles = options.getInputN5DatasetName().split(",");
+		} else {
+			File file = new File(options.getInputN5Path());
+			organelles = file.list(new FilenameFilter() {
+				@Override
+				public boolean accept(File current, String name) {
+					return new File(current, name).isDirectory();
+				}
+			});
+		}	
+		
 
 		new File(options.getOutputDirectory()+"/allCounts.csv").delete();
 		
 		System.out.println(Arrays.toString(organelles));
-		if(customOrganellePairs.size()==0) {//then not just doing contact sites
-			for (String currentOrganelle : organelles) {
-				System.out.println(currentOrganelle);
-				String [] datasetNames = {currentOrganelle};
+		for (String currentOrganelle : organelles) {
+			System.out.println(currentOrganelle);
+			String [] datasetNames = {currentOrganelle};
+			JavaSparkContext sc = new JavaSparkContext(conf);
+			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[0]);
+			calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
+			sc.close();
+		}
+		
+		
+		//contact sites
+		if(customOrganellePairs.size()>0) { //custom contact sites
+			for(String[] organellePair : customOrganellePairs) {
+				String [] datasetNames = {organellePair[0],organellePair[0].equals(organellePair[1]) ? organellePair[1]+"_pairs" : organellePair[1] ,organellePair[0]+"_to_"+organellePair[1]+"_cc"};
+				System.out.println(Arrays.toString(datasetNames));	
 				JavaSparkContext sc = new JavaSparkContext(conf);
-				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[0]);
+				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[2]);
 				calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
 				sc.close();
 			}
 		}
-		
-		if (!options.getSkipContactSites()) {
-			if(customOrganellePairs.size()>0) {
-				for(String[] organellePair : customOrganellePairs) {
-					String [] datasetNames = {organellePair[0],organellePair[0].equals(organellePair[1]) ? organellePair[1]+"_pairs" : organellePair[1] ,organellePair[0]+"_to_"+organellePair[1]+"_cc"};
-					System.out.println(Arrays.toString(datasetNames));	
-					JavaSparkContext sc = new JavaSparkContext(conf);
-					List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[2]);
-					calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
-					sc.close();
-				}
-			}
-			else {
-				
+		else {
+			if (!options.getSkipContactSites()) {
+
 				for (int i=0; i<organelles.length; i++) {
 					for(int j= options.getSkipSelfContacts() ? i+1 : i; j<organelles.length;j++) {
 						String [] datasetNames = {organelles[i],i==j ? organelles[j]+"_pairs" : organelles[j] ,organelles[i]+"_to_"+organelles[j]+"_cc"};

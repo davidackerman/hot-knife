@@ -239,21 +239,22 @@ public class SparkApplyMaskToCleanData {
 		
 		//SparkConnectedComponents.standardConnectedComponentAnalysisWorkflow(conf, options.getDatasetNameToUseAsMask(), options.getDatasetToUseAsMaskN5Path(), null, options.getOutputN5Path(), "_largestComponent", 0, -1, true);
 		String datasetToUseAsMaskN5Path = options.getDatasetToUseAsMaskN5Path();
-		String suffix = "";
 		String[] organellesToMask = options.getDatasetNameToMask().split(",");
-		for(String organelleToMask : organellesToMask) {
-			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getDatasetToMaskN5Path(),organelleToMask);
-			JavaSparkContext sc = new JavaSparkContext(conf);
-			applyMask(
-					sc,
-					options.getDatasetToMaskN5Path(),
-					organelleToMask,
-					datasetToUseAsMaskN5Path,
-					options.getDatasetNameToUseAsMask()+suffix,
-					options.getOutputN5Path(),
-					options.getKeepWithinMask(),
-					blockInformationList) ;
-			sc.close();
+		for(String mask : options.getDatasetNameToUseAsMask().split(",")) {
+			for(String organelleToMask : organellesToMask) {
+				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getDatasetToMaskN5Path(),organelleToMask);
+				JavaSparkContext sc = new JavaSparkContext(conf);
+				applyMask(
+						sc,
+						options.getDatasetToMaskN5Path(),
+						organelleToMask,
+						datasetToUseAsMaskN5Path,
+						mask,
+						options.getOutputN5Path(),
+						options.getKeepWithinMask(),
+						blockInformationList) ;
+				sc.close();
+			}
 		}
 
 	}

@@ -6,12 +6,18 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$OWN_DIR/flintstone/flintstone-lsd.sh
 JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkApplyMaskToCleanData
-N_NODES=10
+N_NODES=15
+
+#ARGV="--datasetToMaskN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5' \
+#--datasetNameToMask 'er,er_sheetnessVolumeAveraged_ccAt1SkipSmoothing' \
+#--datasetToUseAsMaskN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5' \
+#--datasetNameToUseAsMask 'nucleus_expansion_150' \
+#--outputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5'"
 
 ARGV="--datasetToMaskN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5' \
---datasetNameToMask 'er,er_sheetnessVolumeAveraged_ccAt1SkipSmoothing' \
+--datasetNameToMask 'er,er_reconstructed,er_sheetness' \
 --datasetToUseAsMaskN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5' \
---datasetNameToUseAsMask 'nucleus_expansion_150' \
+--datasetNameToUseAsMask 'nucleus_expanded' \
 --outputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5'"
 
 #export MEMORY_PER_NODE=500

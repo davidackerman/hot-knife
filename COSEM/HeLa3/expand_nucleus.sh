@@ -11,8 +11,8 @@ N_NODES=15
 
 ARGV="--inputN5DatasetName 'nucleus' \
 --inputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5' \
---expansionInNm 150 \
---outputN5DatasetSuffix '_expansion_150'"
+--expansionInNm 80 \
+--outputN5DatasetSuffix '_expansion_80'"
 
 export MEMORY_PER_NODE=500
 export RUNTIME="48:00"

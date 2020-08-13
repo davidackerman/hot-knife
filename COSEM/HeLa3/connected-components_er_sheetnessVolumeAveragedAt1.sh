@@ -19,6 +19,7 @@ ARGV="\
 --thresholdIntensityCutoff 1 \
 --outputN5DatasetSuffix '_ccAt1SkipSmoothing' \
 --inputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5' \
+--minimumVolumeCutoff 0 \
 "
 
 export RUNTIME="48:00"

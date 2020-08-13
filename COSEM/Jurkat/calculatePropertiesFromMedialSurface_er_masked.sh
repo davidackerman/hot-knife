@@ -11,9 +11,9 @@ N_NODES=15
 #for i in {'Jurkat.n5','HeLa3.n5','Jurkat.n5','Macrophage.n5'}; do cd $i; ln -s er_sheetness_maskedWith_nucleus_expansion_150 er_maskedWith_nucleus_expansion_150_sheetness; ln -s er_medialSurface_maskedWith_nucleus_expansion_150 er_maskedWith_nucleus_expansion_150_medialSurface; cd ..; done
 
 ARGV="--inputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/Jurkat.n5' \
---inputN5DatasetName 'er_maskedWith_nucleus_expansion_150' \
+--inputN5DatasetName 'er,er_maskedWith_nucleus_expansion_150' \
 --outputDirectory '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/Jurkat/' "
 
 export RUNTIME="48:00"
-#export MEMORY_PER_NODE=500
+export MEMORY_PER_NODE=500
 TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV

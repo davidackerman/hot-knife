@@ -198,6 +198,8 @@ public class SparkExpandDataset {
 		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT64, new GzipCompression());
 		double[] pixelResolution = IOHelper.getResolution(n5Reader, inputDatasetName);
 		n5Writer.setAttribute(outputDatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+		n5Writer.setAttribute(outputDatasetName, "offset", IOHelper.getOffset(n5Reader,inputDatasetName));
+
 		//n5Writer.setAttribute(outputDatasetName, "offset", n5Reader.getAttribute(inputDatasetName, "offset", int[].class));
 
 		double expansionInVoxels = expansionInNm/pixelResolution[0];
