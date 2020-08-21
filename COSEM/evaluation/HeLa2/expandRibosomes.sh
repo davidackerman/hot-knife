@@ -10,22 +10,16 @@ N_NODES=2
 
 BASEPATH=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeLa2/
 
-INPUTN5PATH=$BASEPATH/trainingCC.n5
+for i in {training,refinedPredictions}
+do
+
 ARGV="--inputN5DatasetName 'ribosomes_centers' \
---inputN5Path '$INPUTN5PATH' \
+--inputN5Path '$BASEPATH/${i}CC.n5' \
 --expansionInNm 10 \
 --outputN5DatasetSuffix '_expansion_10'"
 
 TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
-ln -s $INPUTN5PATH/ribosomes_centers_expansion_10 $INPUTN5PATH/ribosomes
+ln -s $BASEPATH/${i}CC.n5/ribosomes_centers_expansion_10 $BASEPATH/${i}CC.n5/ribosomes
 
-
-INPUTN5PATH=$BASEPATH/refinedPredictionsCC.n5
-ARGV="--inputN5DatasetName 'ribosomes_centers' \
---inputN5Path '$INPUTN5PATH' \
---expansionInNm 10 \
---outputN5DatasetSuffix '_expansion_10'"
-
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
-ln -s $INPUTN5PATH/ribosomes_centers_expansion_10 $INPUTN5PATH/ribosomes
+done
 

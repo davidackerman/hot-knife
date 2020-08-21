@@ -10,34 +10,29 @@ N_NODES=2
 
 BASEPATH='/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/Macrophage/'
 
-INPUTN5PATH=$BASEPATH/training.n5
-OUTPUTN5PATH=$BASEPATH/trainingCC.n5
-DATASETS='plasma_membrane,mito_membrane,mito,golgi,vesicle,MVB,er,nucleus,ribosomes_centers'
-
-ARGV="\
---inputN5DatasetName '$DATASETS' \
---skipSmoothing \
---minimumVolumeCutoff 0 \
---thresholdIntensityCutoff 1 \
---outputN5DatasetSuffix '' \
---inputN5Path '$INPUTN5PATH' \
---outputN5Path '$OUTPUTN5PATH' \
-"
-
 export RUNTIME="48:00"
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
 
-INPUTN5PATH=$BASEPATH/refinedPredictions.n5
-OUTPUTN5PATH=$BASEPATH/refinedPredictionsCC.n5
+for i in {training,rawPredictions,refinedPredictions}
+do
+
+if [[ "$i" == "rawPredictions" ]]; then RIBOSOMES=ribosomes; else RIBOSOMES=ribosomes_centers; fi
+if [[ "$i" == "refinedPredictions" ]]; 
+	then MITOANDER=mito,er,er_reconstructed,er_reconstructed_maskedWith_nucleus_expanded_maskedWith_ribosomes,er_maskedWith_nucleus_expanded,er_maskedWith_nucleus_expanded_maskedWith_ribosomes,er_reconstructed_maskedWith_nucleus_expanded,mito_maskedWith_er_reconstructed,mito_maskedWith_er; 
+	else MITOANDER=mito,er; 
+fi
+
 
 ARGV="\
---inputN5DatasetName '$DATASETS' \
+--inputN5DatasetName 'plasma_membrane,mito_membrane,golgi,vesicle,MVB,nucleus,$MITOANDER,$RIBOSOMES' \
 --skipSmoothing \
 --minimumVolumeCutoff 0 \
 --thresholdIntensityCutoff 1 \
 --outputN5DatasetSuffix '' \
---inputN5Path '$INPUTN5PATH' \
---outputN5Path '$OUTPUTN5PATH' \
+--inputN5Path '$BASEPATH/${i}.n5' \
+--outputN5Path '$BASEPATH/${i}CC.n5' \
 "
+
 TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
+
+done
 
