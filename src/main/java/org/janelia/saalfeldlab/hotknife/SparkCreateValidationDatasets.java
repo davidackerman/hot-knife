@@ -67,6 +67,9 @@ public class SparkCreateValidationDatasets {
 
 		@Option(name = "--outputPath", required = true, usage = "Output N5 path")
 		private String outputPath = null;
+		
+		@Option(name = "--doMicrotubules", required = false, usage = "Output N5 path")
+		private Boolean doMicrotubules = false;
 
 
 		public Options(final String[] args) {
@@ -96,6 +99,10 @@ public class SparkCreateValidationDatasets {
 		public String getOutputPath() {
 			return outputPath;
 		}
+		
+		public boolean getDoMicrotubules() {
+			return doMicrotubules;
+		}
 
 	}
 
@@ -105,7 +112,8 @@ public class SparkCreateValidationDatasets {
 			final String n5PathTrainingData,
 			final String n5PathRawPredictions,
 			final String n5PathRefinedPredictions,
-			final String outputPath) throws IOException {
+			final String outputPath,
+			final boolean doMicrotubules) throws IOException {
 
 		Map<String, List<Integer>> organelleToIDs = new HashMap<String,List<Integer>>();
 		organelleToIDs.put("plasma_membrane",Arrays.asList(2));
@@ -121,123 +129,160 @@ public class SparkCreateValidationDatasets {
 		organelleToIDs.put("ribosomes",Arrays.asList(34));
 		 
 		final N5Reader n5ReaderTraining = new N5FSReader(n5PathTrainingData);
-		
-		String n5OutputTraining = outputPath+"/training.n5";
-		final N5Writer n5WriterTraining = new N5FSWriter(n5OutputTraining);
-		
-		String n5OutputRefinedPredictions = outputPath+"/refinedPredictions.n5";
-		final N5Writer n5WriterRefinedPredictions = new N5FSWriter(n5OutputRefinedPredictions);
-		
-		String n5OutputRawPredictions = outputPath+"/rawPredictions.n5";
-		final N5Writer n5WriterRawPredictions = new N5FSWriter(n5OutputRawPredictions);
-		double[] pixelResolutionTraining = null;
-		int[] blockSizeTraining = null;
-		long[] dimensionsTraining = null;
-		int[] offsetTraining =null;
-		for( Entry<String, List<Integer>> entry : organelleToIDs.entrySet()) {
-			final String organelle = entry.getKey();
-			List<Integer> ids = entry.getValue();
-			
-			String organellePathInN5 = organelle=="ribosomes" ? "/"+organelle : "/all";
-		
-			DatasetAttributes attributesTraining = n5ReaderTraining.getDatasetAttributes(organellePathInN5);
-			dimensionsTraining = attributesTraining.getDimensions();
-			blockSizeTraining = attributesTraining.getBlockSize();
-			
-			pixelResolutionTraining = IOHelper.getResolution(n5ReaderTraining, organellePathInN5);
-			offsetTraining = IOHelper.getOffset(n5ReaderTraining, organellePathInN5);
-			
-			final String organelleRibosomeAdjustedNameTraining = organelle=="ribosomes"? "ribosomes_centers":organelle;
-			
-			n5WriterTraining.createDataset(
-					organelleRibosomeAdjustedNameTraining,
-					dimensionsTraining,
-					blockSizeTraining,
-					DataType.UINT8,
-					new GzipCompression());
-			n5WriterTraining.setAttribute(organelleRibosomeAdjustedNameTraining, "offset", offsetTraining);
-			n5WriterTraining.setAttribute(organelleRibosomeAdjustedNameTraining, "pixelResolution",new IOHelper.PixelResolution(pixelResolutionTraining));
-	
-			List<BlockInformation> blockInformationListTraining = BlockInformation.buildBlockInformationList(n5PathTrainingData,organellePathInN5);
-			JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationListTraining);
-			rdd.foreach(blockInformation -> {
-				final long [] offset= blockInformation.gridBlock[0];
-				final long [] dimension = blockInformation.gridBlock[1];
-				final N5Reader n5ReaderLocal = new N5FSReader(n5PathTrainingData);
-				
-				final RandomAccessibleInterval<UnsignedLongType> source = Views.offsetInterval((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5ReaderLocal, organellePathInN5), offset, dimension);
-				final RandomAccessibleInterval<UnsignedByteType> sourceConverted = Converters.convert(
-						source,
-						(a, b) -> {
-							Integer id = (int) a.get();
-							b.set(ids.contains(id) ? 255 : 0 );
-						},
-						new UnsignedByteType());
-				final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputTraining);
-				
-				N5Utils.saveBlock(sourceConverted, n5BlockWriter, organelleRibosomeAdjustedNameTraining, blockInformation.gridBlock[2]);
-						
-			});
-		}
-		Set<String> organelleSet = new HashSet<String>();
-		organelleSet.addAll(organelleToIDs.keySet());
-		//refined and raw predictions
-		for(String n5PredictionsPath : Arrays.asList(n5PathRawPredictions, n5PathRefinedPredictions)) {
-			organelleSet.remove("microtubules_out");
-			organelleSet.remove("microtubules");
-			if(n5PredictionsPath==n5PathRefinedPredictions) {
-				organelleSet.add("microtubules");
-				organelleSet.add("er_reconstructed");
-				organelleSet.add("er_maskedWith_nucleus_expanded");
-				organelleSet.add("mito_maskedWith_er");
-				organelleSet.add("er_maskedWith_nucleus_expanded_maskedWith_ribosomes");
-				organelleSet.add("er_reconstructed_maskedWith_nucleus_expanded");
-				organelleSet.add("mito_maskedWith_er_reconstructed");
-				organelleSet.add("er_reconstructed_maskedWith_nucleus_expanded_maskedWith_ribosomes");
-			}
-			for(String organelle : organelleSet) {
+		List<String> cropNames = Arrays.asList("cropRight","cropLeft","cropUp","cropDown","cropFront","cropBack","whole");
 
-				final String organelleRibosomeAdjustedName = (organelle=="ribosomes" && n5PredictionsPath==n5PathRefinedPredictions)? "ribosomes_centers":organelle;
+		for(int i=0; i<cropNames.size(); i++) {
 
-				final N5Reader n5ReaderPredictions = new N5FSReader(n5PredictionsPath);		
-				double[] pixelResolutionPredictions = IOHelper.getResolution(n5ReaderPredictions, organelleRibosomeAdjustedName);
-				double resolutionRatio = pixelResolutionTraining[0]/pixelResolutionPredictions[0];
-				long [] dimensionsPredictions = new long [] {(long) (dimensionsTraining[0]*resolutionRatio),(long) (dimensionsTraining[1]*resolutionRatio),(long) (dimensionsTraining[2]*resolutionRatio)};
-				long [] offsetInVoxels = new long [] {(long) (offsetTraining[0]/pixelResolutionPredictions[0]),(long) (offsetTraining[1]/pixelResolutionPredictions[1]),(long) (offsetTraining[2]/pixelResolutionPredictions[2])};
-				int[] blockSizeRefinedPredictions = blockSizeTraining;
-				N5Writer n5WriterPredictions = n5PredictionsPath==n5PathRawPredictions ? n5WriterRawPredictions : n5WriterRefinedPredictions;
-				n5WriterPredictions.createDataset(
-						organelleRibosomeAdjustedName,
-						dimensionsPredictions,
+			String n5OutputTraining = outputPath+"/training/"+cropNames.get(i)+".n5";
+			final N5Writer n5WriterTraining = new N5FSWriter(n5OutputTraining);
+			
+			String n5OutputRefinedPredictions = outputPath+"/refinedPredictions/"+cropNames.get(i)+".n5";
+			final N5Writer n5WriterRefinedPredictions = new N5FSWriter(n5OutputRefinedPredictions);
+			
+			String n5OutputRawPredictions = outputPath+"/rawPredictions/"+cropNames.get(i)+".n5";
+			final N5Writer n5WriterRawPredictions = new N5FSWriter(n5OutputRawPredictions);
+			double[] pixelResolutionTraining = null;
+			int[] blockSizeTraining = null;
+			int[] offsetTraining =null;
+			long[] dimensionsTraining=null;
+			for( Entry<String, List<Integer>> entry : organelleToIDs.entrySet()) {
+				final String organelle = entry.getKey();
+				List<Integer> ids = entry.getValue();
+				
+				String organellePathInN5 = organelle=="ribosomes" ? "/"+organelle : "/all";
+			
+				DatasetAttributes attributesTraining = n5ReaderTraining.getDatasetAttributes(organellePathInN5);
+				dimensionsTraining = attributesTraining.getDimensions();
+				blockSizeTraining = attributesTraining.getBlockSize();
+				
+				pixelResolutionTraining = IOHelper.getResolution(n5ReaderTraining, organellePathInN5);
+				offsetTraining = IOHelper.getOffset(n5ReaderTraining, organellePathInN5);
+
+				dimensionsTraining[0]=(long) (Math.floor(dimensionsTraining[0]/500)*500); //round to nearest 500//hardcode because one of them is 1004x1002x500
+				dimensionsTraining[1]=(long) (Math.floor(dimensionsTraining[1]/500)*500); //round to nearest 500//hardcode because one of them is 1004x1002x500
+				dimensionsTraining[2]=(long) (Math.floor(dimensionsTraining[2]/500)*500); //round to nearest 500//hardcode because one of them is 1004x1002x500
+				
+				final int [] offsetTrainingInVoxels = new int [] {0,0,0};
+				if(i<6) {
+					int dim = (int) Math.floor(i/2);
+					dimensionsTraining[dim]/=2;
+					if(i%2==0) {
+						offsetTraining[dim]+=dimensionsTraining[dim]*pixelResolutionTraining[dim];
+						offsetTrainingInVoxels[dim]+=dimensionsTraining[dim];//origin 0
+					}
+				}
+				
+				final String organelleRibosomeAdjustedNameTraining = organelle=="ribosomes"? "ribosomes_centers":organelle;
+				
+				n5WriterTraining.createDataset(
+						organelleRibosomeAdjustedNameTraining,
+						dimensionsTraining,
 						blockSizeTraining,
 						DataType.UINT8,
 						new GzipCompression());
-				n5WriterPredictions.setAttribute(organelleRibosomeAdjustedName, "offset", offsetTraining);
-				n5WriterPredictions.setAttribute(organelleRibosomeAdjustedName, "pixelResolution", new IOHelper.PixelResolution(pixelResolutionPredictions));
+				n5WriterTraining.setAttribute(organelleRibosomeAdjustedNameTraining, "offset", offsetTraining);
+				n5WriterTraining.setAttribute(organelleRibosomeAdjustedNameTraining, "pixelResolution",new IOHelper.PixelResolution(pixelResolutionTraining));
 		
-				List<BlockInformation> blockInformationListRefinedPredictions = BlockInformation.buildBlockInformationList(dimensionsPredictions, blockSizeRefinedPredictions);
-				JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationListRefinedPredictions);			
+				List<BlockInformation> blockInformationListTraining = BlockInformation.buildBlockInformationList(dimensionsTraining, blockSizeTraining);
+				JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationListTraining);
 				rdd.foreach(blockInformation -> {
-					final long [] offset= new long [] {blockInformation.gridBlock[0][0]+offsetInVoxels[0],
-							blockInformation.gridBlock[0][1]+offsetInVoxels[1],
-							blockInformation.gridBlock[0][2]+offsetInVoxels[2]
+					long offset [] = new long [] {blockInformation.gridBlock[0][0]+offsetTrainingInVoxels[0],
+							blockInformation.gridBlock[0][1]+offsetTrainingInVoxels[1],
+							blockInformation.gridBlock[0][2]+offsetTrainingInVoxels[2]
 					};
 					final long [] dimension = blockInformation.gridBlock[1];
-					final N5Reader n5ReaderLocal = new N5FSReader(n5PredictionsPath);
-					final long threshold = n5PredictionsPath==n5PathRawPredictions ? 127 : 1 ;
-					final RandomAccessibleInterval<T> source = Views.offsetInterval((RandomAccessibleInterval<T>)N5Utils.open(n5ReaderLocal, organelleRibosomeAdjustedName), offset, dimension);
+					final N5Reader n5ReaderLocal = new N5FSReader(n5PathTrainingData);
+					
+					final RandomAccessibleInterval<UnsignedLongType> source = Views.offsetInterval((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5ReaderLocal, organellePathInN5), offset, dimension);
 					final RandomAccessibleInterval<UnsignedByteType> sourceConverted = Converters.convert(
 							source,
 							(a, b) -> {
-								b.set(a.getIntegerLong()>=threshold ? 255 : 0 );
+								Integer id = (int) a.get();
+								b.set(ids.contains(id) ? 255 : 0 );
 							},
 							new UnsignedByteType());
-					final N5FSWriter n5BlockWriter = new N5FSWriter(n5PredictionsPath == n5PathRawPredictions ? n5OutputRawPredictions : n5OutputRefinedPredictions);
-					N5Utils.saveBlock(sourceConverted, n5BlockWriter, organelleRibosomeAdjustedName, blockInformation.gridBlock[2]);
-									
+					final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputTraining);
+					
+					N5Utils.saveBlock(sourceConverted, n5BlockWriter, organelleRibosomeAdjustedNameTraining, blockInformation.gridBlock[2]);
+							
 				});
 			}
+			
+			Set<String> organelleSet = new HashSet<String>();
+			organelleSet.addAll(organelleToIDs.keySet());
+			//refined and raw predictions
+			for(String n5PredictionsPath : Arrays.asList(n5PathRawPredictions, n5PathRefinedPredictions)) {
+				organelleSet.remove("microtubules_out");
+				organelleSet.remove("microtubules");
+				if(doMicrotubules) {
+					organelleSet.add("microtubules");
+				}
+				if(n5PredictionsPath==n5PathRefinedPredictions) {
+					organelleSet.add("er_reconstructed");
+					organelleSet.add("er_maskedWith_nucleus_expanded");
+					organelleSet.add("mito_maskedWith_er");
+					organelleSet.add("er_maskedWith_nucleus_expanded_maskedWith_ribosomes");
+					organelleSet.add("er_reconstructed_maskedWith_nucleus_expanded");
+					organelleSet.add("mito_maskedWith_er_reconstructed");
+					organelleSet.add("er_reconstructed_maskedWith_nucleus_expanded_maskedWith_ribosomes");
+					if(doMicrotubules) {
+						organelleSet.add("er_maskedWith_microtubules");
+						organelleSet.add("er_maskedWith_nucleus_expanded_maskedWith_microtubules");
+						organelleSet.add("er_reconstructed_maskedWith_microtubules");
+						organelleSet.add("er_reconstructed_maskedWith_nucleus_expanded_maskedWith_microtubules");
+						organelleSet.add("nucleus_maskedWith_microtubules");
+						organelleSet.add("mito_maskedWith_microtubules");
+						organelleSet.add("MVB_maskedWith_microtubules");
+						organelleSet.add("vesicle_maskedWith_microtubules");
+						organelleSet.add("golgi_maskedWith_microtubules");
+						organelleSet.add("plasma_membrane_maskedWith_microtubules");
+					}
+				}
+				for(String organelle : organelleSet) {
+	
+					final String organelleRibosomeAdjustedName = (organelle=="ribosomes" && n5PredictionsPath==n5PathRefinedPredictions)? "ribosomes_centers":organelle;
+	
+					final N5Reader n5ReaderPredictions = new N5FSReader(n5PredictionsPath);		
+					double[] pixelResolutionPredictions = IOHelper.getResolution(n5ReaderPredictions, organelleRibosomeAdjustedName);
+					double resolutionRatio = pixelResolutionTraining[0]/pixelResolutionPredictions[0];
+					long [] dimensionsPredictions = new long [] {(long) (dimensionsTraining[0]*resolutionRatio),(long) (dimensionsTraining[1]*resolutionRatio),(long) (dimensionsTraining[2]*resolutionRatio)};
+					long [] offsetInVoxels = new long [] {(long) (offsetTraining[0]/pixelResolutionPredictions[0]),(long) (offsetTraining[1]/pixelResolutionPredictions[1]),(long) (offsetTraining[2]/pixelResolutionPredictions[2])};
+					int[] blockSizeRefinedPredictions = blockSizeTraining;
+					N5Writer n5WriterPredictions = n5PredictionsPath==n5PathRawPredictions ? n5WriterRawPredictions : n5WriterRefinedPredictions;
+					n5WriterPredictions.createDataset(
+							organelleRibosomeAdjustedName,
+							dimensionsPredictions,
+							blockSizeTraining,
+							DataType.UINT8,
+							new GzipCompression());
+					n5WriterPredictions.setAttribute(organelleRibosomeAdjustedName, "offset", offsetTraining);
+					n5WriterPredictions.setAttribute(organelleRibosomeAdjustedName, "pixelResolution", new IOHelper.PixelResolution(pixelResolutionPredictions));
+			
+					List<BlockInformation> blockInformationListRefinedPredictions = BlockInformation.buildBlockInformationList(dimensionsPredictions, blockSizeRefinedPredictions);
+					JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationListRefinedPredictions);			
+					rdd.foreach(blockInformation -> {
+						final long [] offset= new long [] {blockInformation.gridBlock[0][0]+offsetInVoxels[0],
+								blockInformation.gridBlock[0][1]+offsetInVoxels[1],
+								blockInformation.gridBlock[0][2]+offsetInVoxels[2]
+						};
+						final long [] dimension = blockInformation.gridBlock[1];
+						final N5Reader n5ReaderLocal = new N5FSReader(n5PredictionsPath);
+						final long threshold = n5PredictionsPath==n5PathRawPredictions ? 127 : 1 ;
+						final RandomAccessibleInterval<T> source = Views.offsetInterval((RandomAccessibleInterval<T>)N5Utils.open(n5ReaderLocal, organelleRibosomeAdjustedName), offset, dimension);
+						final RandomAccessibleInterval<UnsignedByteType> sourceConverted = Converters.convert(
+								source,
+								(a, b) -> {
+									b.set(a.getIntegerLong()>=threshold ? 255 : 0 );
+								},
+								new UnsignedByteType());
+						final N5FSWriter n5BlockWriter = new N5FSWriter(n5PredictionsPath == n5PathRawPredictions ? n5OutputRawPredictions : n5OutputRefinedPredictions);
+						N5Utils.saveBlock(sourceConverted, n5BlockWriter, organelleRibosomeAdjustedName, blockInformation.gridBlock[2]);
+										
+					});
+				}
+			}
 		}
+		
 	}
 	
 	/**
@@ -257,7 +302,7 @@ public class SparkCreateValidationDatasets {
 		
 		SparkConf conf = new SparkConf().setAppName("SparkCreateValidationDatasets");
 		JavaSparkContext sc = new JavaSparkContext(conf);
-		createValidationDatasets(sc, options.getN5PathTrainingData(), options.getN5PathRawPredictions(),options.getN5PathRefinedPredictions(), options.getOutputPath());
+		createValidationDatasets(sc, options.getN5PathTrainingData(), options.getN5PathRawPredictions(),options.getN5PathRefinedPredictions(), options.getOutputPath(), options.getDoMicrotubules());
 		sc.close();
 		
 				

@@ -94,7 +94,7 @@ import net.imglib2.algorithm.neighborhood.Shape;
 
 
 /**
- * Expand skeleton for visualization purposes when making meshes
+ * Expand microtbule center axis predictions to create tubes
  *
  * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
@@ -102,10 +102,10 @@ public class SparkExpandMicrotubules {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
-		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		@Option(name = "--inputN5Path", required = true, usage = "input N5 path")
 		private String inputN5Path = null;
 		
-		@Option(name = "--inputN5DatasetName", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		@Option(name = "--inputN5DatasetName", required = true, usage = "input N5 datasetname")
 		private String inputN5DatasetName = null;
 
 		@Option(name = "--outputN5Path", required = false, usage = "output N5 path, e.g. /nrs/flyem/data/tmp/Z0115-22.n5")
@@ -161,17 +161,19 @@ public class SparkExpandMicrotubules {
 	}
 
 	/**
-	 * Expand skeletonization (1-voxel thin data) by a set radius to make meshes cleaner and more visible.
-	 * 
-	 * @param sc					Spark context
-	 * @param n5Path				Input N5 path
-	 * @param inputDatasetName		Skeletonization dataset name
-	 * @param n5OutputPath			Output N5 path
-	 * @param outputDatasetName		Output N5 dataset name
-	 * @param expansionInVoxels		Expansion in voxels
-	 * @param blockInformationList	List of block information
-	 * @throws IOException
-	 */
+	  * Expand microtubules to create a tube with a set inner radius and outer radius
+	  *
+	  *
+	  * @param sc					Spark context
+	  * @param n5Path				Path to n5
+	  * @param inputDatasetName		Dataset name
+	  * @param n5OutputPath			Output n5 path
+	  * @param outputDatasetName	Output datset name
+	  * @param innerRadiusInNm		Inner tube radius
+	  * @param outerRadiusInNm		Outer tube radius
+	  * @param blockInformationList	Block information list
+	  * @throws IOException
+	  */
 	public static final void expandMicrotubules(final JavaSparkContext sc, final String n5Path,
 			final String inputDatasetName, final String n5OutputPath, final String outputDatasetName, final double innerRadiusInNm, final double outerRadiusInNm,
 			final List<BlockInformation> blockInformationList) throws IOException {
@@ -187,6 +189,7 @@ public class SparkExpandMicrotubules {
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, inputDatasetName);
 		n5Writer.createDataset(outputDatasetName, dimensions, blockSize, DataType.UINT64, new GzipCompression());
 		n5Writer.setAttribute(outputDatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputDatasetName)));
+		n5Writer.setAttribute(outputDatasetName, "offset", IOHelper.getOffset(n5Reader, inputDatasetName));
 
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
@@ -194,6 +197,7 @@ public class SparkExpandMicrotubules {
 		long padding = (long) (Math.ceil(outerRadiusInNm/pixelResolution[0])+2);
 		double outerRadiusInVoxels = outerRadiusInNm/pixelResolution[0];
 		double innerRadiusInVoxels = innerRadiusInNm/pixelResolution[0];
+		
 		rdd.foreach(blockInformation -> {
 			final long[][] gridBlock = blockInformation.gridBlock;
 			long[] offset = gridBlock[0];//new long[] {64,64,64};//gridBlock[0];////
@@ -208,8 +212,12 @@ public class SparkExpandMicrotubules {
 			IntervalView<UnsignedLongType> expandedMicrotubule = Views.offsetInterval(ArrayImgs.unsignedLongs(paddedDimension),new long[]{0,0,0}, paddedDimension);
 			RandomAccess<UnsignedLongType> expandedMicrotubuleRA = expandedMicrotubule.randomAccess();
 			
+			
+			//Create maps of object ID to centerline voxels as well as map of object id to extended endpoint voxels.
+			//Extended endpoint voxels are the hypothetical extension of the microtubule
 			Map<Long, List<List<Integer>>> idToCenterlineVoxels = new HashMap<Long,List<List<Integer>>>();
 			Map<Long, List<int[]>> idToExtendedEndpointVoxels = new HashMap<Long,List<int[]>>();
+			
 			for(int x=1; x<paddedDimension[0]-1; x++) {
 				for(int y=1; y<paddedDimension[1]-1; y++) {
 					for(int z=1; z<paddedDimension[2]-1; z++) {
@@ -233,8 +241,10 @@ public class SparkExpandMicrotubules {
 				}
 			}
 			
+			//Do the expansion to create the tube
 			expandMicrotubules(expandedMicrotubuleRA, idToCenterlineVoxels,idToExtendedEndpointVoxels,innerRadiusInVoxels,outerRadiusInVoxels, padding, paddedDimension);
 			
+			//Write it out
 			IntervalView<UnsignedLongType> output = Views.offsetInterval(expandedMicrotubule,new long[]{padding,padding,padding}, dimension);
 			final N5Writer n5BlockWriter = new N5FSWriter(n5OutputPath);
 			N5Utils.saveBlock(output, n5BlockWriter, outputDatasetName, gridBlock[2]);
@@ -243,6 +253,17 @@ public class SparkExpandMicrotubules {
 
 	}
 	
+	/**
+	 * Expand the microtubule enter axis.
+	 * 
+	 * @param expandedMicrotubulesRA		The output image
+	 * @param idToCenterlineVoxels			Map of object id to centerline voxel
+	 * @param idToExtendedEndpointVoxels	Map of object id to extended endpoint voxel
+	 * @param innerRadiusInVoxels			Inner radius of tube in voxels
+	 * @param outerRadiusInVoxels			Outer radius of tube in voxels
+	 * @param padding
+	 * @param dimension
+	 */
 	private static void expandMicrotubules(RandomAccess<UnsignedLongType> expandedMicrotubulesRA, Map<Long, List<List<Integer>>> idToCenterlineVoxels,
 			Map<Long, List<int[]>> idToExtendedEndpointVoxels, double innerRadiusInVoxels, double outerRadiusInVoxels, long padding, long [] dimension) {
 			int outerRadiusInVoxelsCeiling = (int) Math.ceil(outerRadiusInVoxels);
@@ -250,6 +271,7 @@ public class SparkExpandMicrotubules {
 			double outerRadiusInVoxelsSquared = outerRadiusInVoxels*outerRadiusInVoxels;
 			double innerRadiusInVoxelsSquared = innerRadiusInVoxels*innerRadiusInVoxels;
 			
+			//Get the set of deltas of voxels within inner and outer radius.
 			Set<List<Integer>> setOfDeltasWithinOuterRadius = new HashSet<List<Integer>>();
 			Set<List<Integer>> setOfDeltasWithinInnerRadius = new HashSet<List<Integer>>();;
 			for(int dx = -outerRadiusInVoxelsCeiling; dx<=outerRadiusInVoxelsCeiling;  dx++) {
@@ -265,28 +287,30 @@ public class SparkExpandMicrotubules {
 					}	
 				}
 			}
-				
+			
+			//Loop over each object
 			for( Entry<Long, List<List<Integer>>> entry : idToCenterlineVoxels.entrySet()) {
 				Long objectID = entry.getKey();
 				List<List<Integer>> centerlineVoxels = entry.getValue();
-				//create set of voxels that fill in as tube
+				
+				//create set of voxels that for the tube
 				Set<List<Integer>> currentTube = new HashSet<List<Integer>>();
 				
-				//filled tube with caps
+				//fill in all voxels within outer radius of center axis; this will still have caps on the end and be full
 				for(List<Integer> currentCenterlineVoxel : centerlineVoxels) {	
 					for(List<Integer> delta : setOfDeltasWithinOuterRadius) {
 						currentTube.add(Arrays.asList(currentCenterlineVoxel.get(0)+delta.get(0),currentCenterlineVoxel.get(1)+delta.get(1),currentCenterlineVoxel.get(2)+delta.get(2)));
 					}	
 				}
 				
-				//hollow out tube
+				//hollow out the tube by removing all voxels within inner radius of center axis; this will still have caps
 				for(List<Integer> currentCenterlineVoxel : centerlineVoxels) {	
 					for(List<Integer> delta : setOfDeltasWithinInnerRadius) {
 						currentTube.remove(Arrays.asList(currentCenterlineVoxel.get(0)+delta.get(0),currentCenterlineVoxel.get(1)+delta.get(1),currentCenterlineVoxel.get(2)+delta.get(2)));
 					}	
 				}
 				
-				//remove cap
+				//remove cap by removing any voxel that is closer to the expanded endpoint than to the endpoint itself;
 				List<int[]> extendedEndpointVoxels = idToExtendedEndpointVoxels.getOrDefault(objectID,null);
 				if(extendedEndpointVoxels!=null) {//then an endpoint is present
 					for(int[] currentExtendedEndpoint : extendedEndpointVoxels) {
@@ -327,8 +351,17 @@ public class SparkExpandMicrotubules {
 			}
 	}
 
+	/**
+	 * Get the extendended endpoint voxel if it exists
+	 * @param ra			Image random access
+	 * @param objectID		Object ID	
+	 * @param pos			Current position
+	 * @return				ExtendedEndpointVoxelPos which is an array containing the ednpoint pos and the delta to reach the extended endpoint
+	 */
 	public static int[] getExtendedEndpointVoxel(RandomAccess<UnsignedLongType> ra, long objectID, int [] pos) {
 		int [] extendedEndpointVoxelPos = null;
+		
+		//get endpoint and extended endpoint for simple case where there is just 1 neighbor of endpoint
 		int numNeighbors = 0;
 		List<int[]> neighboringVoxels = new ArrayList<int[]>();
 		for(int dx = -1; dx<=1; dx++) {
@@ -339,7 +372,7 @@ public class SparkExpandMicrotubules {
 						long currentID = ra.get().get();
 						if(currentID == objectID) {
 							numNeighbors ++;
-							if(numNeighbors>2) {
+							if(numNeighbors>2) {//Then it isn't an endpoint
 								return null;
 							}
 							extendedEndpointVoxelPos = new int [] {pos[0], pos[1], pos[2], -dx, -dy, -dz}; //continue but beyond it
@@ -349,6 +382,8 @@ public class SparkExpandMicrotubules {
 				}
 			}
 		}
+		
+		//May be an endpoint but have multiple neighbors
 		if(numNeighbors==2) {//could potentially still be endpoint since could be like stair [][]
 							//																   [][]
 			int[] neighborZero = neighboringVoxels.get(0);
@@ -375,6 +410,7 @@ public class SparkExpandMicrotubules {
 		
 		return extendedEndpointVoxelPos;
 	}
+	
 	/**
 	 * Fill in all voxels within expanded region
 	 * 
@@ -405,7 +441,7 @@ public class SparkExpandMicrotubules {
 	}
 
 	/**
-	 * Expand skeleton for more visible meshes
+	 * Expand microtubules to create tubes from center axis
 	 * 
 	 * @param args
 	 * @throws IOException

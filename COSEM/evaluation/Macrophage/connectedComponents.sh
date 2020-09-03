@@ -6,13 +6,16 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$OWN_DIR/flintstone/flintstone-lsd.sh
 JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkConnectedComponents
-N_NODES=2
+N_NODES=3
 
 BASEPATH='/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/Macrophage/'
 
 export RUNTIME="48:00"
 
 for i in {training,rawPredictions,refinedPredictions}
+do
+
+for j in {whole,cropLeft,cropRight,cropFront,cropBack,cropUp,cropDown}
 do
 
 if [[ "$i" == "rawPredictions" ]]; then RIBOSOMES=ribosomes; else RIBOSOMES=ribosomes_centers; fi
@@ -28,11 +31,12 @@ ARGV="\
 --minimumVolumeCutoff 0 \
 --thresholdIntensityCutoff 1 \
 --outputN5DatasetSuffix '' \
---inputN5Path '$BASEPATH/${i}.n5' \
---outputN5Path '$BASEPATH/${i}CC.n5' \
+--inputN5Path '$BASEPATH/${i}/${j}.n5' \
+--outputN5Path '$BASEPATH/${i}/${j}CC.n5' \
 "
 
 TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
 
 done
 
+done

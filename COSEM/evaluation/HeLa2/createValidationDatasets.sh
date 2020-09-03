@@ -13,6 +13,7 @@ ARGV="\
 --n5PathRawPredictions '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/rawPredictions/HeLa2.n5' \
 --n5PathTrainingData '/groups/cosem/cosem/data/HeLa_Cell2_4x4x4nm/HeLa_Cell2_4x4x4nm.n5/volumes/groundtruth/0003/Crop113/labels' \
 --outputPath '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeLa2/'
+--doMicrotubules \
 "
 
 export RUNTIME="48:00"

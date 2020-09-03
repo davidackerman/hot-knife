@@ -411,8 +411,8 @@ public class SparkFillHolesInConnectedComponents {
 				SparkVolumeFilterConnectedComponents.volumeFilterConnectedComponents(sc, options.getInputN5Path(), currentOrganelle, tempVolumeFilteredDatasetName, options.getMinimumVolumeCutoff(), blockInformationList);
 				directoriesToDelete.add(options.getInputN5Path() + "/" + tempVolumeFilteredDatasetName);
 				datasetToHoleFill = tempVolumeFilteredDatasetName;
+				SparkCosemHelper.logMemory("Volume filter complete");
 			}
-			
 			tempOutputN5DatasetName = datasetToHoleFill + "_holes" + "_blockwise_temp_to_delete";
 			finalOutputN5DatasetName = datasetToHoleFill + "_holes";
 			directoriesToDelete.add(options.getInputN5Path() + "/" + tempOutputN5DatasetName);

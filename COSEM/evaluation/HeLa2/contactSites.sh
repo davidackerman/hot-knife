@@ -10,10 +10,13 @@ N_NODES=2
 
 export RUNTIME="48:00"
 BASENAME=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeLa2
-for i in {trainingCC.n5,rawPredictionsCC.n5,refinedPredictionsCC.n5}
-
+for i in {training,rawPredictions,refinedPredictions}
 do
-if [[ "$i" == "refinedPredictionsCC.n5" ]];
+
+for j in {whole,cropLeft,cropRight,cropFront,cropBack,cropUp,cropDown}
+do
+
+if [[ "$i" == "refinedPredictions" ]];
         then INPUTPAIRS=er_to_plasma_membrane,er_to_mito,er_to_nucleus,er_to_ribosomes,er_reconstructed_maskedWith_nucleus_expanded_maskedWith_ribosomes_to_ribosomes,er_maskedWith_nucleus_expanded_to_mito_maskedWith_er,er_maskedWith_nucleus_expanded_maskedWith_ribosomes_to_ribosomes,er_reconstructed_maskedWith_nucleus_expanded_to_mito_maskedWith_er_reconstructed;
         else INPUTPAIRS=er_to_plasma_membrane,er_to_mito,er_to_nucleus,er_to_ribosomes;
 fi
@@ -21,10 +24,12 @@ fi
 	ARGV="\
 	--inputPairs '$INPUTPAIRS' \
 	--contactDistance 10 \
-	--inputN5Path '$BASENAME/$i' \
+	--inputN5Path '$BASENAME/$i/${j}CC.n5' \
 	--minimumVolumeCutoff 0 \
 	--skipGeneratingContactBoundaries
 	"
 
-	TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
+	TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV 
+done
+
 done

@@ -10,22 +10,24 @@ N_NODES=2
 
 BASEPATH=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/Macrophage/
 
-INPUTN5PATH=$BASEPATH/trainingCC.n5
+for i in {training,refinedPredictions}
+do
+
+for j in {whole,cropLeft,cropRight,cropFront,cropBack,cropUp,cropDown}
+do
+
 ARGV="--inputN5DatasetName 'ribosomes_centers' \
---inputN5Path '$INPUTN5PATH' \
+--inputN5Path '$BASEPATH/${i}/${j}CC.n5' \
 --expansionInNm 10 \
 --outputN5DatasetSuffix '_expansion_10'"
 
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
-ln -s $INPUTN5PATH/ribosomes_centers_expansion_10 $INPUTN5PATH/ribosomes
+TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV 
 
+if [ ! -d $BASEPATH/${i}/${j}CC.n5/ribosomes ]; then
+ln -s $BASEPATH/${i}/${j}CC.n5/ribosomes_centers_expansion_10 $BASEPATH/${i}/${j}CC.n5/ribosomes
+fi
 
-INPUTN5PATH=$BASEPATH/refinedPredictionsCC.n5
-ARGV="--inputN5DatasetName 'ribosomes_centers' \
---inputN5Path '$INPUTN5PATH' \
---expansionInNm 10 \
---outputN5DatasetSuffix '_expansion_10'"
+done
 
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
-ln -s $INPUTN5PATH/ribosomes_centers_expansion_10 $INPUTN5PATH/ribosomes
+done
 
