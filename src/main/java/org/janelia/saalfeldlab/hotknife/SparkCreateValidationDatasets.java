@@ -56,8 +56,8 @@ public class SparkCreateValidationDatasets {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
-		@Option(name = "--n5PathTrainingData", required = true, usage = "Dataset to mask N5 path")
-		private String n5PathTrainingData = null;
+		@Option(name = "--n5PathValidationData", required = true, usage = "Dataset to mask N5 path")
+		private String n5PathValidationData = null;
 		
 		@Option(name = "--n5PathRawPredictions", required = true, usage = "Dataset to use as mask N5 path")
 		private String n5PathRawPredictions = null;
@@ -84,8 +84,8 @@ public class SparkCreateValidationDatasets {
 			}
 		}
 
-		public String getN5PathTrainingData() {
-			return n5PathTrainingData;
+		public String getN5PathValidationData() {
+			return n5PathValidationData;
 		}
 		
 		public String getN5PathRawPredictions() {
@@ -133,7 +133,7 @@ public class SparkCreateValidationDatasets {
 
 		for(int i=0; i<cropNames.size(); i++) {
 
-			String n5OutputTraining = outputPath+"/training/"+cropNames.get(i)+".n5";
+			String n5OutputTraining = outputPath+"/validation/"+cropNames.get(i)+".n5";
 			final N5Writer n5WriterTraining = new N5FSWriter(n5OutputTraining);
 			
 			String n5OutputRefinedPredictions = outputPath+"/refinedPredictions/"+cropNames.get(i)+".n5";
@@ -302,7 +302,7 @@ public class SparkCreateValidationDatasets {
 		
 		SparkConf conf = new SparkConf().setAppName("SparkCreateValidationDatasets");
 		JavaSparkContext sc = new JavaSparkContext(conf);
-		createValidationDatasets(sc, options.getN5PathTrainingData(), options.getN5PathRawPredictions(),options.getN5PathRefinedPredictions(), options.getOutputPath(), options.getDoMicrotubules());
+		createValidationDatasets(sc, options.getN5PathValidationData(), options.getN5PathRawPredictions(),options.getN5PathRefinedPredictions(), options.getOutputPath(), options.getDoMicrotubules());
 		sc.close();
 		
 				

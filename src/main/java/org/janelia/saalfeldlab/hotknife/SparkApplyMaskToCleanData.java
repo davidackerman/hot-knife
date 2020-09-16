@@ -155,7 +155,7 @@ public class SparkApplyMaskToCleanData {
 				new GzipCompression());
 		double[] pixelResolution = IOHelper.getResolution(n5Reader, datasetNameToMask);
 		n5Writer.setAttribute(maskedDatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
-		
+		n5Writer.setAttribute(maskedDatasetName, "offset", IOHelper.getOffset(n5Reader, datasetNameToMask));
 		
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
 		rdd.foreach(blockInformation -> {

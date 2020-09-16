@@ -56,7 +56,7 @@ public class GradientCenter<T extends RealType<T> & NativeType<T>> implements Co
 		offset[axis] = -1;
 		sourceA = Views.offset(source, offset);
 		sourceB = Views.translate(source, offset);
-		norm = 2.0 / sigma;
+		norm = sigma / 2.0;
 	}
 
 	@Override

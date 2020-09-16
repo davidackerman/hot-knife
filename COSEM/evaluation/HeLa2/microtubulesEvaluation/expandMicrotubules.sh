@@ -8,10 +8,14 @@ JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkExpandMicrotubules
 N_NODES=2
 
+for j in {refinedPredictions,validation}
+do
+
+
 for i in {1,2,3,4}
 do
 
-path=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeLa2/microtubuleEvaluation/validation/crop${i}.n5
+path=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeLa2/microtubuleEvaluation/$j/crop${i}.n5
 
 ARGV="--inputN5Path '$path' \
 --inputN5DatasetName 'microtubules_centerAxis' \
@@ -20,8 +24,13 @@ ARGV="--inputN5Path '$path' \
 "
 
 export RUNTIME="48:00"
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV 
+TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
+sleep 2 
 
+if [ ! -d $path/microtubules ]; then
 ln -s $path/microtubules_centerAxis_expanded $path/microtubules
+fi
+
+done
 
 done

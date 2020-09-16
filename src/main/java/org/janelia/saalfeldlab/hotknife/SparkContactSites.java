@@ -668,20 +668,21 @@ public class SparkContactSites {
 			long[] paddedDimension = {dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 
 			// Read in source block
-			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
+			final N5Reader n5InputPathReaderLocal = new N5FSReader(inputN5Path);
 			
 			final RandomAccessibleInterval<UnsignedLongType>  organelle1Data = Views.offsetInterval(Views.extendZero(
-						(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle1)
+						(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5InputPathReaderLocal, organelle1)
 						),paddedOffset, paddedDimension);
 			final RandomAccessibleInterval<UnsignedLongType>  organelle2Data = Views.offsetInterval(Views.extendZero(
-					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle2)
+					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5InputPathReaderLocal, organelle2)
 					),paddedOffset, paddedDimension);
 			
+			final N5Reader n5OutputPathReaderLocal = new N5FSReader(outputN5Path);
 			RandomAccessibleInterval<UnsignedLongType>  organelle1ContactBoundaryData = Views.offsetInterval(Views.extendZero(
-					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle1ContactBoundaryName)
+					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5OutputPathReaderLocal, organelle1ContactBoundaryName)
 					),paddedOffset, paddedDimension);
 			RandomAccessibleInterval<UnsignedLongType>  organelle2ContactBoundaryData = Views.offsetInterval(Views.extendZero(
-					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle2ContactBoundaryName)
+					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5OutputPathReaderLocal, organelle2ContactBoundaryName)
 					),paddedOffset, paddedDimension);
 			
 			RandomAccess<UnsignedLongType> organelle1DataRA = organelle1Data.randomAccess();
@@ -1316,7 +1317,7 @@ public class SparkContactSites {
 				
 				if(contactDistance==0 && doLM) {
 					blockInformationList = blockwiseConnectedComponentsLM(
-							sc, outputN5Path,
+							sc, inputN5Path,
 							organelle1, organelle2, 
 							outputN5Path,
 							tempOutputN5ConnectedComponents,
@@ -1325,7 +1326,7 @@ public class SparkContactSites {
 				}
 				else {
 					blockInformationList = blockwiseConnectedComponentsEM(
-							sc, outputN5Path,
+							sc, inputN5Path,
 							organelle1, organelle2, 
 							outputN5Path,
 							tempOutputN5ConnectedComponents,

@@ -10,7 +10,7 @@ N_NODES=2
 
 export RUNTIME="48:00"
 BASENAME=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeLa3
-for i in {training,rawPredictions,refinedPredictions}
+for i in {validation,rawPredictions,refinedPredictions}
 do
 
 for j in {whole,cropLeft,cropRight,cropFront,cropBack,cropUp,cropDown}

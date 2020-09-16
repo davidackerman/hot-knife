@@ -11,7 +11,7 @@ N_NODES=2
 ARGV="\
 --n5PathRefinedPredictions '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/Macrophage.n5' \
 --n5PathRawPredictions '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/rawPredictions/Macrophage.n5' \
---n5PathTrainingData '/groups/cosem/cosem/data/Macrophage_FS80_Cell2_4x4x4nm/Cryo_FS80_Cell2_4x4x4nm.n5/volumes/groundtruth/0003/Crop110/labels' \
+--n5PathValidationData '/groups/cosem/cosem/data/Macrophage_FS80_Cell2_4x4x4nm/Cryo_FS80_Cell2_4x4x4nm.n5/volumes/groundtruth/0003/Crop110/labels' \
 --outputPath '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/Macrophage/'
 "
 

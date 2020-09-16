@@ -11,7 +11,7 @@ N_NODES=2
 ARGV="\
 --n5PathRefinedPredictions '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5' \
 --n5PathRawPredictions '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/rawPredictions/HeLa3.n5' \
---n5PathTrainingData '/groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5/volumes/groundtruth/0003/Crop111/labels' \
+--n5PathValidationData '/groups/cosem/cosem/data/HeLa_Cell3_4x4x4nm/HeLa_Cell3_4x4x4nm.n5/volumes/groundtruth/0003/Crop111/labels' \
 --outputPath '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeLa3/'
 "
 

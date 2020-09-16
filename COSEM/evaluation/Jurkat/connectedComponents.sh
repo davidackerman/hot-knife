@@ -12,7 +12,7 @@ BASEPATH='/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/Jur
 
 export RUNTIME="48:00"
 
-for i in {training,rawPredictions,refinedPredictions}
+for i in {validation,rawPredictions,refinedPredictions}
 do
 
 for j in {whole,cropLeft,cropRight,cropFront,cropBack,cropUp,cropDown}
@@ -35,7 +35,8 @@ ARGV="\
 --outputN5Path '$BASEPATH/${i}/${j}CC.n5' \
 "
 
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
+TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
+sleep 2
 
 done
 

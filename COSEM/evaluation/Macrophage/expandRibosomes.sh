@@ -10,7 +10,7 @@ N_NODES=2
 
 BASEPATH=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/Macrophage/
 
-for i in {training,refinedPredictions}
+for i in {validation,refinedPredictions}
 do
 
 for j in {whole,cropLeft,cropRight,cropFront,cropBack,cropUp,cropDown}
@@ -21,7 +21,8 @@ ARGV="--inputN5DatasetName 'ribosomes_centers' \
 --expansionInNm 10 \
 --outputN5DatasetSuffix '_expansion_10'"
 
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV 
+TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
+sleep 2 
 
 if [ ! -d $BASEPATH/${i}/${j}CC.n5/ribosomes ]; then
 ln -s $BASEPATH/${i}/${j}CC.n5/ribosomes_centers_expansion_10 $BASEPATH/${i}/${j}CC.n5/ribosomes

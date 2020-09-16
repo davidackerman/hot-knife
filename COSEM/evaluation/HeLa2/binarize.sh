@@ -10,11 +10,11 @@ N_NODES=2
 
 export RUNTIME="48:00"
 BASENAME=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeLa2
-for i in {training,rawPredictions,refinedPredictions}
+for i in {validation,rawPredictions,refinedPredictions}
 do
 
 MICROTUBULES=microtubules
-if [[ "$i" == "training" ]];
+if [[ "$i" == "validation" ]];
 then MICROTUBULES=microtubules,microtubules_out;
 fi
 

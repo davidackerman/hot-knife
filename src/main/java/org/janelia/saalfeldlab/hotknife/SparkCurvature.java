@@ -86,7 +86,7 @@ public class SparkCurvature {
 		private String inputN5DatasetName = null;
 		
 		@Option(name = "--scaleSteps", required = false, usage = "N5 dataset, e.g. organelle. Requires organelle_medialSurface as well.")
-		private int scaleSteps = 11;
+		private int scaleSteps = 12;
 		
 		@Option(name = "--calculateSphereness", required = false, usage = "Calculate Sphereness; if not set, will calculate sheetness")
 		private boolean calculateSphereness = false;
@@ -171,12 +171,17 @@ public class SparkCurvature {
 			
 			final int octaveSteps = 2;
 			double [][][] sigmaSeries = sigmaSeries(pixelResolution, octaveSteps, scaleSteps);
-			int[] sizes = Gauss3.halfkernelsizes( sigmaSeries[0][scaleSteps-1] );
+			
+			double maxSigma = 0;
+			for(int i=0; i<scaleSteps; i++) {
+				maxSigma = Math.sqrt(maxSigma*maxSigma+sigmaSeries[0][i][0]*sigmaSeries[0][i][0]);
+			}
+			int[] sizes = Gauss3.halfkernelsizes( new double[] {maxSigma,maxSigma,maxSigma} );
 			int padding = sizes[0]+2;//Since need extra of 1 around each voxel for curvature
 			long[] paddedOffset = new long[]{offset[0]-padding, offset[1]-padding, offset[2]-padding};
 			long[] paddedDimension = new long []{dimension[0]+2*padding, dimension[1]+2*padding, dimension[2]+2*padding};
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
-			
+
 			//Binarize segmentation data and read in medial surface info
 			RandomAccessibleInterval<UnsignedLongType> source = (RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName);
 			final RandomAccessibleInterval<DoubleType> sourceConverted =
@@ -313,19 +318,22 @@ public class SparkCurvature {
 		//Loop over scale steps to calculate smoothed image
 		//final double[][][] sigmaSeries = sigmaSeries(resolution, octaveSteps, scaleSteps);
 		int scaleSteps = sigmaSeries[0].length;
+		
+		double currentActualSigma = 0;
 		for (int i = 0; i < scaleSteps; ++i) {
 			final SimpleGaussRA<DoubleType> op = new SimpleGaussRA<>(sigmaSeries[2][i]);
 			op.setInput(source);
 			op.run(smoothed);
 			source = Views.extendZero(smoothed);
-
+			
+			currentActualSigma = Math.sqrt(currentActualSigma*currentActualSigma+sigmaSeries[0][i][0]*sigmaSeries[0][i][0]);
 			/* gradients */
 			for (int d = 0; d < converted.numDimensions(); ++d) {
 				final GradientCenter<DoubleType> gradientOp =
 						new GradientCenter<>(
 								Views.extendBorder(smoothed),
 								d,
-								sigmaSeries[0][i][d]);
+								currentActualSigma);
 				final IntervalView<DoubleType> gradient = Views.offsetInterval(ArrayImgs.doubles(paddedDimension),new long[]{0,0,0}, paddedDimension);
 				gradientOp.accept(gradient);
 				gradients[d] = Views.extendZero(gradient);
@@ -333,7 +341,7 @@ public class SparkCurvature {
 			
 			//Update sheetness if necessary
 			updateCurvature(converted, gradients, medialSurfaceCoordinatesToSheetnessInformationMap, 
-					sigmaSeries[0][i],padding, dimension, i, calculateSphereness);
+					currentActualSigma,padding, dimension, i, calculateSphereness);
 		}
 		
 	}
@@ -354,14 +362,14 @@ public class SparkCurvature {
 	private static void updateCurvature(final RandomAccessibleInterval<DoubleType> converted, 
 			final RandomAccessible<DoubleType>[] gradients, 
 			final HashMap<List<Long>, SheetnessInformation> medialSurfaceCoordinatesToSheetnessInformationMap, 
-			final double[] sigma, long[] padding, long[] dimension, int scaleStep, boolean calculateSphereness) {
+			final double currentActualSigma, long[] padding, long[] dimension, int scaleStep, boolean calculateSphereness) {
 
 		//Create gradients
 		final int n = gradients[0].numDimensions();
 		
 		double[] norms = new double[n];
 		for (int d = 0; d < n; ++d) {
-			norms[d] = 2.0 / sigma[d];//sigmas[d] / 2.0;
+			norms[d] = currentActualSigma / 2.0;//sigmas[d] / 2.0;
 		}
 		
 		RandomAccess<DoubleType> gradientA_RA = null;
@@ -401,7 +409,7 @@ public class SparkCurvature {
 		int updatedCount = 0;
 		//Loop over source image
 		long tic = System.currentTimeMillis();
-		
+		double maxRnoise = 0;
 		for ( Entry<List<Long>,SheetnessInformation>entry : medialSurfaceCoordinatesToSheetnessInformationMap.entrySet()) {
 			/* TODO Is test if n == 1 and set to 1 meaningful? */
 			//Increment cursors
@@ -423,7 +431,8 @@ public class SparkCurvature {
 				eigenvalues[d] = eigen.getEigenvalue(d).getReal();
 			
 			DoubleArrays.quickSort(eigenvalues, absDoubleComparator);
-							 
+						
+			//https://www.researchgate.net/publication/2388170_Multiscale_Vessel_Enhancement_Filtering
 			// Based on this paper http://www.cim.mcgill.ca/~shape/publications/miccai05b.pdf
 			if(eigenvalues[2]>0) { //Only calculate if largest magnitude eigenvalue is negative
 				continue;
@@ -432,23 +441,33 @@ public class SparkCurvature {
 			//If laplacian at current voxel is the smallest it has been, then update sheetness and laplacian
 			double laplacian = hessian.get(0,0)+ hessian.get(1,1) + hessian.get(2,2);
 			
-			if(laplacian<sheetnessInformation.minimumLaplacian) {
-				if(sheetnessInformation.minimumLaplacian==0) {
-					newCount++;
-				}
-				else {
-					updatedCount++;
-				}
+			//if(laplacian<sheetnessInformation.minimumLaplacian) {
+			//	if(sheetnessInformation.minimumLaplacian==0) {
+			//		newCount++;
+			//	}
+			//	else {
+			//		updatedCount++;
+			//	}
 				
 				double curvature;
 				double Rblob = Math.abs(2*Math.abs(eigenvalues[2])-Math.abs(eigenvalues[1])-Math.abs(eigenvalues[0]))/Math.abs(eigenvalues[2]);
 				double beta = 0.5;
+				double Rnoise = Math.sqrt(eigenvalues[0]*eigenvalues[0]+eigenvalues[1]*eigenvalues[1]+eigenvalues[2]*eigenvalues[2]);
+				
+				if(Rnoise>maxRnoise) {
+					maxRnoise = Rnoise;
+				//	System.out.println(maxRnoise);
+				}
+				//double c = currentActualSigma*currentActualSigma;//Decided on this so that it is equal;
+				//https://github.com/ntnu-bioopt/libfrangi/blob/master/src/frangi.cpp c fixed
+				double c=0.5;
 				if(!calculateSphereness) {
 					double Rsheet = Math.abs(eigenvalues[1]/eigenvalues[2]);
 					double alpha = 0.5;
 					double sheetEnhancementTerm = Math.exp(-Rsheet*Rsheet/(2*alpha*alpha));
 					double blobEliminationTerm = 1-Math.exp(-Rblob*Rblob/(2*beta*beta));
-					double equation1 = sheetEnhancementTerm*blobEliminationTerm;
+					double noiseEliminationTerm = 1-Math.exp(-Rnoise*Rnoise/(2*c*c));
+					double equation1 = sheetEnhancementTerm*blobEliminationTerm*noiseEliminationTerm;
 					curvature = equation1;
 				}
 				else {
@@ -457,14 +476,25 @@ public class SparkCurvature {
 						curvature = Math.exp(-Rblob*Rblob/(2*beta*beta));
 					}
 				}
-				sheetnessInformation.minimumLaplacian = laplacian;
-				sheetnessInformation.curvature = curvature;
-				medialSurfaceCoordinatesToSheetnessInformationMap.put(currentMedialSurfaceCoordinate, sheetnessInformation);
 				
+				if(curvature>sheetnessInformation.curvature) {
+					if(sheetnessInformation.curvature==0) {
+						newCount++;
+					}
+					else {
+						updatedCount++;
+					}
+					
+					sheetnessInformation.minimumLaplacian = laplacian;
+					sheetnessInformation.curvature = curvature;
+					medialSurfaceCoordinatesToSheetnessInformationMap.put(currentMedialSurfaceCoordinate, sheetnessInformation);
+					//System.out.println(curvature+" "+Rnoise+" "+Arrays.toString(eigenvalues));
+					
+				}
 			}
-		}
+		//}
 	
-		System.out.println("Time: " + (System.currentTimeMillis()-tic)/1000 + ". Scale step: " + scaleStep +". Num new: "+newCount + ", Num updated: "+updatedCount+", Total: "+(newCount+updatedCount));
+		System.out.println("maxRnoise: " + maxRnoise + ". Scale step: " + scaleStep +". Num new: "+newCount + ", Num updated: "+updatedCount+", Total: "+(newCount+updatedCount));
 	}
 	
 	static DoubleComparator absDoubleComparator = new DoubleComparator() {

@@ -11,7 +11,7 @@ N_NODES=2
 ARGV="\
 --n5PathRefinedPredictions '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/Jurkat.n5' \
 --n5PathRawPredictions '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/rawPredictions/Jurkat.n5' \
---n5PathTrainingData '/groups/cosem/cosem/data/Jurkat_Cell1_4x4x4nm/Jurkat_Cell1_FS96-Area1_4x4x4nm.n5/volumes/groundtruth/0003/Crop112/labels' \
+--n5PathValidationData '/groups/cosem/cosem/data/Jurkat_Cell1_4x4x4nm/Jurkat_Cell1_FS96-Area1_4x4x4nm.n5/volumes/groundtruth/0003/Crop112/labels' \
 --outputPath '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/Jurkat/'
 "
 

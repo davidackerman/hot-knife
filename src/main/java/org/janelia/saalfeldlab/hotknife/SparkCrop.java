@@ -16,29 +16,14 @@
  */
 package org.janelia.saalfeldlab.hotknife;
 
-import java.io.File;
-import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
-import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
-import org.apache.commons.io.FileUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.hotknife.util.Grid;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.GzipCompression;
@@ -50,36 +35,9 @@ import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
-import org.spark_project.guava.collect.Sets;
-
-import bdv.labels.labelset.Label;
-import ij.ImageJ;
-import net.imglib2.Cursor;
-import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.labeling.ConnectedComponentAnalysis;
-import net.imglib2.algorithm.morphology.distance.DistanceTransform;
-import net.imglib2.algorithm.morphology.distance.DistanceTransform.DISTANCE_TYPE;
 import net.imglib2.converter.Converters;
-import net.imglib2.img.Img;
-import net.imglib2.img.NativeImg;
-import net.imglib2.img.array.ArrayImg;
-import net.imglib2.img.array.ArrayImgFactory;
-import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.img.basictypeaccess.array.LongArray;
-import net.imglib2.type.logic.NativeBoolType;
-import net.imglib2.img.cell.CellImgFactory;
-import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.type.NativeType;
-import net.imglib2.type.logic.BoolType;
-import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.integer.*;
-import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.type.numeric.real.DoubleType;
-import net.imglib2.util.Intervals;
-import net.imglib2.view.ExtendedRandomAccessibleInterval;
-import net.imglib2.view.IntervalView;
-import net.imglib2.view.SubsampleIntervalView;
 import net.imglib2.view.Views;
 
 /**
@@ -91,6 +49,12 @@ public class SparkCrop {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
+		@Option(name = "--n5PathToCropTo", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		private String n5PathToCropTo = null;
+		
+		@Option(name = "--datasetNameToCropTo", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		private String datasetNameToCropTo = null;
+		
 		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
 		private String inputN5Path = null;
 
@@ -100,11 +64,14 @@ public class SparkCrop {
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
 		private String inputN5DatasetName = null;
 		
-		@Option(name = "--dimensions", required = false, usage = "N5 dataset, e.g. /mito")
-		private String dimensions = null;
+		@Option(name = "--outputN5DatasetSuffix", required = true, usage = "N5 dataset, e.g. /mito")
+		private String outputN5DatasetSuffix = "";
 		
-		@Option(name = "--offsets", required = false, usage = "N5 dataset, e.g. /mito")
-		private String offsets = null;
+		@Option(name = "--convertTo8Bit", required = false, usage = "whether to convert to 8 bit")
+		private boolean convertTo8Bit = false;
+		
+		@Option(name = "--zyxTOxyz", required = false, usage = "switch from zyx order to xyz order")
+		private boolean zyxTOxyz = false;
 
 		public Options(final String[] args) {
 
@@ -122,6 +89,14 @@ public class SparkCrop {
 			}
 		}
 
+		public String getN5PathToCropTo() {
+			return n5PathToCropTo;
+		}
+		
+		public String getDatasetNameToCropTo() {
+			return datasetNameToCropTo;
+		}
+		
 		public String getInputN5Path() {
 			return inputN5Path;
 		}
@@ -134,13 +109,20 @@ public class SparkCrop {
 			return outputN5Path;
 		}
 		
-		public String getOffsets() {
-			return offsets;
+		public boolean getConvertTo8Bit() {
+			return convertTo8Bit;
 		}
 		
-		public String getDimensions() {
-			return dimensions;
+		public boolean getZyxTOxyz() {
+			return zyxTOxyz;
 		}
+		
+		public String getOutputN5DatasetSuffix() {
+			return outputN5DatasetSuffix;
+		}
+		
+		
+		
 
 	}
 
@@ -148,48 +130,60 @@ public class SparkCrop {
 			final JavaSparkContext sc,
 			final String n5PathToCropTo,
 			final String datasetNameToCropTo,
-			final String n5Path,
-			final String datasetName,
-			final String n5OutputPath,
+			final String inputN5Path,
+			final String inputN5DatasetName,
+			final String outputN5DatasetName,
+			final String outputN5Path,
 			final boolean convertTo8Bit,
-			final List<BlockInformation> blockInformationList) throws IOException {
+			final boolean zyxTOxyz) throws IOException {
 
-		final N5Reader n5Reader = new N5FSReader(n5PathToCropTo);
-		final DatasetAttributes attributesToCropTo = n5Reader.getDatasetAttributes(datasetNameToCropTo);
+		final N5Reader n5ToCropToReader = new N5FSReader(n5PathToCropTo);
+		final DatasetAttributes attributesToCropTo = n5ToCropToReader.getDatasetAttributes(datasetNameToCropTo);
 		final long[] dimensions = attributesToCropTo.getDimensions();
 		final int[] blockSize = attributesToCropTo.getBlockSize();		
-		final int[] offsetsToCropTo = IOHelper.getOffset(n5Reader, datasetNameToCropTo);		
-		final int[] pixelResolutionToCropTo = IOHelper.getOffset(n5Reader,datasetNameToCropTo);
-		int[] offsetsToCropToInVoxels = new int[] {offsetsToCropTo[0]/pixelResolutionToCropTo[0],offsetsToCropTo[1]/pixelResolutionToCropTo[1],offsetsToCropTo[2]/pixelResolutionToCropTo[2]};
+		final int[] offsetsToCropTo = IOHelper.getOffset(n5ToCropToReader, datasetNameToCropTo);		
+		if(zyxTOxyz) {
+			int z = offsetsToCropTo[0];
+			int x = offsetsToCropTo[2];
+			offsetsToCropTo[0]=x;
+			offsetsToCropTo[2]=z;
+		}
+		
+		final double[] pixelResolutionToCropTo = IOHelper.getResolution(n5ToCropToReader,datasetNameToCropTo);
+		int[] offsetsToCropToInVoxels = new int[] {(int) (offsetsToCropTo[0]/pixelResolutionToCropTo[0]),(int) (offsetsToCropTo[1]/pixelResolutionToCropTo[1]),(int) (offsetsToCropTo[2]/pixelResolutionToCropTo[2])};
+		
+		
 
-		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
 
 		n5Writer.createDataset(
-					datasetName,
+					outputN5DatasetName,
 					dimensions,
 					blockSize,
 					convertTo8Bit ? DataType.UINT8 : DataType.UINT64,
 					new GzipCompression());
 		
-		n5Writer.setAttribute(datasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, datasetName)));
-		n5Writer.setAttribute(datasetName, "offset", offsetsToCropTo);
-
-		/*
-		 * grid block size for parallelization to minimize double loading of
-		 * blocks
-		 */
+		final N5Reader n5Reader = new N5FSReader(inputN5Path);
+		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputN5DatasetName)));
+		n5Writer.setAttribute(outputN5DatasetName, "offset", offsetsToCropTo);
+		
 		List<BlockInformation> blockInformationListRefinedPredictions = BlockInformation.buildBlockInformationList(dimensions, blockSize);
 		JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationListRefinedPredictions);			
 		rdd.foreach(blockInformation -> {
-			final long [] dimension = blockInformation.gridBlock[1];
-			final long [] offset= new long [] {blockInformation.gridBlock[0][0]+offsetsToCropToInVoxels[0],
+			final long [] offset= new long [] {
+					blockInformation.gridBlock[0][0]+offsetsToCropToInVoxels[0],
 					blockInformation.gridBlock[0][1]+offsetsToCropToInVoxels[1],
 					blockInformation.gridBlock[0][2]+offsetsToCropToInVoxels[2]
 			};
+
+			final long [] dimension = blockInformation.gridBlock[1];
 			
-			final RandomAccessibleInterval<UnsignedLongType> source = Views.offsetInterval((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5Reader, datasetName), offset, dimension);
-			final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
 			
+			final N5Reader n5BlockReader = new N5FSReader(inputN5Path);
+			final RandomAccessibleInterval<UnsignedLongType> source = Views.offsetInterval((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputN5DatasetName), offset, dimension);
+			
+			final N5FSWriter n5BlockWriter = new N5FSWriter(outputN5Path);
+
 			if(convertTo8Bit) {
 				final RandomAccessibleInterval<UnsignedByteType> sourceConverted = Converters.convert(
 						source,
@@ -197,10 +191,10 @@ public class SparkCrop {
 							b.set( a.getIntegerLong()>0 ? 255 : 0);
 						},
 						new UnsignedByteType());
-				N5Utils.saveBlock(sourceConverted, n5BlockWriter, datasetName, blockInformation.gridBlock[2]);
+				N5Utils.saveBlock(sourceConverted, n5BlockWriter, outputN5DatasetName, blockInformation.gridBlock[2]);
 			}
 			else {
-				N5Utils.saveBlock(source, n5BlockWriter, datasetName, blockInformation.gridBlock[2]);
+				N5Utils.saveBlock(source, n5BlockWriter, outputN5DatasetName, blockInformation.gridBlock[2]);
 			}
 		});
 	}
@@ -212,37 +206,23 @@ public class SparkCrop {
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkBinarize");
-
-		// Get all organelles
-		String[] organelles = { "" };
-		if (options.getInputN5DatasetName() != null) {
-			organelles = options.getInputN5DatasetName().split(",");
-		} else {
-			File file = new File(options.getInputN5Path());
-			organelles = file.list(new FilenameFilter() {
-				@Override
-				public boolean accept(File current, String name) {
-					return new File(current, name).isDirectory();
-				}
-			});
-		}
-
-		System.out.println(Arrays.toString(organelles));
-
-		for (String currentOrganelle : organelles) {
+		final SparkConf conf = new SparkConf().setAppName("SparkCrop");
+		String [] inputN5DatasetNames = options.getInputN5DatasetName().split(",");
+		
+		for (String currentDatasetName : inputN5DatasetNames) {
 			
 			//Create block information list
-			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(),
-				currentOrganelle);
-			JavaSparkContext sc = new JavaSparkContext(conf);
 			
-			crop(
-					sc,
-					options.getInputN5Path(),
-					currentOrganelle,
-					options.getOutputN5Path(),
-					blockInformationList);
+			JavaSparkContext sc = new JavaSparkContext(conf);
+			crop(sc, 
+				options.getN5PathToCropTo(),
+				options.getDatasetNameToCropTo(),
+				options.getInputN5Path(),
+				currentDatasetName,
+				currentDatasetName+options.getOutputN5DatasetSuffix(),
+				options.getOutputN5Path(),
+				options.getConvertTo8Bit(),
+				options.getZyxTOxyz());
 			
 			sc.close();
 		}

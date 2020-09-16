@@ -12,7 +12,7 @@ BASEPATH='/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeL
 
 export RUNTIME="48:00"
 
-for i in {training,rawPredictions,refinedPredictions}
+for i in {validation,rawPredictions,refinedPredictions}
 do
 
 for j in {whole,cropLeft,cropRight,cropFront,cropBack,cropUp,cropDown}
@@ -20,7 +20,7 @@ do
 
 
 MICROTUBULES=microtubules
-if [[ "$i" == "training" ]]; then MICROTUBULES=microtubules,microtubules_out; fi
+if [[ "$i" == "validation" ]]; then MICROTUBULES=microtubules,microtubules_out; fi
 if [[ "$i" == "rawPredictions" ]]; then RIBOSOMES=ribosomes; else RIBOSOMES=ribosomes_centers; fi
 if [[ "$i" == "refinedPredictions" ]]; 
 	then 
@@ -40,7 +40,9 @@ ARGV="\
 --outputN5Path '$BASEPATH/${i}/${j}CC.n5' \
 "
 
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
+TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
+
+sleep 2
 
 done
 

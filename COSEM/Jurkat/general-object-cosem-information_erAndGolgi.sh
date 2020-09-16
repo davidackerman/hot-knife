@@ -31,8 +31,7 @@ er_maskedWith_golgi_to_golgi,\
 er_to_MVB,\
 er_to_vesicle,\
 golgi_to_MVB,\
-golgi_to_vesicle
-'
+golgi_to_vesicle'
 --skipContactSites \
 --inputN5Path '$INPUTN5PATH' \
 --outputDirectory '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/Jurkat/generalObjectInformation/'"
