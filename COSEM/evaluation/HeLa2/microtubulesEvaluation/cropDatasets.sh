@@ -6,11 +6,11 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$OWN_DIR/flintstone/flintstone-lsd.sh
 JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkCrop
-N_NODES=2
+N_NODES=3
 
 validationPath=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/evaluation/HeLa2/microtubuleEvaluation/validation
 if [ ! -d $validationPath ]; then
-	mkdir $validationPath
+	mkdir -p $validationPath
 fi
 
 for j in {refinedPredictions,validation}
@@ -45,8 +45,8 @@ ARGV="--n5PathToCropTo '$path' \
 "
 
 export RUNTIME="48:00"
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
 sleep 2
+TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
 
 done
 

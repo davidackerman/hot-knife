@@ -413,7 +413,7 @@ public class SparkGeneralCosemObjectInformation {
 		final SparkConf conf = new SparkConf().setAppName("SparkGeneralCosemInformation");
 
 		// Get all organelles
-		String[] organelles = { "" };
+		String[] organelles = null;
 		
 		List<String[]> customOrganellePairs = new ArrayList<String[]>();
 		if(options.getInputPairs()!=null) {
@@ -432,26 +432,28 @@ public class SparkGeneralCosemObjectInformation {
 		if (options.getInputN5DatasetName() != null) {
 			organelles = options.getInputN5DatasetName().split(",");
 		} else {
-			File file = new File(options.getInputN5Path());
+			/*File file = new File(options.getInputN5Path());
 			organelles = file.list(new FilenameFilter() {
 				@Override
 				public boolean accept(File current, String name) {
 					return new File(current, name).isDirectory();
 				}
-			});
+			});*/
 		}	
 		
 
 		new File(options.getOutputDirectory()+"/allCounts.csv").delete();
 		
-		System.out.println(Arrays.toString(organelles));
-		for (String currentOrganelle : organelles) {
-			System.out.println(currentOrganelle);
-			String [] datasetNames = {currentOrganelle};
-			JavaSparkContext sc = new JavaSparkContext(conf);
-			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[0]);
-			calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
-			sc.close();
+		if(organelles != null) {
+			System.out.println(Arrays.toString(organelles));
+			for (String currentOrganelle : organelles) {
+				System.out.println(currentOrganelle);
+				String [] datasetNames = {currentOrganelle};
+				JavaSparkContext sc = new JavaSparkContext(conf);
+				List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), datasetNames[0]);
+				calculateVolumeAreaCount(sc, options.getInputN5Path(), datasetNames, options.getOutputDirectory(), blockInformationList);
+				sc.close();
+			}
 		}
 		
 		

@@ -159,7 +159,7 @@ public class SparkCompareDatasets {
 				data1Cursor.next();
 				data2Cursor.next();
 				if(!data1Cursor.get().valueEquals(data2Cursor.get())) {
-					System.out.println(offset[0]+data1Cursor.getIntPosition(0)+" "+offset[1]+data1Cursor.getIntPosition(1) + " "+offset[2]+data1Cursor.getIntPosition(2));
+					System.out.println((offset[0]+data1Cursor.getIntPosition(0))+" "+(offset[1]+data1Cursor.getIntPosition(1)) + " "+(offset[2]+data1Cursor.getIntPosition(2)));
 					areEqual = false;
 				}
 			}

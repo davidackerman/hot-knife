@@ -6,7 +6,7 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$OWN_DIR/flintstone/flintstone-lsd.sh
 JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkExpandMicrotubules
-N_NODES=2
+N_NODES=3
 
 for j in {refinedPredictions,validation}
 do
@@ -24,8 +24,8 @@ ARGV="--inputN5Path '$path' \
 "
 
 export RUNTIME="48:00"
+sleep 2
 TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
-sleep 2 
 
 if [ ! -d $path/microtubules ]; then
 ln -s $path/microtubules_centerAxis_expanded $path/microtubules

@@ -13,10 +13,13 @@ N_NODES=15
 #--datasetToUseAsMaskN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa2.n5' \
 #--datasetNameToUseAsMask 'ribosomes' \
 #--outputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa2.n5'"
+
+#ARGV="--datasetToMaskN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa2.n5' \
+#--datasetNameToMask 'er_sheetness,er_sheetness_maskedWith_nucleus_expanded,er_sheetnessVolumeAveraged,er_sheetnessVolumeAveraged_maskedWith_nucleus_expanded' \
 ARGV="--datasetToMaskN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa2.n5' \
---datasetNameToMask 'er_sheetness,er_sheetness_maskedWith_nucleus_expanded,er_sheetnessVolumeAveraged,er_sheetnessVolumeAveraged_maskedWith_nucleus_expanded' \
+--datasetNameToMask 'er_reconstructed,er_reconstructed_maskedWith_nucleus_expanded' \
 --datasetToUseAsMaskN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa2.n5' \
---datasetNameToUseAsMask 'ribosomes' \
+--datasetNameToUseAsMask 'ribosomes,microtubules' \
 --outputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa2.n5'"
 
 #export MEMORY_PER_NODE=500

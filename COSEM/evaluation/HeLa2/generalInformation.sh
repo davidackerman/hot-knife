@@ -33,7 +33,8 @@ fi
 	--outputDirectory '$BASENAME/analysisResults/$i/$j'
 	"
 
-	TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV 
+	sleep 2
+	TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV & 
 done
 
 done

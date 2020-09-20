@@ -6,7 +6,7 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$OWN_DIR/flintstone/flintstone-lsd.sh
 JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkApplyMaskToCleanData
-N_NODES=2
+N_NODES=3
 
 for i in {validation,refinedPredictions}
 do
@@ -33,8 +33,8 @@ plasma_membrane' \
 
 #export MEMORY_PER_NODE=500
 export RUNTIME="48:00"
-TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
 sleep 2
+TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
 
 done
 

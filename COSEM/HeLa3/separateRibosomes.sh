@@ -13,7 +13,7 @@ ARGV="\
 --inputN5DatasetName 'ribosomes' \
 --sheetnessCSV '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/HeLa3/er_reconstructed_maskedWith_ribosomes_to_ribosomes_cc__ribosomes_sheetness.csv' \
 --sheetnessMaskedCSV '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/HeLa3/er_reconstructed_maskedWith_nucleus_expanded_maskedWith_ribosomes_to_ribosomes_cc__ribosomes_sheetness.csv' \
---sheetnessCutoff 0.9 "
+--sheetnessCutoff 0.6 "
 
 #export MEMORY_PER_NODE=500
 export RUNTIME="48:00"

@@ -22,6 +22,7 @@ public class BlockInformation implements Serializable {
 	public long[][] paddedGridBlock;
 	public boolean[][][] thinningLocations;
 	public int[][] padding;
+	public int paddingForMedialSurface;
 	public boolean needToThinAgainPrevious;
 	public boolean needToThinAgainCurrent;
 	public boolean isIndependent;
