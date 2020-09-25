@@ -49,10 +49,10 @@ public class SparkCrop {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
-		@Option(name = "--n5PathToCropTo", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		@Option(name = "--n5PathToCropTo", required = false, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
 		private String n5PathToCropTo = null;
 		
-		@Option(name = "--datasetNameToCropTo", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
+		@Option(name = "--datasetNameToCropTo", required = false, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
 		private String datasetNameToCropTo = null;
 		
 		@Option(name = "--inputN5Path", required = true, usage = "input N5 path, e.g. /nrs/saalfeld/heinrichl/cell/gt061719/unet/02-070219/hela_cell3_314000.n5")
@@ -70,8 +70,15 @@ public class SparkCrop {
 		@Option(name = "--convertTo8Bit", required = false, usage = "whether to convert to 8 bit")
 		private boolean convertTo8Bit = false;
 		
-		@Option(name = "--zyxTOxyz", required = false, usage = "switch from zyx order to xyz order")
-		private boolean zyxTOxyz = false;
+		@Option(name = "--offsetsToCropTo", required = false, usage = "nm")
+		private String offsetsToCropTo = null;
+		
+		@Option(name = "--dimensions", required = false, usage = "block size")
+		private String dimensions = null;
+		
+		@Option(name = "--blockSize", required = false, usage = "block size")
+		private String blockSize = "128,128,128";
+		
 
 		public Options(final String[] args) {
 
@@ -113,19 +120,29 @@ public class SparkCrop {
 			return convertTo8Bit;
 		}
 		
-		public boolean getZyxTOxyz() {
-			return zyxTOxyz;
-		}
 		
 		public String getOutputN5DatasetSuffix() {
 			return outputN5DatasetSuffix;
 		}
 		
+		public String getOffsetsToCropTo() {
+			return offsetsToCropTo;
+		}
+		
+		public String getDimensions() {
+			return dimensions;
+		}
+		
+		public String getBlockSize() {
+			return blockSize;
+		}
+		
+		
 		
 		
 
 	}
-
+	
 	public static final void crop(
 			final JavaSparkContext sc,
 			final String n5PathToCropTo,
@@ -134,26 +151,28 @@ public class SparkCrop {
 			final String inputN5DatasetName,
 			final String outputN5DatasetName,
 			final String outputN5Path,
-			final boolean convertTo8Bit,
-			final boolean zyxTOxyz) throws IOException {
-
+			final boolean convertTo8Bit) throws IOException {
 		final N5Reader n5ToCropToReader = new N5FSReader(n5PathToCropTo);
 		final DatasetAttributes attributesToCropTo = n5ToCropToReader.getDatasetAttributes(datasetNameToCropTo);
 		final long[] dimensions = attributesToCropTo.getDimensions();
 		final int[] blockSize = attributesToCropTo.getBlockSize();		
 		final int[] offsetsToCropTo = IOHelper.getOffset(n5ToCropToReader, datasetNameToCropTo);		
-		if(zyxTOxyz) {
-			int z = offsetsToCropTo[0];
-			int x = offsetsToCropTo[2];
-			offsetsToCropTo[0]=x;
-			offsetsToCropTo[2]=z;
-		}
-		
-		final double[] pixelResolutionToCropTo = IOHelper.getResolution(n5ToCropToReader,datasetNameToCropTo);
-		int[] offsetsToCropToInVoxels = new int[] {(int) (offsetsToCropTo[0]/pixelResolutionToCropTo[0]),(int) (offsetsToCropTo[1]/pixelResolutionToCropTo[1]),(int) (offsetsToCropTo[2]/pixelResolutionToCropTo[2])};
-		
-		
+		crop(sc,  offsetsToCropTo, dimensions, blockSize, inputN5Path, inputN5DatasetName, outputN5DatasetName, outputN5Path, convertTo8Bit);
+	}
+	
+	public static final void crop(
+			final JavaSparkContext sc,
+			final int[] offsetsToCropTo,
+			final long[] dimensions,
+			final int[] blockSize,
+			final String inputN5Path,
+			final String inputN5DatasetName,
+			final String outputN5DatasetName,
+			final String outputN5Path,
+			final boolean convertTo8Bit) throws IOException {
 
+	
+		
 		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
 
 		n5Writer.createDataset(
@@ -164,9 +183,11 @@ public class SparkCrop {
 					new GzipCompression());
 		
 		final N5Reader n5Reader = new N5FSReader(inputN5Path);
-		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputN5DatasetName)));
+		double[] pixelResolution = IOHelper.getResolution(n5Reader, inputN5DatasetName);
+		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 		n5Writer.setAttribute(outputN5DatasetName, "offset", offsetsToCropTo);
-		
+		int[] offsetsToCropToInVoxels = new int[] {(int) (offsetsToCropTo[0]/pixelResolution[0]),(int) (offsetsToCropTo[1]/pixelResolution[1]),(int) (offsetsToCropTo[2]/pixelResolution[2])};
+
 		List<BlockInformation> blockInformationListRefinedPredictions = BlockInformation.buildBlockInformationList(dimensions, blockSize);
 		JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationListRefinedPredictions);			
 		rdd.foreach(blockInformation -> {
@@ -212,18 +233,35 @@ public class SparkCrop {
 		for (String currentDatasetName : inputN5DatasetNames) {
 			
 			//Create block information list
-			
 			JavaSparkContext sc = new JavaSparkContext(conf);
-			crop(sc, 
-				options.getN5PathToCropTo(),
-				options.getDatasetNameToCropTo(),
-				options.getInputN5Path(),
-				currentDatasetName,
-				currentDatasetName+options.getOutputN5DatasetSuffix(),
-				options.getOutputN5Path(),
-				options.getConvertTo8Bit(),
-				options.getZyxTOxyz());
-			
+			if(options.getOffsetsToCropTo()!=null) {
+				String[] offsetsToCropTo = options.getOffsetsToCropTo().split(",");
+				String[] dimensions = options.getDimensions().split(",");
+				String[] blockSize = options.getBlockSize().split(",");
+
+
+				crop(sc, 
+					new int [] {Integer.valueOf(offsetsToCropTo[0]),Integer.valueOf(offsetsToCropTo[1]),Integer.valueOf(offsetsToCropTo[2])},
+					new long [] {Long.valueOf(dimensions[0]),Long.valueOf(dimensions[1]),Long.valueOf(dimensions[2])},
+					new int [] {Integer.valueOf(blockSize[0]),Integer.valueOf(blockSize[1]),Integer.valueOf(blockSize[2])},
+					options.getInputN5Path(),
+					currentDatasetName,
+					currentDatasetName+options.getOutputN5DatasetSuffix(),
+					options.getOutputN5Path(),
+					options.getConvertTo8Bit());
+				
+			}
+			else {
+				crop(sc, 
+					options.getN5PathToCropTo(),
+					options.getDatasetNameToCropTo(),
+					options.getInputN5Path(),
+					currentDatasetName,
+					currentDatasetName+options.getOutputN5DatasetSuffix(),
+					options.getOutputN5Path(),
+					options.getConvertTo8Bit());
+				
+			}
 			sc.close();
 		}
 

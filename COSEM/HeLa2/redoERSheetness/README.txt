@@ -20,4 +20,4 @@ x 11. calculateSheetnessOfContactSites_ribosomes.sh
 x 12. separateRibosomes.sh
 x 13. general-object-cosem-information_er.sh
 x 14. generalObjectCosemInformationMicrotubulesContactDistance20.sh (for HeLa2 only)
-
+x 15. general-object-cosem-information_ribosomes.sh
