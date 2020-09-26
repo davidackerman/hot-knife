@@ -12,6 +12,13 @@ cell=${PWD##*/}
 for dataset in {centrosome,distal_app}
 do
 
+minimumVolumeCutoff=3E3
+if [ "$dataset" = "distal_app" ]
+then
+minimumVolumeCutoff=8E5
+fi
+
+
 IFS=','
 read -ra pathArray <<< "$(grep -i path, ~/Programming/hot-knife/COSEM/bestNetworks/$cell.csv)"
 read -ra setupAndIteration <<< "$(grep ,${dataset}, ~/Programming/hot-knife/COSEM/bestNetworks/$cell.csv)"
@@ -27,7 +34,7 @@ cp $BASH_SOURCE $OUTPUTN5PATH/$filename
 
 ARGV="\
 --inputN5DatasetName '${dataset}' \
---minimumVolumeCutoff 0 \
+--minimumVolumeCutoff ${minimumVolumeCutoff} \
 --outputN5DatasetSuffix '_cc' \
 --inputN5Path '$INPUTN5PATH' \
 --outputN5Path '$OUTPUTN5PATH' \

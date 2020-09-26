@@ -9,9 +9,8 @@ CLASS=org.janelia.saalfeldlab.hotknife.SparkLabelPredictionWithConnectedComponen
 N_NODES=15
 
 cell=${PWD##*/} 
-#for dataset in {vesicle,MVB,er,golgi,lysosome,LD,NE}
-#do
-dataset=golgi
+for dataset in NE #{vesicle,MVB,er,golgi,lysosome,LD,NE}
+do
 
 IFS=','
 read -ra pathArray <<< "$(grep -i path, ~/Programming/hot-knife/COSEM/bestNetworks/$cell.csv)"
@@ -42,5 +41,5 @@ if [ ! -d /groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/${ce
 	ln -s $OUTPUTN5PATH/${dataset}_membrane_labeledWith_${dataset} /groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/${cell}.n5/${dataset}_membrane
 fi
 
-#done
+done
 

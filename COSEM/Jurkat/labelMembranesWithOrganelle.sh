@@ -9,7 +9,7 @@ CLASS=org.janelia.saalfeldlab.hotknife.SparkLabelPredictionWithConnectedComponen
 N_NODES=15
 
 cell=${PWD##*/} 
-for dataset in {vesicle,MVB,er,golgi,lysosome,LD,NE}
+for dataset in NE #{vesicle,MVB,er,golgi,lysosome,LD,NE}
 do
 
 IFS=','

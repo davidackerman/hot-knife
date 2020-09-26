@@ -29,7 +29,7 @@ cp $BASH_SOURCE $OUTPUTN5PATH/$filename
 
 ARGV="\
 --inputN5DatasetName '${dataset}_maskedWith_${datasetNameToUseAsMask}' \
---minimumVolumeCutoff 0 \
+--minimumVolumeCutoff 3E5 \
 --outputN5DatasetSuffix '_cc' \
 --inputN5Path '$OUTPUTN5PATH' \
 --outputN5Path '$OUTPUTN5PATH' \

@@ -17,7 +17,7 @@ cp $BASH_SOURCE $OUTPUTN5PATH/$filename
 
 ARGV="\
 --inputN5DatasetName 'chromatin_maskedWith_nucleus_expansion_0' \
---minimumVolumeCutoff 0 \
+--minimumVolumeCutoff 8E3 \
 --outputN5DatasetSuffix '_cc' \
 --inputN5Path '$INPUTN5PATH' \
 "
