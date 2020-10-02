@@ -37,7 +37,9 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
+import net.imglib2.type.numeric.NumericType;
 import net.imglib2.type.numeric.integer.*;
+import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
 
 /**
@@ -160,7 +162,7 @@ public class SparkCrop {
 		crop(sc,  offsetsToCropTo, dimensions, blockSize, inputN5Path, inputN5DatasetName, outputN5DatasetName, outputN5Path, convertTo8Bit);
 	}
 	
-	public static final void crop(
+	public static final <T extends NumericType<T>> void crop(
 			final JavaSparkContext sc,
 			final int[] offsetsToCropTo,
 			final long[] dimensions,
@@ -172,17 +174,29 @@ public class SparkCrop {
 			final boolean convertTo8Bit) throws IOException {
 
 	
+		final N5Reader n5Reader = new N5FSReader(inputN5Path);
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
 		
 		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
-
-		n5Writer.createDataset(
+		
+		if (convertTo8Bit) {
+			n5Writer.createDataset(
 					outputN5DatasetName,
 					dimensions,
 					blockSize,
-					convertTo8Bit ? DataType.UINT8 : DataType.UINT64,
+					DataType.UINT8,
 					new GzipCompression());
+		}
+		else {
+			n5Writer.createDataset(
+					outputN5DatasetName,
+					dimensions,
+					blockSize,
+					attributes.getDataType(),
+					new GzipCompression());
+		}
 		
-		final N5Reader n5Reader = new N5FSReader(inputN5Path);
+		
 		double[] pixelResolution = IOHelper.getResolution(n5Reader, inputN5DatasetName);
 		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
 		n5Writer.setAttribute(outputN5DatasetName, "offset", offsetsToCropTo);
@@ -201,11 +215,11 @@ public class SparkCrop {
 			
 			
 			final N5Reader n5BlockReader = new N5FSReader(inputN5Path);
-			final RandomAccessibleInterval<UnsignedLongType> source = Views.offsetInterval((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputN5DatasetName), offset, dimension);
 			
 			final N5FSWriter n5BlockWriter = new N5FSWriter(outputN5Path);
 
 			if(convertTo8Bit) {
+				final RandomAccessibleInterval<UnsignedLongType> source = Views.offsetInterval((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputN5DatasetName), offset, dimension);
 				final RandomAccessibleInterval<UnsignedByteType> sourceConverted = Converters.convert(
 						source,
 						(a, b) -> {
@@ -215,7 +229,17 @@ public class SparkCrop {
 				N5Utils.saveBlock(sourceConverted, n5BlockWriter, outputN5DatasetName, blockInformation.gridBlock[2]);
 			}
 			else {
-				N5Utils.saveBlock(source, n5BlockWriter, outputN5DatasetName, blockInformation.gridBlock[2]);
+				final RandomAccessibleInterval<T> source = Views.offsetInterval((RandomAccessibleInterval<T>)N5Utils.open(n5BlockReader, inputN5DatasetName), offset, dimension);
+				
+				if(attributes.getDataType()==DataType.FLOAT64) {
+					N5Utils.saveBlock((RandomAccessibleInterval<FloatType>)source, n5BlockWriter, outputN5DatasetName, blockInformation.gridBlock[2]);
+				}
+				else if(attributes.getDataType()==DataType.UINT64) {
+					N5Utils.saveBlock((RandomAccessibleInterval<UnsignedLongType>)source, n5BlockWriter, outputN5DatasetName, blockInformation.gridBlock[2]);
+				}
+				else {
+					N5Utils.saveBlock((RandomAccessibleInterval<UnsignedByteType>)source, n5BlockWriter, outputN5DatasetName, blockInformation.gridBlock[2]);
+				}
 			}
 		});
 	}
