@@ -23,7 +23,10 @@ import java.util.List;
 import java.util.RandomAccess;
 import java.util.Set;
 
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
+import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
 import ij.ImageJ;
@@ -75,9 +78,9 @@ public class ConnectedComponents {
 		ImageJFunctions.show(components);
 		*/
 		
-		final N5FSReader n5 = new N5FSReader("/groups/cosem/cosem/ackermand/tempRibosomes.n5");
-		final RandomAccessibleInterval<UnsignedLongType> datasetA = N5Utils.open(n5, "ribosomes_cc");
-		final RandomAccessibleInterval<UnsignedLongType> datasetB = N5Utils.open(n5, "ribosomes_cc_medialSurface");
+		final N5FSReader n5 = new N5FSReader("/groups/cosem/cosem/ackermand/supplementContactSites.n5");
+		final RandomAccessibleInterval<UnsignedLongType> datasetA = N5Utils.open(n5, "mito_cc_contact_boundary_temp_to_delete");
+		final RandomAccessibleInterval<UnsignedLongType> datasetB = N5Utils.open(n5, "er_cc_contact_boundary_temp_to_delete");
 
 		net.imglib2.RandomAccess<UnsignedLongType> aRA = datasetA.randomAccess();
 		net.imglib2.RandomAccess<UnsignedLongType> bRA = datasetB.randomAccess();
@@ -90,14 +93,12 @@ public class ConnectedComponents {
 					aRA.setPosition(new long[] {x,y,z});
 					bRA.setPosition(new long[] {x,y,z});
 					long aID = aRA.get().get();
-					if(aID>0)
-						aIDs.add(aID);
 					long bID = bRA.get().get();
-					if(bID>0) {
-						if(bID!=aID) {
-							System.out.println("fail");
-						}
-						bIDs.add(bID);
+					if(aID>0 && bID>0) {
+						aRA.get().set(1);
+					}
+					else {
+						aRA.get().set(0);
 					}
 					
 				}
@@ -133,10 +134,15 @@ public class ConnectedComponents {
 		System.out.println(maxID);
 		long t1 = System.currentTimeMillis();
 		System.out.println(t1-t0);
-		new ImageJ();
-
-		ImageJFunctions.show(components);
-
+		
+		//new ImageJ();
+		//ImageJFunctions.show(components);
+		
+		final DatasetAttributes attributes = n5.getDatasetAttributes("mito_cc_to_er_cc_cc");
+		final N5Writer n5Writer = new N5FSWriter("/groups/cosem/cosem/ackermand/supplementContactSites.n5");
+		n5Writer.setAttribute("oldMethod", "pixelResolution", new IOHelper.PixelResolution(new double[] {4,4,4}));
+		//n5Writer.createDataset("oldMethod", attributes.getDimensions(),attributes.getBlockSize(),attributes.getDataType(),attributes.getCompression());
+		N5Utils.save(components, n5Writer, "oldMethod", attributes.getBlockSize(), attributes.getCompression());
 		//System.out.println(Arrays.toString(Intervals.dimensionsAsLongArray(img)));
 	}
 

@@ -12,10 +12,10 @@ cell=${PWD##*/}
 for dataset in {centrosome,distal_app}
 do
 
-minimumVolumeCutoff=3E3
+minimumVolumeCutoff=3E5
 if [ "$dataset" = "distal_app" ]
 then
-minimumVolumeCutoff=8E5
+minimumVolumeCutoff=8E3
 fi
 
 

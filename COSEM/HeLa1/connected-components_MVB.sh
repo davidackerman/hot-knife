@@ -17,12 +17,13 @@ filename=$(basename -- "$fullfile")
 cp $BASH_SOURCE $OUTPUTN5PATH/$filename
 
 ARGV="\
---inputN5DatasetName 'MVB' \
+--inputN5DatasetName 'MVB_maskedWith_mito_expansion_30' \
 --minimumVolumeCutoff 500E3 \
 --outputN5DatasetSuffix '_cc' \
---inputN5Path '$INPUTN5PATH' \
+--inputN5Path '$OUTPUTN5PATH' \
 --outputN5Path '$OUTPUTN5PATH' \
 "
 
 export RUNTIME="48:00"
 TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV
+

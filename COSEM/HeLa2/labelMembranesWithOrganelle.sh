@@ -9,12 +9,12 @@ CLASS=org.janelia.saalfeldlab.hotknife.SparkLabelPredictionWithConnectedComponen
 N_NODES=15
 
 cell=${PWD##*/} 
-for dataset in NE #{vesicle,MVB,er,golgi,lysosome,LD,NE}
+for dataset in {vesicle,MVB,er,golgi,lysosome,LD,NE}
 do
 
 IFS=','
 read -ra pathArray <<< "$(grep -i path, ~/Programming/hot-knife/COSEM/bestNetworks/$cell.csv)"
-read -ra setupAndIteration <<< "$(grep ,${dataset}, ~/Programming/hot-knife/COSEM/bestNetworks/$cell.csv)"
+read -ra setupAndIteration <<< "$(grep ,${dataset}_membrane, ~/Programming/hot-knife/COSEM/bestNetworks/$cell.csv)"
 
 
 TRAININGPATH="${setupAndIteration[0]}/${pathArray[1]}${setupAndIteration[2]}.n5"
@@ -37,9 +37,11 @@ export RUNTIME="48:00"
 TERMINATE=1 $FLINTSTONE $N_NODES $JAR $CLASS $ARGV &
 sleep 2
 
-if [ ! -d /groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/${cell}.n5/${dataset}_membrane ]; then
-	ln -s $OUTPUTN5PATH/${dataset}_membrane_labeledWith_${dataset} /groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/${cell}.n5/${dataset}_membrane
+linkedOutput=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/${cell}.n5/${dataset}_membrane
+if [ -d $linkedOutput ]; then
+	unlink $linkedOutput
 fi
+ln -s $OUTPUTN5PATH/${dataset}_membrane_labeledWith_${dataset} $linkedOutput
 
 done
 
