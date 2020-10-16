@@ -198,8 +198,9 @@ public class SparkSeparateRibosomes {
 		String nuclearString = inputDatasetName+"_nuclear";
 		String sheetString = inputDatasetName+"_sheet";
 		String tubeString = inputDatasetName+"_tube";
+		String classifiedString = inputDatasetName+"_classified";
 
-		for(String currentString: new String[] {cytosolicString, nuclearString, sheetString, tubeString}) {
+		for(String currentString: new String[] {cytosolicString, nuclearString, sheetString, tubeString, classifiedString}) {
 			n5Writer.createDataset(currentString, dimensions, blockSize, DataType.UINT64, new GzipCompression());
 			n5Writer.setAttribute(currentString, "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, inputDatasetName)));
 		}
@@ -220,12 +221,14 @@ public class SparkSeparateRibosomes {
 			IntervalView<UnsignedLongType> nuclear = Views.offsetInterval(ArrayImgs.unsignedLongs(dimension),new long[]{0,0,0}, dimension);
 			IntervalView<UnsignedLongType> sheet = Views.offsetInterval(ArrayImgs.unsignedLongs(dimension),new long[]{0,0,0}, dimension);
 			IntervalView<UnsignedLongType> tube = Views.offsetInterval(ArrayImgs.unsignedLongs(dimension),new long[]{0,0,0}, dimension);
+			IntervalView<UnsignedLongType> classified = Views.offsetInterval(ArrayImgs.unsignedLongs(dimension),new long[]{0,0,0}, dimension);
 
 			RandomAccess<UnsignedLongType> ribosomesRA = ribosomes.randomAccess();
 			RandomAccess<UnsignedLongType> cytosolicRA = cytosolic.randomAccess();
 			RandomAccess<UnsignedLongType> nuclearRA = nuclear.randomAccess();
 			RandomAccess<UnsignedLongType> sheetRA = sheet.randomAccess();
 			RandomAccess<UnsignedLongType> tubeRA = tube.randomAccess();
+			RandomAccess<UnsignedLongType> classifiedRA = classified.randomAccess();
 
 			for(int x=0; x<dimension[0]; x++) {
 				for(int y=0; y<dimension[1]; y++) {
@@ -255,6 +258,9 @@ public class SparkSeparateRibosomes {
 								tubeRA.get().set(ID);
 							}
 							
+							classifiedRA.setPosition(pos);
+							classifiedRA.get().set(currentInformation+1);
+							
 						}
 					}
 				}
@@ -267,6 +273,7 @@ public class SparkSeparateRibosomes {
 			N5Utils.saveBlock(nuclear, n5BlockWriter, nuclearString, gridBlock[2]);
 			N5Utils.saveBlock(sheet, n5BlockWriter, sheetString, gridBlock[2]);
 			N5Utils.saveBlock(tube, n5BlockWriter, tubeString, gridBlock[2]);
+			N5Utils.saveBlock(classified, n5BlockWriter, classifiedString, gridBlock[2]);
 
 		});
 

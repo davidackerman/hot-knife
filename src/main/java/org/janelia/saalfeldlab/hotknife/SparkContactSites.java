@@ -101,6 +101,9 @@ public class SparkContactSites {
 		@Option(name = "--doSelfContacts", required = false, usage = "Minimum contact site cutoff (nm^3)")
 		private boolean doSelfContacts = false;
 		
+		@Option(name = "--doNaiveMethod", required = false, usage = "Naive method")
+		private boolean doNaiveMethod = false;
+		
 		@Option(name = "--skipGeneratingContactBoundaries", required = false, usage = "Minimum contact site cutoff (nm^3)")
 		private boolean skipGeneratingContactBoundaries = false;
 
@@ -146,6 +149,10 @@ public class SparkContactSites {
 		
 		public boolean getDoSelfContacts() {
 			return doSelfContacts;
+		}
+		
+		public boolean getDoNaiveMethod() {
+			return doNaiveMethod;
 		}
 
 		public boolean getSkipGeneratingContactBoundaries() {
@@ -756,6 +763,149 @@ public class SparkContactSites {
 		return blockInformationList;
 	}
 	
+	
+	
+	@SuppressWarnings("unchecked")
+	public static final <T extends NativeType<T>> List<BlockInformation> naiveConnectedComponents(
+			final JavaSparkContext sc, final String inputN5Path, String organelle1, String organelle2,
+			final String outputN5Path, final String outputN5DatasetName, final double minimumVolumeCutoff,
+			List<BlockInformation> blockInformationList) throws IOException {
+		boolean sameOrganelleClassTemp=false;
+		if(organelle1.equals(organelle2)) {
+			organelle1+="_contact_boundary_temp_to_delete";
+			organelle2+="_pairs_contact_boundary_temp_to_delete";
+			sameOrganelleClassTemp=true;
+		}
+		else {
+			organelle1+="_contact_boundary_temp_to_delete";
+			organelle2+="_contact_boundary_temp_to_delete";
+		}
+		final boolean sameOrganelleClass = sameOrganelleClassTemp;
+		final String organelle1ContactBoundaryString = organelle1;
+		final String organelle2ContactBoundaryString = organelle2;
+		// Get attributes of input data set
+		final N5Reader n5Reader = new N5FSReader(inputN5Path);
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(organelle1);
+		final int[] blockSize = attributes.getBlockSize();
+		final long[] blockSizeL = new long[] { blockSize[0], blockSize[1], blockSize[2] };
+		final long[] outputDimensions = attributes.getDimensions();
+		final double [] pixelResolution = IOHelper.getResolution(n5Reader, organelle1);
+		
+		// Create output dataset
+		final N5Writer n5Writer = new N5FSWriter(outputN5Path);
+		n5Writer.createGroup(outputN5DatasetName);
+		n5Writer.createDataset(outputN5DatasetName, outputDimensions, blockSize,
+				org.janelia.saalfeldlab.n5.DataType.UINT64, attributes.getCompression());
+		n5Writer.setAttribute(outputN5DatasetName, "pixelResolution", new IOHelper.PixelResolution(pixelResolution));
+
+		// Set up rdd to parallelize over blockInformation list and run RDD, which will
+		// return updated block information containing list of components on the edge of
+		// the corresponding block
+		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		JavaRDD<BlockInformation> javaRDDsets = rdd.map(currentBlockInformation -> {
+			// Get information for reading in/writing current block
+			long[][] gridBlock = currentBlockInformation.gridBlock;
+			long[] offset = gridBlock[0];
+			long[] dimension = gridBlock[1];
+
+			// Read in source block
+			final N5Reader n5ReaderLocal = new N5FSReader(inputN5Path);
+			
+			final RandomAccessibleInterval<UnsignedLongType>  organelle1Data = Views.offsetInterval(Views.extendZero(
+						(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle1ContactBoundaryString)
+						),offset, dimension);
+			final RandomAccessibleInterval<UnsignedLongType>  organelle2Data = Views.offsetInterval(Views.extendZero(
+					(RandomAccessibleInterval<UnsignedLongType>) N5Utils.open(n5ReaderLocal, organelle2ContactBoundaryString)
+					),offset, dimension);
+			
+			RandomAccess<UnsignedLongType> organelle1DataRA = organelle1Data.randomAccess();
+			RandomAccess<UnsignedLongType> organelle2DataRA = organelle2Data.randomAccess();
+			
+			Set<List<Long>> contactSiteOrganellePairsSet = new HashSet<>();
+			for(int x=0; x<dimension[0]; x++) {
+				for(int y=0; y<dimension[1]; y++){
+					for(int z=0; z<dimension[2]; z++) {
+						int [] pos = new int[] {x,y,z};
+						organelle1DataRA.setPosition(pos);
+						organelle2DataRA.setPosition(pos);
+						
+						Long organelle1ID = organelle1DataRA.get().get();
+						Long organelle2ID = organelle2DataRA.get().get();
+
+						if(organelle1ID>0 && organelle2ID>0) { //then is part of a contact site
+							contactSiteOrganellePairsSet.add(Arrays.asList(organelle1ID,organelle2ID));
+						}
+					}
+				}
+			}
+			
+			long[] currentDimensions = { 0, 0, 0 };
+			organelle1Data.dimensions(currentDimensions);
+			// Create the output based on the current dimensions
+			
+			final Img<UnsignedLongType> output = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType())
+					.create(currentDimensions);
+			
+			final Img<UnsignedByteType> currentPairBinarized = new ArrayImgFactory<UnsignedByteType>(new UnsignedByteType()).create(currentDimensions);
+			RandomAccess<UnsignedByteType> currentPairBinarizedRA = currentPairBinarized.randomAccess();
+			currentBlockInformation.edgeComponentIDtoVolumeMap = new HashMap();
+			currentBlockInformation.edgeComponentIDtoOrganelleIDs = new HashMap();
+			for( List<Long> organellePairs : contactSiteOrganellePairsSet ) {
+				for(int x=0; x<dimension[0]; x++) {
+					for(int y=0; y<dimension[1]; y++){
+						for(int z=0; z<dimension[2]; z++) {
+							int [] pos = new int[] {x,y,z};
+							organelle1DataRA.setPosition(pos);
+							organelle2DataRA.setPosition(pos);
+							currentPairBinarizedRA.setPosition(pos);
+							Long organelle1ID = organelle1DataRA.get().get();
+							Long organelle2ID = organelle2DataRA.get().get();
+							if(organelle1ID.equals(organellePairs.get(0)) && organelle2ID.equals(organellePairs.get(1))) {
+								currentPairBinarizedRA.get().set(1);
+							}
+							else if(sameOrganelleClass && (organelle1ID.equals(organellePairs.get(1)) && organelle2ID.equals(organellePairs.get(0))) ) {//if it is the same organelle class, then ids can be swapped since they still correspond to the same pair
+								currentPairBinarizedRA.get().set(1);
+							}
+							else {
+								currentPairBinarizedRA.get().set(0);
+							}
+						}
+					}
+				}
+				// Compute the connected components which returns the components along the block
+				// edges, and update the corresponding blockInformation object
+				int minimumVolumeCutoffInVoxels = (int) Math.ceil(minimumVolumeCutoff/Math.pow(pixelResolution[0],3));
+				
+				Map<Long, Long> currentPairEdgeComponentIDtoVolumeMap = SparkConnectedComponents.computeConnectedComponents(currentPairBinarized, output, outputDimensions,
+						blockSizeL, offset, 1, minimumVolumeCutoffInVoxels,new RectangleShape(1,false));
+				currentBlockInformation.edgeComponentIDtoVolumeMap.putAll(currentPairEdgeComponentIDtoVolumeMap);
+				for(Long edgeComponentID : currentPairEdgeComponentIDtoVolumeMap.keySet()) {
+					if(sameOrganelleClass) {
+						Long o1 = organellePairs.get(0);
+						Long o2 = organellePairs.get(1);
+						List<Long> sortedPair = o1<o2 ? Arrays.asList(o1,o2) : Arrays.asList(o2,o1);
+						currentBlockInformation.edgeComponentIDtoOrganelleIDs.put(edgeComponentID, sortedPair);
+					}
+					else{
+						currentBlockInformation.edgeComponentIDtoOrganelleIDs.put(edgeComponentID, Arrays.asList(organellePairs.get(0), organellePairs.get(1)));
+					}
+				}
+				
+			}
+
+			// Write out output to temporary n5 stack
+			final N5Writer n5WriterLocal = new N5FSWriter(outputN5Path);
+			N5Utils.saveBlock(output, n5WriterLocal, outputN5DatasetName, gridBlock[2]);
+
+			return currentBlockInformation;
+		});
+
+		// Run, collect and return blockInformationList
+		blockInformationList = javaRDDsets.collect();
+
+		return blockInformationList;
+	}
+	
 	static class ContactSiteVoxelHelper {
 		public List< Map<List<Long>,List<Long>> > listOfIndepdenentContactSiteVoxelInformation ;
 		
@@ -1302,7 +1452,7 @@ public class SparkContactSites {
 	 * @param outputN5Path			Output N5 path
 	 * @throws IOException
 	 */
-	public static final void calculateContactSites(final SparkConf conf, final String [] organelles, final boolean doSelfContacts, final double minimumVolumeCutoff, final double contactDistance, final boolean doLM, final String inputN5Path, final String outputN5Path ) throws IOException {
+	public static final void calculateContactSites(final SparkConf conf, final String [] organelles, final boolean doSelfContacts, final double minimumVolumeCutoff, final double contactDistance, final boolean doLM, final String inputN5Path, final String outputN5Path, boolean doNaiveMethod ) throws IOException {
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (int i = 0; i<organelles.length; i++) {
 			final String organelle1 =organelles[i];
@@ -1325,13 +1475,24 @@ public class SparkContactSites {
 							blockInformationList);
 				}
 				else {
-					blockInformationList = blockwiseConnectedComponentsEM(
-							sc, inputN5Path,
-							organelle1, organelle2, 
-							outputN5Path,
-							tempOutputN5ConnectedComponents,
-							minimumVolumeCutoff, contactDistance,
-							blockInformationList);
+					if(doNaiveMethod) {
+						blockInformationList = naiveConnectedComponents(
+								sc, inputN5Path,
+								organelle1, organelle2, 
+								outputN5Path,
+								tempOutputN5ConnectedComponents,
+								minimumVolumeCutoff,
+								blockInformationList);
+					}
+					else {
+						blockInformationList = blockwiseConnectedComponentsEM(
+								sc, inputN5Path,
+								organelle1, organelle2, 
+								outputN5Path,
+								tempOutputN5ConnectedComponents,
+								minimumVolumeCutoff, contactDistance,
+								blockInformationList);
+					}
 				}	
 				
 				
@@ -1462,11 +1623,11 @@ public class SparkContactSites {
 		boolean doLM = false;
 		if(customOrganellePairs.size()>0) {
 			for(String [] customOrganellePair : customOrganellePairs) {
-				calculateContactSites(conf, customOrganellePair,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), doLM, options.getInputN5Path(), options.getOutputN5Path());
+				calculateContactSites(conf, customOrganellePair,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), doLM, options.getInputN5Path(), options.getOutputN5Path(), options.getDoNaiveMethod());
 			}
 		}
 		else {
-			calculateContactSites(conf, organelles,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), doLM, options.getInputN5Path(), options.getOutputN5Path());
+			calculateContactSites(conf, organelles,  options.getDoSelfContacts(), options.getMinimumVolumeCutoff(), options.getContactDistance(), doLM, options.getInputN5Path(), options.getOutputN5Path(), options.getDoNaiveMethod());
 		}
 		System.out.println("finished contact sites");
 		

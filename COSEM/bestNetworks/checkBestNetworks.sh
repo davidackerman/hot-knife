@@ -1,7 +1,7 @@
 #!/bin/bash
 
 for cell in {HeLa2,HeLa3,Jurkat,Macrophage}; do
-	for dataset in {ecs,plasma_membrane,mito,mito_membrane,vesicle,vesicle_membrane,MVB,MVB_membrane,er,er_membrane,ERES,microtubules,nucleus,golgi,golgi_membrane,lysosome,lysosome_membrane,LD,LD_membrane,NE,NE_membrane,nuclear_pore,nuclear_pore_out,chromatin,NHChrom,centrosome,distal_app,ribosomes}; do
+	for dataset in {nucleolus,ecs,plasma_membrane,mito,mito_membrane,vesicle,vesicle_membrane,MVB,MVB_membrane,er,er_membrane,ERES,microtubules,nucleus,golgi,golgi_membrane,lysosome,lysosome_membrane,LD,LD_membrane,NE,NE_membrane,nuclear_pore,nuclear_pore_out,chromatin,NHChrom,centrosome,distal_app,ribosomes}; do
 		IFS=','
 		read -ra pathArray <<< "$(grep -i path, ~/Programming/hot-knife/COSEM/bestNetworks/$cell.csv)"
 		read -ra setupAndIteration <<< "$(grep ,${dataset}, ~/Programming/hot-knife/COSEM/bestNetworks/$cell.csv)"

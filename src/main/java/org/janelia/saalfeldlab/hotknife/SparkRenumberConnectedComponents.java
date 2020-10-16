@@ -87,7 +87,7 @@ import net.imglib2.view.Views;
  *
  * @author David Ackerman &lt;ackermand@janelia.hhmi.org&gt;
  */
-public class SparkBinarize {
+public class SparkRenumberConnectedComponents {
 	@SuppressWarnings("serial")
 	public static class Options extends AbstractOptions implements Serializable {
 
@@ -100,8 +100,8 @@ public class SparkBinarize {
 		@Option(name = "--inputN5DatasetName", required = false, usage = "N5 dataset, e.g. /mito")
 		private String inputN5DatasetName = null;
 		
-		@Option(name = "--keepAsLong", required = false, usage = "N5 dataset, e.g. /mito")
-		private boolean keepAsLong = false;
+		@Option(name = "--convertToUINT16", required = false, usage = "N5 dataset, e.g. /mito")
+		private boolean convertToUINT16 = false;
 
 		public Options(final String[] args) {
 
@@ -127,8 +127,8 @@ public class SparkBinarize {
 			return inputN5DatasetName;
 		}
 		
-		public boolean getKeepAsLong() {
-			return keepAsLong;
+		public boolean getConvertToUINT16() {
+			return convertToUINT16;
 		}
 
 		public String getOutputN5Path() {
@@ -137,12 +137,12 @@ public class SparkBinarize {
 
 	}
 
-	public static final void binarize(
+	public static final void renumber(
 			final JavaSparkContext sc,
 			final String n5Path,
 			final String datasetName,
 			final String n5OutputPath,
-			boolean keepAsLong,
+			boolean convertToUINT16,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
 		final N5Reader n5Reader = new N5FSReader(n5Path);
@@ -150,101 +150,95 @@ public class SparkBinarize {
 		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(datasetName);
 		final long[] dimensions = attributes.getDimensions();
 		final int[] blockSize = attributes.getBlockSize();
-		final int n = dimensions.length;
 		
-
-		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
-		
-		n5Writer.createDataset(
-				datasetName + "_binarized",
-				dimensions,
-				blockSize,
-				keepAsLong ? DataType.UINT64 : DataType.UINT8,
-				new GzipCompression());
-		
-		
-		n5Writer.setAttribute(datasetName + "_binarized", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, datasetName)));
-
 		/*
 		 * grid block size for parallelization to minimize double loading of
 		 * blocks
 		 */
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
+		JavaRDD<Set<Long>> objectIDsRDD = rdd.map(blockInformation -> {
+			final long [][] gridBlock = blockInformation.gridBlock;
+			final N5Reader n5BlockReader = new N5FSReader(n5Path);
+			 IntervalView<UnsignedLongType> source = Views.offsetInterval(
+						(RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, datasetName),gridBlock[0],gridBlock[1]);
+				
+				Set<Long> objectIDs = new HashSet<Long>();
+				Cursor<UnsignedLongType> sourceCursor = source.cursor();
+				while (sourceCursor.hasNext()) {
+					sourceCursor.next();
+					long objectID = sourceCursor.get().get();
+					if (objectID>0) {
+						objectIDs.add(sourceCursor.get().get());
+					}
+				}	
+				return objectIDs;
+		});
+		
+		Set<Long> allObjectIDs = objectIDsRDD.reduce((a,b) -> {a.addAll(b); return a; });
+		Map<Long,Long> objectIDtoRenumberedID = new HashMap<Long,Long>();
+		long currentID = 1;
+		for( Long objectID : allObjectIDs ) {
+			objectIDtoRenumberedID.put(objectID,currentID);
+			currentID++;
+		}
+		
+		final N5Writer n5Writer = new N5FSWriter(n5OutputPath);
+		n5Writer.createDataset(
+				datasetName + "_renumbered",
+				dimensions,
+				blockSize,
+				convertToUINT16 ? DataType.UINT16 : DataType.UINT64,
+				new GzipCompression());	
+		n5Writer.setAttribute(datasetName + "_renumbered", "pixelResolution", new IOHelper.PixelResolution(IOHelper.getResolution(n5Reader, datasetName)));
+		n5Writer.setAttribute(datasetName + "_renumbered", "offset", IOHelper.getOffset(n5Reader, datasetName));
+
+		
 		rdd.foreach(blockInformation -> {
 			final long [][] gridBlock = blockInformation.gridBlock;
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
-			boolean show=false;
-			if(show) new ImageJ();
-			if(keepAsLong) {
-				final RandomAccessibleInterval<UnsignedLongType> sourceBinarized = Converters.convert(
-						(RandomAccessibleInterval<UnsignedLongType>)(RandomAccessibleInterval)N5Utils.open(n5BlockReader, datasetName),
+			 final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
+			if(convertToUINT16) {
+				RandomAccessibleInterval<UnsignedLongType> source = Views.offsetInterval(
+						(RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, datasetName),gridBlock[0],gridBlock[1]);
+	
+				final RandomAccessibleInterval<UnsignedShortType> sourceConverted = Converters.convert(
+						source,
 						(a, b) -> {
-							if(a.getIntegerLong()>0) {
-								b.set(1);
+							long objectID = a.getIntegerLong();
+							if(objectID>0) {
+								b.set(objectIDtoRenumberedID.get(objectID).shortValue());
 							}
 							else {
 								b.set(0);
 							}
 						},
-						new UnsignedLongType());
-				
-				final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
-				N5Utils.saveBlock(Views.offsetInterval(Views.extendZero(sourceBinarized), gridBlock[0], gridBlock[1]), n5BlockWriter, datasetName + "_binarized", gridBlock[2]);
-		
+						new UnsignedShortType());
+				N5Utils.saveBlock(sourceConverted, n5BlockWriter, datasetName + "_renumbered", gridBlock[2]);
+
 			}
 			else {
-				final RandomAccessibleInterval<UnsignedByteType> sourceBinarized = Converters.convert(
-						(RandomAccessibleInterval<UnsignedLongType>)(RandomAccessibleInterval)N5Utils.open(n5BlockReader, datasetName),
-						(a, b) -> {
-							if(a.getIntegerLong()>0) {
-								b.set(1);
-							}
-							else {
-								b.set(0);
-							}
-						},
-						new UnsignedByteType());
-				
-				final N5FSWriter n5BlockWriter = new N5FSWriter(n5OutputPath);
-				N5Utils.saveBlock(Views.offsetInterval(Views.extendZero(sourceBinarized), gridBlock[0], gridBlock[1]), n5BlockWriter, datasetName + "_binarized", gridBlock[2]);
-			}	
-		
-		
+				IntervalView<UnsignedLongType> source = Views.offsetInterval(
+						(RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, datasetName),gridBlock[0],gridBlock[1]);
+	
+				Cursor<UnsignedLongType> sourceCursor = source.cursor();
+				while (sourceCursor.hasNext()) {
+					sourceCursor.next();
+					long objectID = sourceCursor.get().get();
+					if (objectID>0) {
+						sourceCursor.get().set(objectIDtoRenumberedID.get(objectID));
+					}
+				}	
+
+				N5Utils.saveBlock(source, n5BlockWriter, datasetName + "_renumbered", gridBlock[2]);
+			}
 		});
-	}
-
-	public static List<BlockInformation> buildBlockInformationList(final String inputN5Path,
-			final String inputN5DatasetName) throws IOException {
-		//Get block attributes
-		N5Reader n5Reader = new N5FSReader(inputN5Path);
-		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(inputN5DatasetName);
-		final int[] blockSize = attributes.getBlockSize();
-		final long[] outputDimensions = attributes.getDimensions();
 		
-		//Build list
-		List<long[][]> gridBlockList = Grid.create(outputDimensions, blockSize);
-		List<BlockInformation> blockInformationList = new ArrayList<BlockInformation>();
-		for (int i = 0; i < gridBlockList.size(); i++) {
-			long[][] currentGridBlock = gridBlockList.get(i);
-			blockInformationList.add(new BlockInformation(currentGridBlock, null, null));
-		}
-		return blockInformationList;
+		
 	}
+
 
 	
 
-	public static void logMemory(final String context) {
-		final long freeMem = Runtime.getRuntime().freeMemory() / 1000000L;
-		final long totalMem = Runtime.getRuntime().totalMemory() / 1000000L;
-		logMsg(context + ", Total: " + totalMem + " MB, Free: " + freeMem + " MB, Delta: " + (totalMem - freeMem)
-				+ " MB");
-	}
-
-	public static void logMsg(final String msg) {
-		final String ts = new SimpleDateFormat("HH:mm:ss").format(new Date()) + " ";
-		System.out.println(ts + " " + msg);
-	}
-	
 	public static final void main(final String... args) throws IOException, InterruptedException, ExecutionException {
 
 		final Options options = new Options(args);
@@ -252,7 +246,7 @@ public class SparkBinarize {
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkBinarize");
+		final SparkConf conf = new SparkConf().setAppName("SparkRenumberConnectedComponents");
 
 		// Get all organelles
 		String[] organelles = { "" };
@@ -273,25 +267,23 @@ public class SparkBinarize {
 		
 		List<String> directoriesToDelete = new ArrayList<String>();
 		for (String currentOrganelle : organelles) {
-			logMemory(currentOrganelle);	
 			
 			//Create block information list
-			List<BlockInformation> blockInformationList = buildBlockInformationList(options.getInputN5Path(),
+			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(),
 				currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			
-			binarize(
+			renumber(
 					sc,
 					options.getInputN5Path(),
 					currentOrganelle,
 					options.getOutputN5Path(),
-					options.getKeepAsLong(),
+					options.getConvertToUINT16(),
 					blockInformationList);
 			
 			sc.close();
 		}
 		//Remove temporary files
-		SparkDirectoryDelete.deleteDirectories(conf, directoriesToDelete);
 
 	}
 }

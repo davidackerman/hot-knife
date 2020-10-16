@@ -18,10 +18,13 @@ package org.janelia.saalfeldlab.hotknife;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.RandomAccess;
 import java.util.Set;
+import java.util.Map.Entry;
 
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
@@ -63,6 +66,16 @@ public class ConnectedComponents {
 	 */
 	public static void main(final String[] args) throws IOException {
 		Set<long[][]> temp = new HashSet<>();
+		Map<Long,Long> junk = new HashMap<>();
+		junk.put(5L,1L);
+		junk.put(3L,2L);
+		junk.put(0L,3L);
+		junk.put(6L,4L);
+		junk.put(2L,5L);
+
+		for(Entry<Long,Long> j : junk.entrySet()) {
+System.out.println(j.getKey()+" "+j.getValue());
+}
 /*	//	ImagePlus imp = new Opener().openImage( "/groups/cosem/cosem/ackermand/other_skeleton_failed.tif");//failed_skeleton.tif");//jan_skeleton.tif");//HeLa_Cell3_4x4x4nm_it450000_crop_analysis.n5/skeletonShortestPathAsRadii.tif" );
 		//ImagePlus imp = new Opener().openImage("/groups/cosem/cosem/ackermand/tempRibosomes.n5/ribosomes_cc_medialSurface.tif");
 		//ImagePlus imp = new Opener().openImage("/groups/cosem/cosem/weigela/hela3/original_HeLa_Cell3_4x4x4nm_it650000_plasma_membrane_ccSkipSmoothing_ds8_8bit.tif");

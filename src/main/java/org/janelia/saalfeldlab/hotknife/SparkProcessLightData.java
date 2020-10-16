@@ -445,7 +445,7 @@ public class SparkProcessLightData {
 		organelles[1]+="_cc";
 		boolean doSelfContacts = true;
 		boolean doLM = true;
-		SparkContactSites.calculateContactSites(conf, organelles,doSelfContacts, options.getMinimumContactSiteVolumeCutoff(), 0, doLM, options.getInputN5Path(), options.getOutputN5Path());
+		SparkContactSites.calculateContactSites(conf, organelles,doSelfContacts, options.getMinimumContactSiteVolumeCutoff(), 0, doLM, options.getInputN5Path(), options.getOutputN5Path(), false);
 		//For each pair of object classes, calculate the contact sites and get the connected component information
 		/*directoriesToDelete = new ArrayList<String>();
 		for (int i = 0; i<organelles.length; i++) {
