@@ -79,6 +79,8 @@ import net.imglib2.img.cell.CellImgFactory;
 import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.logic.BoolType;
 import net.imglib2.type.logic.NativeBoolType;
+import net.imglib2.type.numeric.IntegerType;
+import net.imglib2.type.numeric.NumericType;
 import net.imglib2.type.numeric.integer.*;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -174,7 +176,7 @@ public class SparkExpandMicrotubules {
 	  * @param blockInformationList	Block information list
 	  * @throws IOException
 	  */
-	public static final void expandMicrotubules(final JavaSparkContext sc, final String n5Path,
+	public static final <T extends IntegerType<T>>  void expandMicrotubules(final JavaSparkContext sc, final String n5Path,
 			final String inputDatasetName, final String n5OutputPath, final String outputDatasetName, final double innerRadiusInNm, final double outerRadiusInNm,
 			final List<BlockInformation> blockInformationList) throws IOException {
 
@@ -207,8 +209,8 @@ public class SparkExpandMicrotubules {
 			final N5Reader n5BlockReader = new N5FSReader(n5Path);
 			
 
-			RandomAccessibleInterval<UnsignedLongType> microtubuleCenterline = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<UnsignedLongType>)N5Utils.open(n5BlockReader, inputDatasetName)),paddedOffset, paddedDimension);	
-			RandomAccess<UnsignedLongType> microtubuleCenterlineRA = microtubuleCenterline.randomAccess();
+			RandomAccessibleInterval<T> microtubuleCenterline = Views.offsetInterval(Views.extendZero((RandomAccessibleInterval<T>)N5Utils.open(n5BlockReader, inputDatasetName)),paddedOffset, paddedDimension);	
+			RandomAccess<T> microtubuleCenterlineRA = microtubuleCenterline.randomAccess();
 			IntervalView<UnsignedLongType> expandedMicrotubule = Views.offsetInterval(ArrayImgs.unsignedLongs(paddedDimension),new long[]{0,0,0}, paddedDimension);
 			RandomAccess<UnsignedLongType> expandedMicrotubuleRA = expandedMicrotubule.randomAccess();
 			
@@ -223,7 +225,7 @@ public class SparkExpandMicrotubules {
 					for(int z=1; z<paddedDimension[2]-1; z++) {
 						int pos[] = new int[] {x,y,z};
 						microtubuleCenterlineRA.setPosition(pos);
-						long objectID = microtubuleCenterlineRA.get().get();
+						long objectID = microtubuleCenterlineRA.get().getIntegerLong();
 						if(objectID>0) {//then it is on microtubule center axis
 							List<List<Integer>> currentCenterlineVoxels = idToCenterlineVoxels.getOrDefault(objectID, new ArrayList<List<Integer>>());
 							currentCenterlineVoxels.add(Arrays.asList(pos[0],pos[1],pos[2]));
@@ -358,7 +360,7 @@ public class SparkExpandMicrotubules {
 	 * @param pos			Current position
 	 * @return				ExtendedEndpointVoxelPos which is an array containing the ednpoint pos and the delta to reach the extended endpoint
 	 */
-	public static int[] getExtendedEndpointVoxel(RandomAccess<UnsignedLongType> ra, long objectID, int [] pos) {
+	public static <T extends IntegerType<T>> int[] getExtendedEndpointVoxel(RandomAccess<T> ra, long objectID, int [] pos) {
 		int [] extendedEndpointVoxelPos = null;
 		
 		//get endpoint and extended endpoint for simple case where there is just 1 neighbor of endpoint
@@ -369,7 +371,7 @@ public class SparkExpandMicrotubules {
 				for(int dz=-1; dz<=1; dz++) {
 					if(!(dx==0 && dy==0 && dz==-0)) {
 						ra.setPosition(new int[] {pos[0]+dx,pos[1]+dy,pos[2]+dz});
-						long currentID = ra.get().get();
+						long currentID = ra.get().getIntegerLong();
 						if(currentID == objectID) {
 							numNeighbors ++;
 							if(numNeighbors>2) {//Then it isn't an endpoint

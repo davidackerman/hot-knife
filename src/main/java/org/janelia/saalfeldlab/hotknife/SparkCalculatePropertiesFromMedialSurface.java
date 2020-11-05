@@ -445,7 +445,7 @@ public class SparkCalculatePropertiesFromMedialSurface {
 						int sheetnessMeasureBin = sheetnessRA.get().get();
 						if(sheetnessMeasureBin>0) {
 							sheetnessAndVolumeHistogram.put(sheetnessMeasureBin, sheetnessAndVolumeHistogram.getOrDefault(sheetnessMeasureBin,0.0)+voxelVolume);
-							int faces = SparkCosemHelper.getSurfaceAreaContributionOfVoxelInFaces(sheetnessRA);
+							int faces = SparkCosemHelper.getSurfaceAreaContributionOfVoxelInFaces(sheetnessRA,paddedOffset,dimensions);
 							if(faces>0) {
 								sheetnessAndSurfaceAreaHistogram.put(sheetnessMeasureBin, sheetnessAndSurfaceAreaHistogram.getOrDefault(sheetnessMeasureBin,0.0)+faces*voxelFaceArea);
 							}

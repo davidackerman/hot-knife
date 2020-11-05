@@ -10,6 +10,7 @@ N_NODES=15
 
 ARGV="--inputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa3.n5' \
 --inputN5DatasetName '\
+er_sheetnessVolumeAveraged,\
 er_sheetnessVolumeAveraged_maskedWith_nucleus_expanded,\
 er_sheetnessVolumeAveraged_maskedWith_ribosomes,\
 er_sheetnessVolumeAveraged_maskedWith_nucleus_expanded_maskedWith_ribosomes' \

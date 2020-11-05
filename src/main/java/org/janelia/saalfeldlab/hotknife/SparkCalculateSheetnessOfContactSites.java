@@ -30,6 +30,7 @@ import java.util.concurrent.ExecutionException;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
@@ -122,6 +123,9 @@ public class SparkCalculateSheetnessOfContactSites {
 		final N5Reader n5Reader = new N5FSReader(n5Path);
 		double [] pixelResolution = IOHelper.getResolution(n5Reader, volumeAveragedSheetnessDatasetName);
 		double voxelFaceArea = pixelResolution[0]*pixelResolution[1];
+		
+		final DatasetAttributes attributes = n5Reader.getDatasetAttributes(volumeAveragedSheetnessDatasetName);
+		final long[] dimensions = attributes.getDimensions();
 
 		//Acquire histograms in a blockwise manner
 		final JavaRDD<BlockInformation> rdd = sc.parallelize(blockInformationList);
@@ -149,7 +153,7 @@ public class SparkCalculateSheetnessOfContactSites {
 			RandomAccess<UnsignedLongType> referenceOrganelleCBRA = referenceOrganelleCB.randomAccess();			
 
 			//Build histogram
-			SheetnessMaps sheetnessMaps = buildSheetnessMaps(paddedDimension, volumeAveragedSheetnessRA, contactSitesRA, referenceOrganelleCBRA, voxelFaceArea);
+			SheetnessMaps sheetnessMaps = buildSheetnessMaps(paddedOffset, paddedDimension, dimensions, volumeAveragedSheetnessRA, contactSitesRA, referenceOrganelleCBRA, voxelFaceArea);
 			return sheetnessMaps;
 		});
 		
@@ -202,7 +206,7 @@ public class SparkCalculateSheetnessOfContactSites {
 	 * @param voxelFaceArea				Surface area of voxel face
 	 * @return							Map containing the histogram data
 	 */
-	public static SheetnessMaps buildSheetnessMaps(long[] paddedDimension, RandomAccess<UnsignedByteType> volumeAveragedSheetnessRA, RandomAccess<UnsignedLongType> contactSitesRA, RandomAccess<UnsignedLongType> referenceOrganelleCBRA, double voxelFaceArea){
+	public static SheetnessMaps buildSheetnessMaps(long [] paddedOffset, long[] paddedDimension, long [] dimensions, RandomAccess<UnsignedByteType> volumeAveragedSheetnessRA, RandomAccess<UnsignedLongType> contactSitesRA, RandomAccess<UnsignedLongType> referenceOrganelleCBRA, double voxelFaceArea){
 		Map<Integer,Double> sheetnessAndSurfaceAreaHistogram = new HashMap<Integer,Double>();
 		Map<Long,List<Integer>> organelleSheetnessMap = new HashMap<Long,List<Integer>>();
 	
@@ -215,7 +219,7 @@ public class SparkCalculateSheetnessOfContactSites {
 					int sheetnessMeasureBin = volumeAveragedSheetnessRA.get().get();
 	
 					if(sheetnessMeasureBin>0 && contactSitesRA.get().get()>0) {//Then is on surface and contact site
-						int faces = SparkCosemHelper.getSurfaceAreaContributionOfVoxelInFaces(volumeAveragedSheetnessRA);
+						int faces = SparkCosemHelper.getSurfaceAreaContributionOfVoxelInFaces(volumeAveragedSheetnessRA,paddedOffset,dimensions);
 						if(faces>0) {
 							sheetnessAndSurfaceAreaHistogram.put(sheetnessMeasureBin, sheetnessAndSurfaceAreaHistogram.getOrDefault(sheetnessMeasureBin,0.0)+faces*voxelFaceArea);
 						}

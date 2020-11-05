@@ -18,7 +18,7 @@ public class SparkCosemHelper {
 	 * @param ra 	Random access for image
 	 * @return		Number of faces on surface
 	 */
-	public static <T extends IntegerType<T> & NativeType<T>> int getSurfaceAreaContributionOfVoxelInFaces(final RandomAccess<T> ra) {
+	public static <T extends IntegerType<T> & NativeType<T>> int getSurfaceAreaContributionOfVoxelInFaces(final RandomAccess<T> ra, long [] offset, long [] dimensions) {
 		List<long[]> voxelsToCheckForSurface = new ArrayList<long[]>(); 
 		voxelsToCheckForSurface.add(new long[] {-1, 0, 0});
 		voxelsToCheckForSurface.add(new long[] {1, 0, 0});
@@ -32,8 +32,11 @@ public class SparkCosemHelper {
 
 		for(long[] currentVoxel : voxelsToCheckForSurface) {
 			final long currentPosition[] = {pos[0]+currentVoxel[0], pos[1]+currentVoxel[1], pos[2]+currentVoxel[2]};
+			final long currentGlobalPosition[] = {currentPosition[0]+offset[0],currentPosition[1]+offset[1],currentPosition[2]+offset[2]};
 			ra.setPosition(currentPosition);
-			if(ra.get().getIntegerLong() == 0 ) {
+			if(ra.get().getIntegerLong() == 0 && 
+					(currentGlobalPosition[0]>=0 && currentGlobalPosition[1]>=0 && currentGlobalPosition[2]>=0 &&
+					currentGlobalPosition[0]<dimensions[0] && currentGlobalPosition[1]<dimensions[1] && currentGlobalPosition[2]<dimensions[2])) {
 				surfaceAreaContributionOfVoxelInFaces ++;
 			}
 		}

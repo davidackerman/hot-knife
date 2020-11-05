@@ -6,15 +6,15 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$OWN_DIR/flintstone/flintstone-lsd.sh
 JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkCalculatePropertiesFromMedialSurface
-N_NODES=15
+N_NODES=30
 
-ARGV="--inputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/Jurkat.n5' \
+ARGV="--inputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/HeLa2.n5' \
 --inputN5DatasetName '\
 er_sheetnessVolumeAveraged,\
 er_sheetnessVolumeAveraged_maskedWith_nucleus_expanded,\
 er_sheetnessVolumeAveraged_maskedWith_ribosomes,\
 er_sheetnessVolumeAveraged_maskedWith_nucleus_expanded_maskedWith_ribosomes' \
---outputDirectory '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/Jurkat/' \
+--outputDirectory '/groups/cosem/cosem/ackermand/test' \
 --calculateAreaAndVolumeFromExistingDataset "
 
 export RUNTIME="48:00"
