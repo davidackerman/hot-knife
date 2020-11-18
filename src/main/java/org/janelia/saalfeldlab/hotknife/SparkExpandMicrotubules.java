@@ -457,7 +457,7 @@ public class SparkExpandMicrotubules {
 		if (!options.parsedSuccessfully)
 			return;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkEpandSkeletonForMeshes");
+		final SparkConf conf = new SparkConf().setAppName("SparkEpandMicrotubules");
 
 		// Get all organelles
 		String[] organelles = { "" };
@@ -480,7 +480,7 @@ public class SparkExpandMicrotubules {
 			List<BlockInformation> blockInformationList = BlockInformation.buildBlockInformationList(options.getInputN5Path(), currentOrganelle);
 			JavaSparkContext sc = new JavaSparkContext(conf);
 			expandMicrotubules(sc, options.getInputN5Path(),
-					options.getInputN5DatasetName(), options.getOutputN5Path(), options.getInputN5DatasetName()+"_expanded",
+					currentOrganelle, options.getOutputN5Path(), currentOrganelle+"_expanded",
 					options.getInnerRadiusInNm(), options.getOuterRadiusInNm(), blockInformationList);
 			sc.close();
 		}

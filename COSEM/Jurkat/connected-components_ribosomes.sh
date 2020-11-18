@@ -6,7 +6,7 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$OWN_DIR/flintstone/flintstone-lsd.sh
 JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkRibosomeConnectedComponents
-N_NODES=10
+N_NODES=15
 
 TRAININGPATH='setup56/Jurkat_Cell1_4x4x4nm/Jurkat_Cell1_FS96-Area1_4x4x4nm_it575000.n5'
 INPUTN5PATH="/nrs/cosem/cosem/training/v0003.2/$TRAININGPATH"

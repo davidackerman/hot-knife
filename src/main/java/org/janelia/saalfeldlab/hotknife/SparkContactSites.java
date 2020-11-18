@@ -1019,6 +1019,7 @@ public class SparkContactSites {
 				currentBlockInformation.edgeComponentIDtoOrganelleIDs.put(edgeComponentID, sortedPair);
 			}
 			else{
+				//TODO: Possible fix if two contact sites cross each other such that one becomes discontinuous, what happens? Can this even happen given how we calculate contact sites? Possibly maybe if the bressenham3d line pops from one organelle pair to another
 				currentBlockInformation.edgeComponentIDtoOrganelleIDs.put(edgeComponentID, Arrays.asList(organelle1ID, organelle2ID));
 			}
 		}

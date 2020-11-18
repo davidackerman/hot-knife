@@ -6,7 +6,7 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$OWN_DIR/flintstone/flintstone-lsd.sh
 JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkVolumeFilterConnectedComponents
-N_NODES=10
+N_NODES=15
 
 ARGV="\
 --inputN5DatasetName 'cellVolume' \

@@ -6,7 +6,7 @@ ABS_DIR=`readlink -f "$OWN_DIR"`
 FLINTSTONE=$OWN_DIR/flintstone/flintstone-lsd.sh
 JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkFillHolesInConnectedComponents
-N_NODES=15
+N_NODES=20
 
 cell=${PWD##*/}
 

@@ -183,7 +183,7 @@ public class SparkRibosomeConnectedComponents {
 			//int[] sizes = Gauss3.halfkernelsizes( sigma );
 			//long padding = (long) (sizes[0]+2*Math.ceil(ribosomeRadiusInVoxels[0])+3);//add extra padding so if a ribosome appears in adjacent block, will be correctly shown in current block
 			long separation = Math.round(ribosomeRadiusInVoxels[0]);
-			long padding = 3*separation;
+			long padding = separation*(separation*separation*separation+2);//separation^3 since that is how we later split things up later, into independent sets where each is separated by separation in all 3 dimensions;*separation for max distance one will be affected by others. +2 for extra padding.//id3*separation;
 			long [] paddedOffset = new long [] {offset[0]-padding,offset[1]-padding,offset[2]-padding};
 			long [] paddedDimension = new long [] {dimension[0]+2*padding,dimension[1]+2*padding,dimension[2]+2*padding};
 			
@@ -195,7 +195,7 @@ public class SparkRibosomeConnectedComponents {
 					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
 					),paddedOffset, paddedDimension);
 			Img< FloatType > spherenessFraction = new ArrayImgFactory<FloatType>(new FloatType()).create(paddedDimension);
-			getSpherenessFraction(rawPredictions.randomAccess(),spherenessFraction.randomAccess(), ribosomeRadiusInVoxels[0],paddedDimension);
+			getSpherenessFraction(rawPredictions.randomAccess(),spherenessFraction.randomAccess(), ribosomeRadiusInVoxels[0],paddedDimension, paddedOffset);
 			Map<Integer, List<long[]>> allLocalMaxima = findAllLocalMaxima(spherenessFraction, 0, separation, paddedOffset);
 			List<long[]> nonoverlappingMaxima = getNonoverlappingMaxima(allLocalMaxima, separation);
 			Img< UnsignedLongType > outputCenters = new ArrayImgFactory<UnsignedLongType>(new UnsignedLongType()).create(paddedDimension);
@@ -251,20 +251,36 @@ public class SparkRibosomeConnectedComponents {
 					long [] centerPosition= new long[] {x,y,z};
 					raiRA.setPosition(centerPosition);
 					double centerValue = raiRA.get().getRealDouble();
-					
+					/*long [] tempoverallCenterPosition = new long[] {x+paddedOffset[0],y+paddedOffset[1],z+paddedOffset[2]};
+					if((tempoverallCenterPosition[0]==237 || tempoverallCenterPosition[0]==238) && tempoverallCenterPosition[1]==285 && tempoverallCenterPosition[2]==358) {
+						System.out.println(Arrays.toString(paddedOffset)+" "+tempoverallCenterPosition[0]+" "+centerValue);
+					}*/
 					if (centerValue>cutoff) {
 						boolean isMaximum = true;
 						for(List<Long> delta : spherePoints) {
 							raiRA.setPosition(new long[] {x+delta.get(0),y+delta.get(1),z+delta.get(2)});
-							if(raiRA.get().getRealDouble()>centerValue) {
+							if(raiRA.get().getRealDouble()>centerValue) {//What happens if two tie in two different boxes. then could select different ones for each...
 								isMaximum = false;
 								break;
 							}
 								
-						}
+						} 
 						if(isMaximum) {
 							long [] overallCenterPosition = new long[] {x+paddedOffset[0],y+paddedOffset[1],z+paddedOffset[2]};
-							int independentIndex = (int) (overallCenterPosition[0]%separation+(overallCenterPosition[1]%separation)*separation+(overallCenterPosition[2]%separation)*Math.pow(separation,2));
+							long paddedSeparation=separation+1;
+							int independentIndex = (int) (overallCenterPosition[0]%paddedSeparation+(overallCenterPosition[1]%paddedSeparation)*paddedSeparation+(overallCenterPosition[2]%paddedSeparation)*Math.pow(paddedSeparation,2));
+							/*so for instance, for paddedSeparation =4, a 16 voxel slice is split up like:
+							0  1  2  3
+							4  5  6  7 
+							8  9  10 11
+							12 13 14 15
+							meaning that each "0" will be independent of all others. if just use separation (without padding), then 0s will be dependent on other 0s etc since they will be padding apart
+							 //[237, 285, 358]
+			        		//[238, 285, 358]
+							/*if(overallCenterPosition[0]==238 && (overallCenterPosition[1]==151 || overallCenterPosition[1]==152) && overallCenterPosition[2]==178) {
+								System.out.println(Arrays.toString(paddedOffset)+" "+overallCenterPosition[1]+" "+independentIndex);
+							} */
+							
 							List<long[]> currentLocalMaxima = allLocalMaxima.getOrDefault(independentIndex, new ArrayList<long[]>());
 							currentLocalMaxima.add(centerPosition);
 							allLocalMaxima.put(independentIndex,currentLocalMaxima);
@@ -322,20 +338,25 @@ public class SparkRibosomeConnectedComponents {
 		return false;
 	}
 	
-	public static void getSpherenessFraction(RandomAccess<UnsignedByteType> rawPredictionsRA, RandomAccess<FloatType> spherenessFractionRA, double radius, long[] dimensions){
+	public static void getSpherenessFraction(RandomAccess<UnsignedByteType> rawPredictionsRA, RandomAccess<FloatType> spherenessFractionRA, double radius, long[] dimensions, long [] paddedOffset){
+		//updated to fix floating point rounding errors
+
 		Set<List<Long>> spherePoints = getSpherePoints(radius);
 
-		for(long x=0; x<dimensions[0]; x++) {
-			for(long y=0; y<dimensions[1]; y++) {
-				for(long z=0; z<dimensions[2]; z++) {
+		for(int x=0; x<dimensions[0]; x++) {
+			for(int y=0; y<dimensions[1]; y++) {
+				for(int z=0; z<dimensions[2]; z++) {
+
 					long [] sphereCenter = new long [] {x,y,z};
 					rawPredictionsRA.setPosition(sphereCenter);
 					if(rawPredictionsRA.get().get()>=127) {//center is greater than 127
 						int countForSphereCenteredAtxyz = 0;
-						float comX = 0;
-						float comY = 0;
-						float comZ = 0;
-
+						/*int comX = 0;
+						int comY = 0;
+						int comZ = 0;*/
+						int deltaX=0;
+						int deltaY=0;
+						int deltaZ=0;
 						for(List<Long> currentSpherePoint : spherePoints) {
 							long[] sphereCoordinate = new long [] {x+currentSpherePoint.get(0),y+currentSpherePoint.get(1),z+currentSpherePoint.get(2)};
 							if(sphereCoordinate[0]>=0 && sphereCoordinate[1]>=0 && sphereCoordinate[2]>=0 && 
@@ -343,21 +364,39 @@ public class SparkRibosomeConnectedComponents {
 								rawPredictionsRA.setPosition(sphereCoordinate);
 								if(rawPredictionsRA.get().get()>=127 && !voxelPathExitsObject(rawPredictionsRA, Bressenham3D.getLine(sphereCenter, sphereCoordinate))) {
 									countForSphereCenteredAtxyz ++;
-									comX+=sphereCoordinate[0];
-									comY+=sphereCoordinate[1];
-									comZ+=sphereCoordinate[2];
+									deltaX += (x-sphereCoordinate[0]);
+									deltaY += (y-sphereCoordinate[1]);
+									deltaZ += (z-sphereCoordinate[2]);
+									/*comX+=sphereCoordinate[0]+paddedOffset[0];//need to add paddedOffset, otherwise had floating point error
+									comY+=sphereCoordinate[1]+paddedOffset[1];
+									comZ+=sphereCoordinate[2]+paddedOffset[2];*/
 								}
 							}
 						}
-						float deltaCOMX = x-comX/countForSphereCenteredAtxyz;
-						float deltaCOMY = y-comY/countForSphereCenteredAtxyz;
-						float deltaCOMZ = z-comZ/countForSphereCenteredAtxyz;
-						float deltaCOM = (float) Math.sqrt(deltaCOMX*deltaCOMX+deltaCOMY*deltaCOMY+deltaCOMZ*deltaCOMZ);
+						/*float deltaCOMX = deltaX/(float)countForSphereCenteredAtxyz;//(x+paddedOffset[0])-comX/(float)countForSphereCenteredAtxyz;
+						float deltaCOMY = deltaY/(float)countForSphereCenteredAtxyz;////(y+paddedOffset[1])-comY/(float)countForSphereCenteredAtxyz;
+						float deltaCOMZ = deltaZ/(float)countForSphereCenteredAtxyz;////(z+paddedOffset[2])-comZ/(float)countForSphereCenteredAtxyz;
+						*/
+						float deltaCOM = (float) Math.sqrt((deltaX*deltaX+deltaY*deltaY+deltaZ*deltaZ)/((float)countForSphereCenteredAtxyz*countForSphereCenteredAtxyz));
+						//float deltaCOM = (float) Math.sqrt(deltaCOMX*deltaCOMX+deltaCOMY*deltaCOMY+deltaCOMZ*deltaCOMZ);
 						float deltaCOMmetric = (float) (1-deltaCOM/radius);
 						//if(countForSphereCenteredAtxyz>spherePoints.size()/10) {
 							spherenessFractionRA.setPosition(new long[] {x,y,z});
 							spherenessFractionRA.get().set(countForSphereCenteredAtxyz + deltaCOMmetric);
 						//}
+							
+							
+							/*long [] overallCenterPosition = new long[] {x+paddedOffset[0],y+paddedOffset[1],z+paddedOffset[2]};
+							
+							if(overallCenterPosition[0]==238 && (overallCenterPosition[1]==151 || overallCenterPosition[1]==152) && overallCenterPosition[2]==178) {
+								System.out.println(Arrays.toString(overallCenterPosition)+" "+deltaX+" "+deltaY+" "+deltaZ+" "+deltaCOM+" "+deltaCOMmetric+" "+countForSphereCenteredAtxyz);
+								//[171, 171, 351] 0.44444275 -0.41666412 0.27777767
+								//[171, 171, 171] 0.44444275 -0.41666412 0.277771
+								 // deltaX/(float)countForSphereCenteredAtxyz; //
+								 // deltaX/(float)countForSphereCenteredAtxyz; //
+
+							}
+							*/
 					}
 				}
 			}
@@ -457,6 +496,11 @@ public class SparkRibosomeConnectedComponents {
 	    			overallCenterPosition[0]<overallDimensions[0] && overallCenterPosition[1]<overallDimensions[1] && overallCenterPosition[2]<overallDimensions[2]) {
 	        	long setValue = SparkCosemHelper.convertPositionToGlobalID(overallCenterPosition, overallDimensions);
 	        	
+	        	/*if(setValue==51986579  || setValue== 51987119) {
+	        		System.out.println(Arrays.toString(overallCenterPosition));
+	        		//[237, 285, 358]
+	        		//[238, 285, 358]
+	        	}*/
 	        	//set center to setValue
 	        	centersRA.setPosition(centerPosition);
 	        	centersRA.get().setInteger(setValue);

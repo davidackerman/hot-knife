@@ -10,16 +10,24 @@ N_NODES=15
 
 cell=${PWD##*/}
 INPUTN5PATH=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/${cell}.n5/contactDistance20.n5
-ARGV="--inputN5DatasetName 'microtubules,\
-er_maskedWith_microtubules,\
-er_maskedWith_nucleus_expanded_maskedWith_microtubules,\
-er_reconstructed_maskedWith_microtubules,\
-er_reconstructed_maskedWith_nucleus_expanded_maskedWith_microtubules,\
-nucleus_maskedWith_microtubules,\
-mito_maskedWith_microtubules,\
-MVB_maskedWith_microtubules,\
-vesicle_maskedWith_microtubules,\
-golgi_maskedWith_microtubule,\
+
+#ARGV="--inputN5DatasetName 'microtubules,\
+#er_maskedWith_microtubules,\
+#er_maskedWith_nucleus_expanded_maskedWith_microtubules,\
+#er_reconstructed_maskedWith_microtubules,\
+#er_reconstructed_maskedWith_nucleus_expanded_maskedWith_microtubules,\
+#nucleus_maskedWith_microtubules,\
+#mito_maskedWith_microtubules,\
+#MVB_maskedWith_microtubules,\
+#vesicle_maskedWith_microtubules,\
+#golgi_maskedWith_microtubule,\
+#plasma_membrane_maskedWith_microtubules' \
+#--skipContactSites \
+#--inputN5Path '$INPUTN5PATH' \
+#--outputDirectory '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/${cell}/generalObjectInformation/'"
+
+
+ARGV="--inputN5DatasetName 'golgi_maskedWith_microtubules,\
 plasma_membrane_maskedWith_microtubules' \
 --skipContactSites \
 --inputN5Path '$INPUTN5PATH' \
