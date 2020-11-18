@@ -183,7 +183,8 @@ public class SparkRibosomeConnectedComponents {
 			//int[] sizes = Gauss3.halfkernelsizes( sigma );
 			//long padding = (long) (sizes[0]+2*Math.ceil(ribosomeRadiusInVoxels[0])+3);//add extra padding so if a ribosome appears in adjacent block, will be correctly shown in current block
 			long separation = Math.round(ribosomeRadiusInVoxels[0]);
-			long padding = separation*(separation*separation*separation+2);//separation^3 since that is how we later split things up later, into independent sets where each is separated by separation in all 3 dimensions;*separation for max distance one will be affected by others. +2 for extra padding.//id3*separation;
+			long paddedSeparation = separation+1;
+			long padding = separation*(paddedSeparation*paddedSeparation*paddedSeparation+2);//separation^3 since that is how we later split things up later, into independent sets where each is separated by separation in all 3 dimensions;*separation for max distance one will be affected by others. +2 for extra padding.//id3*separation;
 			long [] paddedOffset = new long [] {offset[0]-padding,offset[1]-padding,offset[2]-padding};
 			long [] paddedDimension = new long [] {dimension[0]+2*padding,dimension[1]+2*padding,dimension[2]+2*padding};
 			
