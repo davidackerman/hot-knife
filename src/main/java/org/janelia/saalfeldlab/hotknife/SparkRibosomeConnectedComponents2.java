@@ -192,7 +192,7 @@ public class SparkRibosomeConnectedComponents2 {
 			/*RandomAccessibleInterval<DoubleType> rawPredictions = Views.offsetInterval(Views.extendMirrorSingle(
 					(RandomAccessibleInterval<DoubleType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
 					),paddedOffset, paddedDimension); */
-			RandomAccessibleInterval<UnsignedByteType> rawPredictions = Views.offsetInterval(Views.extendMirrorSingle(
+			RandomAccessibleInterval<UnsignedByteType> rawPredictions = Views.offsetInterval(Views.extendZero(
 					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
 					),paddedOffset, paddedDimension);
 			Img< FloatType > spherenessFraction = new ArrayImgFactory<FloatType>(new FloatType()).create(paddedDimension);
