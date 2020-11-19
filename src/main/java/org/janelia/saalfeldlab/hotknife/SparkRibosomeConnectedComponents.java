@@ -188,7 +188,7 @@ public class SparkRibosomeConnectedComponents {
 			/*RandomAccessibleInterval<DoubleType> rawPredictions = Views.offsetInterval(Views.extendMirrorSingle(
 					(RandomAccessibleInterval<DoubleType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
 					),paddedOffset, paddedDimension); */
-			//better to do extend mirror or extend zero
+			
 			RandomAccessibleInterval<UnsignedByteType> rawPredictions = Views.offsetInterval(Views.extendZero(
 					(RandomAccessibleInterval<UnsignedByteType>) N5Utils.open(n5ReaderLocal, inputN5DatasetName)
 					),paddedOffset, paddedDimension);
