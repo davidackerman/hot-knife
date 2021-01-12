@@ -12,7 +12,7 @@ cell=${PWD##*/}
 
 INPUTN5PATH=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/${cell}.n5
 
-ARGV="--inputN5DatasetName 'ribosomes_centers' \
+ARGV="--inputN5DatasetName 'ribosomes,ribosomes_centers' \
 --skipContactSites \
 --inputN5Path '$INPUTN5PATH' \
 --outputDirectory '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/${cell}/generalObjectInformation/'"

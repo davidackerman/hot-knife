@@ -12,7 +12,12 @@ cell=${PWD##*/}
 
 INPUTN5PATH=/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/${cell}.n5
 
-ARGV="--inputN5DatasetName 'ribosomes,ribosomes_centers' \
+ARGV="--inputN5DatasetName 'ribosomes,ribosomes_centers,ribosomes_cytosolic,ribosomes_nuclear,ribosomes_sheet,ribosomes_tube,er_maskedWith_ribosomes,er_maskedWith_nucleus_expanded_maskedWith_ribosomes,er_reconstructed_maskedWith_ribosomes,er_reconstructed_maskedWith_nucleus_expanded_maskedWith_ribosomes' \
+--inputPairs '\
+er_maskedWith_ribosomes_to_ribosomes,\
+er_maskedWith_nucleus_expanded_maskedWith_ribosomes_to_ribosomes,\
+er_reconstructed_maskedWith_ribosomes_to_ribosomes,\
+er_reconstructed_maskedWith_nucleus_expanded_maskedWith_ribosomes_to_ribosomes' \
 --skipContactSites \
 --inputN5Path '$INPUTN5PATH' \
 --outputDirectory '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/${cell}/generalObjectInformation/'"

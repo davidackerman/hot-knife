@@ -8,11 +8,13 @@ JAR=$OWN_DIR/target/hot-knife-0.0.4-SNAPSHOT.jar
 CLASS=org.janelia.saalfeldlab.hotknife.SparkCalculateSheetnessOfContactSites
 N_NODES=15
 
+cell=${PWD##*/}
+
 ARGV="\
 --inputN5ContactSiteDatasetName 'er_reconstructed_maskedWith_ribosomes_to_ribosomes_cc,er_reconstructed_maskedWith_nucleus_expanded_maskedWith_ribosomes_to_ribosomes_cc' \
 --inputN5SheetnessDatasetName 'er_sheetnessVolumeAveraged_maskedWith_ribosomes' \
---inputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/Macrophage.n5' \
---outputDirectory '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/Macrophage/' "
+--inputN5Path '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/collected/${cell}.n5' \
+--outputDirectory '/groups/cosem/cosem/ackermand/paperResultsWithFullPaths/analysisResults/${cell}/' "
 
 #export MEMORY_PER_NODE=500
 export RUNTIME="48:00"
